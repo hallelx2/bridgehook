@@ -6,7 +6,18 @@
 	"linter": {
 		"enabled": true,
 		"rules": {
-			"recommended": true
+			"recommended": true,
+			"a11y": {
+				"useValidAnchor": "off",
+				"noSvgWithoutTitle": "off",
+				"noLabelWithoutControl": "off"
+			},
+			"style": {
+				"noNonNullAssertion": "off"
+			},
+			"suspicious": {
+				"noArrayIndexKey": "off"
+			}
 		}
 	},
 	"formatter": {

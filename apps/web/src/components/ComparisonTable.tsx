@@ -51,10 +51,7 @@ export function ComparisonTable() {
 					</thead>
 					<tbody className="divide-y divide-white/[0.06]">
 						{ROWS.map((row) => (
-							<tr
-								key={row.capability}
-								className="hover:bg-white/[0.01] transition-colors"
-							>
+							<tr key={row.capability} className="hover:bg-white/[0.01] transition-colors">
 								<td className="p-8 md:p-10 text-white font-bold text-lg md:text-xl tracking-tight font-headline">
 									{row.capability}
 								</td>

@@ -96,9 +96,7 @@ export function useBridge() {
 						setState((s) => ({
 							...s,
 							events: s.events.map((e) =>
-								e.id === webhookEvent.id
-									? { ...e, error: (err as Error).message }
-									: e,
+								e.id === webhookEvent.id ? { ...e, error: (err as Error).message } : e,
 							),
 						}));
 					});
@@ -156,17 +154,13 @@ export function useBridge() {
 				setState((s) => ({ ...s, events: liveEvents }));
 
 				// Connect SSE (client-side real-time stream)
-				const disconnect = connectSSE(
-					channel.channelId,
-					handleSSEEvent,
-					() => {
-						setState((s) => ({
-							...s,
-							status: "error",
-							error: "SSE connection lost",
-						}));
-					},
-				);
+				const disconnect = connectSSE(channel.channelId, handleSSEEvent, () => {
+					setState((s) => ({
+						...s,
+						status: "error",
+						error: "SSE connection lost",
+					}));
+				});
 
 				disconnectRef.current = disconnect;
 			} catch (err) {

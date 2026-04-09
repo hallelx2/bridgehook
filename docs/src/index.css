@@ -62,7 +62,8 @@
 .prose a:hover {
 	border-color: #9093ff;
 }
-.prose ul, .prose ol {
+.prose ul,
+.prose ol {
 	color: #a1a1aa;
 	padding-left: 1.5rem;
 	margin-bottom: 1rem;
@@ -137,10 +138,20 @@
 
 /* Flow diagram animation */
 @keyframes flowRight {
-	0% { left: 0; opacity: 0; }
-	10% { opacity: 1; }
-	90% { opacity: 1; }
-	100% { left: 100%; opacity: 0; }
+	0% {
+		left: 0;
+		opacity: 0;
+	}
+	10% {
+		opacity: 1;
+	}
+	90% {
+		opacity: 1;
+	}
+	100% {
+		left: 100%;
+		opacity: 0;
+	}
 }
 
 /* Prevent prose styles from overriding diagram components */

@@ -76,11 +76,21 @@ function CopyAllDocs() {
 					: "bg-white/[0.03] text-zinc-500 border border-white/[0.06] hover:text-zinc-300 hover:bg-white/[0.06]"
 			}`}
 		>
-			<svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+			<svg
+				className="w-3.5 h-3.5"
+				fill="none"
+				viewBox="0 0 24 24"
+				stroke="currentColor"
+				strokeWidth={2}
+			>
 				{copied ? (
 					<path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
 				) : (
-					<path strokeLinecap="round" strokeLinejoin="round" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
+					<path
+						strokeLinecap="round"
+						strokeLinejoin="round"
+						d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"
+					/>
 				)}
 			</svg>
 			{copied ? "Copied to clipboard!" : "Copy page for LLM"}
@@ -94,8 +104,7 @@ function PrevNextNav({
 }: { currentPage: string; onNavigate: (id: string) => void }) {
 	const currentIndex = ALL_PAGES.findIndex((p) => p.id === currentPage);
 	const prev = currentIndex > 0 ? ALL_PAGES[currentIndex - 1] : null;
-	const next =
-		currentIndex < ALL_PAGES.length - 1 ? ALL_PAGES[currentIndex + 1] : null;
+	const next = currentIndex < ALL_PAGES.length - 1 ? ALL_PAGES[currentIndex + 1] : null;
 
 	return (
 		<div className="not-prose flex items-stretch gap-4 mt-16 pt-8 border-t border-white/[0.06]">
@@ -107,7 +116,13 @@ function PrevNextNav({
 					className="flex-1 group text-left p-5 rounded-xl border border-white/[0.06] bg-white/[0.01] hover:bg-white/[0.03] hover:border-white/[0.1] transition-all"
 				>
 					<div className="text-[9px] font-black text-zinc-600 uppercase tracking-[0.25em] font-label mb-1.5 flex items-center gap-1">
-						<svg className="w-3 h-3 group-hover:-translate-x-0.5 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+						<svg
+							className="w-3 h-3 group-hover:-translate-x-0.5 transition-transform"
+							fill="none"
+							viewBox="0 0 24 24"
+							stroke="currentColor"
+							strokeWidth={2.5}
+						>
 							<path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
 						</svg>
 						Previous
@@ -129,7 +144,13 @@ function PrevNextNav({
 				>
 					<div className="text-[9px] font-black text-zinc-600 uppercase tracking-[0.25em] font-label mb-1.5 flex items-center gap-1 justify-end">
 						Next
-						<svg className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+						<svg
+							className="w-3 h-3 group-hover:translate-x-0.5 transition-transform"
+							fill="none"
+							viewBox="0 0 24 24"
+							stroke="currentColor"
+							strokeWidth={2.5}
+						>
 							<path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
 						</svg>
 					</div>
@@ -164,14 +185,21 @@ export function Layout({
 			<aside className="w-[260px] shrink-0 border-r border-white/[0.06] bg-[#08080a] fixed top-0 left-0 bottom-0 flex flex-col">
 				{/* Logo */}
 				<div className="px-6 py-5 border-b border-white/[0.06]">
-					<a
-						href="/"
-						className="flex items-center gap-2.5 no-underline"
-					>
+					<a href="/" className="flex items-center gap-2.5 no-underline">
 						<svg width="22" height="22" viewBox="0 0 32 32" fill="none">
-							<path d="M4 24V16C4 9.373 9.373 4 16 4C22.627 4 28 9.373 28 16V20" stroke="white" strokeWidth="3.5" strokeLinecap="round"/>
-							<path d="M4 20V28" stroke="white" strokeWidth="3.5" strokeLinecap="round"/>
-							<path d="M28 20V24C28 26.209 26.209 28 24 28H22" stroke="#9093ff" strokeWidth="3.5" strokeLinecap="round"/>
+							<path
+								d="M4 24V16C4 9.373 9.373 4 16 4C22.627 4 28 9.373 28 16V20"
+								stroke="white"
+								strokeWidth="3.5"
+								strokeLinecap="round"
+							/>
+							<path d="M4 20V28" stroke="white" strokeWidth="3.5" strokeLinecap="round" />
+							<path
+								d="M28 20V24C28 26.209 26.209 28 24 28H22"
+								stroke="#9093ff"
+								strokeWidth="3.5"
+								strokeLinecap="round"
+							/>
 						</svg>
 						<span className="font-headline text-lg font-extrabold tracking-[-0.04em] text-white">
 							bridge<span className="text-primary">hook</span>
@@ -229,23 +257,13 @@ export function Layout({
 			<main className="flex-1 ml-[260px]">
 				{/* Top bar */}
 				<div className="sticky top-0 z-10 bg-background/80 backdrop-blur-xl border-b border-white/[0.04] px-12 py-3 flex items-center justify-between">
-					<div className="text-[11px] font-bold text-zinc-500 font-body">
-						{currentLabel}
-					</div>
-					<div className="text-[10px] text-zinc-600 font-mono">
-						docs.bridgehook.dev
-					</div>
+					<div className="text-[11px] font-bold text-zinc-500 font-body">{currentLabel}</div>
+					<div className="text-[10px] text-zinc-600 font-mono">docs.bridgehook.dev</div>
 				</div>
 
-				<div
-					className="max-w-3xl mx-auto px-12 py-12 prose"
-					data-docs-content
-				>
+				<div className="max-w-3xl mx-auto px-12 py-12 prose" data-docs-content>
 					{children}
-					<PrevNextNav
-						currentPage={currentPage}
-						onNavigate={onNavigate}
-					/>
+					<PrevNextNav currentPage={currentPage} onNavigate={onNavigate} />
 				</div>
 			</main>
 		</div>

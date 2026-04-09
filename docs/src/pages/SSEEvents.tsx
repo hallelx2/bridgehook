@@ -6,14 +6,17 @@ export function SSEEvents() {
 
 			<h2>Connected</h2>
 			<p>Sent immediately when the SSE connection is established.</p>
-			<pre><code>{`{
+			<pre>
+				<code>{`{
   "type": "connected",
   "channelId": "ch_9x4kf2m"
-}`}</code></pre>
+}`}</code>
+			</pre>
 
 			<h2>Webhook</h2>
 			<p>Sent when an external service (Stripe, GitHub, etc.) POSTs to your webhook URL.</p>
-			<pre><code>{`{
+			<pre>
+				<code>{`{
   "type": "webhook",
   "id": "evt_abc123",
   "channelId": "ch_9x4kf2m",
@@ -25,19 +28,23 @@ export function SSEEvents() {
   },
   "body": "{\\"type\\":\\"checkout.session.completed\\"}",
   "receivedAt": "2026-04-09T22:31:00Z"
-}`}</code></pre>
+}`}</code>
+			</pre>
 
 			<h2>Response</h2>
 			<p>Sent when a browser sends back the local server's response, confirming the round-trip.</p>
-			<pre><code>{`{
+			<pre>
+				<code>{`{
   "type": "response",
   "eventId": "evt_abc123",
   "status": 200,
   "latencyMs": 12
-}`}</code></pre>
+}`}</code>
+			</pre>
 
 			<h2>Handling Events</h2>
-			<pre><code>{`const source = new EventSource(\`\${relayUrl}/hook/\${channelId}/events\`);
+			<pre>
+				<code>{`const source = new EventSource(\`\${relayUrl}/hook/\${channelId}/events\`);
 
 source.onmessage = (msg) => {
   const event = JSON.parse(msg.data);
@@ -57,7 +64,8 @@ source.onmessage = (msg) => {
       updateEventStatus(event.eventId, event.status, event.latencyMs);
       break;
   }
-};`}</code></pre>
+};`}</code>
+			</pre>
 		</>
 	);
 }

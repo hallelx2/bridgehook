@@ -84,11 +84,7 @@
 
 /* Wavy dot grid background */
 .wavy-grid {
-	background-image: radial-gradient(
-		circle at 2px 2px,
-		rgba(255, 255, 255, 0.05) 1px,
-		transparent 0
-	);
+	background-image: radial-gradient(circle at 2px 2px, rgba(255, 255, 255, 0.05) 1px, transparent 0);
 	background-size: 40px 40px;
 }
 
@@ -106,12 +102,7 @@
 	position: absolute;
 	z-index: -1;
 	inset: -50%;
-	background: conic-gradient(
-		from 0deg,
-		transparent,
-		rgba(144, 147, 255, 0.4),
-		transparent 30%
-	);
+	background: conic-gradient(from 0deg, transparent, rgba(144, 147, 255, 0.4), transparent 30%);
 	animation: rotate 4s linear infinite;
 }
 .moving-border-content {

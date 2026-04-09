@@ -5,32 +5,54 @@ export function Introduction() {
 		<>
 			<h1>Introduction</h1>
 			<p>
-				<strong>BridgeHook</strong> is a zero-install webhook testing tool that uses your browser as a local proxy. No tunnels, no CLI tools, no binaries — open a URL, enter your port, and start receiving webhooks on localhost.
+				<strong>BridgeHook</strong> is a zero-install webhook testing tool that uses your browser as
+				a local proxy. No tunnels, no CLI tools, no binaries — open a URL, enter your port, and
+				start receiving webhooks on localhost.
 			</p>
 
 			<Callout icon="💡" title="Core Insight" color="#9093ff">
-				Your browser is already running on your machine. It can <code>fetch('http://localhost:3000')</code> freely.
-				A remote website's JavaScript executes <strong>inside your browser</strong>, so it has the same localhost access.
-				No tunnel needed — the browser IS the bridge.
+				Your browser is already running on your machine. It can{" "}
+				<code>fetch('http://localhost:3000')</code> freely. A remote website's JavaScript executes{" "}
+				<strong>inside your browser</strong>, so it has the same localhost access. No tunnel needed
+				— the browser IS the bridge.
 			</Callout>
 
 			<h2>The Problem</h2>
 			<p>
-				When developing with webhooks (Stripe, GitHub, Twilio, etc.), the remote service needs to reach your <code>localhost</code>. Today's solutions all require installing something:
+				When developing with webhooks (Stripe, GitHub, Twilio, etc.), the remote service needs to
+				reach your <code>localhost</code>. Today's solutions all require installing something:
 			</p>
 			<table>
 				<thead>
-					<tr><th>Tool</th><th>Requires</th></tr>
+					<tr>
+						<th>Tool</th>
+						<th>Requires</th>
+					</tr>
 				</thead>
 				<tbody>
-					<tr><td>ngrok</td><td>CLI binary + account</td></tr>
-					<tr><td>Cloudflare Tunnel</td><td><code>cloudflared</code> binary</td></tr>
-					<tr><td>localtunnel</td><td>npm package</td></tr>
-					<tr><td>Pinggy</td><td>SSH client</td></tr>
+					<tr>
+						<td>ngrok</td>
+						<td>CLI binary + account</td>
+					</tr>
+					<tr>
+						<td>Cloudflare Tunnel</td>
+						<td>
+							<code>cloudflared</code> binary
+						</td>
+					</tr>
+					<tr>
+						<td>localtunnel</td>
+						<td>npm package</td>
+					</tr>
+					<tr>
+						<td>Pinggy</td>
+						<td>SSH client</td>
+					</tr>
 				</tbody>
 			</table>
 			<p>
-				<strong>BridgeHook requires nothing.</strong> If your machine has a browser, you can test webhooks.
+				<strong>BridgeHook requires nothing.</strong> If your machine has a browser, you can test
+				webhooks.
 			</p>
 
 			<h2>How It Works in 30 Seconds</h2>
@@ -65,10 +87,21 @@ export function Introduction() {
 
 			<h2>Who Is This For?</h2>
 			<ul>
-				<li><strong>Individual developers</strong> — zero setup, zero cost, works immediately</li>
-				<li><strong>Developers on locked-down machines</strong> — corporate laptops that block installing software, university computers, shared workstations</li>
-				<li><strong>Teams</strong> — shareable channels for collaborative debugging, no license management</li>
-				<li><strong>Quick demos</strong> — show a colleague how your webhook handler works in 10 seconds</li>
+				<li>
+					<strong>Individual developers</strong> — zero setup, zero cost, works immediately
+				</li>
+				<li>
+					<strong>Developers on locked-down machines</strong> — corporate laptops that block
+					installing software, university computers, shared workstations
+				</li>
+				<li>
+					<strong>Teams</strong> — shareable channels for collaborative debugging, no license
+					management
+				</li>
+				<li>
+					<strong>Quick demos</strong> — show a colleague how your webhook handler works in 10
+					seconds
+				</li>
 			</ul>
 
 			<h2>What You Get</h2>
@@ -84,8 +117,8 @@ export function Introduction() {
 
 			<Callout icon="🆓" title="Free & Open Source" color="#28c840">
 				BridgeHook runs entirely on free-tier infrastructure: Cloudflare Workers (100K req/day),
-				Neon PostgreSQL (0.5GB), and Cloudflare Pages (unlimited bandwidth).
-				The only cost is a domain (~$12/year). Self-hosting is fully supported.
+				Neon PostgreSQL (0.5GB), and Cloudflare Pages (unlimited bandwidth). The only cost is a
+				domain (~$12/year). Self-hosting is fully supported.
 			</Callout>
 		</>
 	);

@@ -5,10 +5,30 @@ import type { LiveEvent } from "../hooks/useBridge";
 
 function StatusIndicator({ status }: { status: string }) {
 	const colors: Record<string, { dot: string; bg: string; text: string; label: string }> = {
-		idle: { dot: "bg-zinc-500", bg: "bg-zinc-500/10 border-zinc-500/20", text: "text-zinc-400", label: "Idle" },
-		connecting: { dot: "bg-yellow-500", bg: "bg-yellow-500/10 border-yellow-500/20", text: "text-yellow-400", label: "Connecting..." },
-		connected: { dot: "bg-emerald-500", bg: "bg-emerald-500/10 border-emerald-500/20", text: "text-emerald-400", label: "Connected" },
-		error: { dot: "bg-red-500", bg: "bg-red-500/10 border-red-500/20", text: "text-red-400", label: "Error" },
+		idle: {
+			dot: "bg-zinc-500",
+			bg: "bg-zinc-500/10 border-zinc-500/20",
+			text: "text-zinc-400",
+			label: "Idle",
+		},
+		connecting: {
+			dot: "bg-yellow-500",
+			bg: "bg-yellow-500/10 border-yellow-500/20",
+			text: "text-yellow-400",
+			label: "Connecting...",
+		},
+		connected: {
+			dot: "bg-emerald-500",
+			bg: "bg-emerald-500/10 border-emerald-500/20",
+			text: "text-emerald-400",
+			label: "Connected",
+		},
+		error: {
+			dot: "bg-red-500",
+			bg: "bg-red-500/10 border-red-500/20",
+			text: "text-red-400",
+			label: "Error",
+		},
 	};
 	const c = colors[status] || colors.idle;
 
@@ -16,7 +36,9 @@ function StatusIndicator({ status }: { status: string }) {
 		<div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border ${c.bg}`}>
 			<span className="relative flex h-2 w-2">
 				{status === "connected" && (
-					<span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${c.dot} opacity-75`} />
+					<span
+						className={`animate-ping absolute inline-flex h-full w-full rounded-full ${c.dot} opacity-75`}
+					/>
 				)}
 				<span className={`relative inline-flex rounded-full h-2 w-2 ${c.dot}`} />
 			</span>
@@ -25,9 +47,7 @@ function StatusIndicator({ status }: { status: string }) {
 	);
 }
 
-function ConnectForm({
-	onConnect,
-}: { onConnect: (port: number, paths: string[]) => void }) {
+function ConnectForm({ onConnect }: { onConnect: (port: number, paths: string[]) => void }) {
 	const [port, setPort] = useState("3000");
 	const [paths, setPaths] = useState("/webhook/stripe\n/webhook/github");
 
@@ -75,7 +95,10 @@ function ConnectForm({
 						onClick={() =>
 							onConnect(
 								Number(port),
-								paths.split("\n").map((p) => p.trim()).filter(Boolean),
+								paths
+									.split("\n")
+									.map((p) => p.trim())
+									.filter(Boolean),
 							)
 						}
 						className="w-full bg-primary text-white font-black py-3.5 rounded-xl hover:scale-[1.02] active:scale-[0.98] transition-all shadow-[0_0_30px_rgba(144,147,255,0.2)] font-headline text-sm"
@@ -116,25 +139,23 @@ function CopyButton({ text }: { text: string }) {
 function EventRow({ event }: { event: LiveEvent }) {
 	const [expanded, setExpanded] = useState(false);
 
-	const statusColor =
-		event.error
+	const statusColor = event.error
+		? "text-red-400"
+		: (event.responseStatus ?? 0) >= 500
 			? "text-red-400"
-			: (event.responseStatus ?? 0) >= 500
-				? "text-red-400"
-				: (event.responseStatus ?? 0) >= 300
-					? "text-yellow-400"
-					: event.responseStatus
-						? "text-emerald-400"
-						: "text-zinc-600";
-
-	const dotColor =
-		event.error
-			? "bg-red-500"
-			: (event.responseStatus ?? 0) >= 500
-				? "bg-red-500"
+			: (event.responseStatus ?? 0) >= 300
+				? "text-yellow-400"
 				: event.responseStatus
-					? "bg-emerald-500"
-					: "bg-zinc-600 animate-pulse";
+					? "text-emerald-400"
+					: "text-zinc-600";
+
+	const dotColor = event.error
+		? "bg-red-500"
+		: (event.responseStatus ?? 0) >= 500
+			? "bg-red-500"
+			: event.responseStatus
+				? "bg-emerald-500"
+				: "bg-zinc-600 animate-pulse";
 
 	return (
 		<div className="border-b border-white/[0.03]">
@@ -149,9 +170,7 @@ function EventRow({ event }: { event: LiveEvent }) {
 				<span className="font-mono text-[10px] font-black text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 rounded px-1.5 py-0.5 text-center">
 					{event.method}
 				</span>
-				<span className="font-mono text-[12px] text-zinc-300 truncate">
-					{event.path}
-				</span>
+				<span className="font-mono text-[12px] text-zinc-300 truncate">{event.path}</span>
 				<span className="font-mono text-[11px] text-zinc-500 truncate">
 					{new Date(event.receivedAt).toLocaleTimeString()}
 				</span>
@@ -180,8 +199,11 @@ function EventRow({ event }: { event: LiveEvent }) {
 						<pre className="bg-[#0a0a0c] rounded-lg p-3 font-mono text-[10px] text-zinc-400 overflow-x-auto max-h-40 overflow-y-auto">
 							{event.requestBody
 								? (() => {
-										try { return JSON.stringify(JSON.parse(event.requestBody), null, 2); }
-										catch { return event.requestBody; }
+										try {
+											return JSON.stringify(JSON.parse(event.requestBody), null, 2);
+										} catch {
+											return event.requestBody;
+										}
 									})()
 								: "—"}
 						</pre>
@@ -193,8 +215,11 @@ function EventRow({ event }: { event: LiveEvent }) {
 							</div>
 							<pre className="bg-[#0a0a0c] rounded-lg p-3 font-mono text-[10px] text-zinc-400 overflow-x-auto max-h-40 overflow-y-auto">
 								{(() => {
-									try { return JSON.stringify(JSON.parse(event.responseBody), null, 2); }
-									catch { return event.responseBody; }
+									try {
+										return JSON.stringify(JSON.parse(event.responseBody), null, 2);
+									} catch {
+										return event.responseBody;
+									}
 								})()}
 							</pre>
 						</div>
@@ -289,9 +314,7 @@ export function Dashboard() {
 										{bridge.webhookUrl}
 									</div>
 								</div>
-								{bridge.webhookUrl && (
-									<CopyButton text={bridge.webhookUrl} />
-								)}
+								{bridge.webhookUrl && <CopyButton text={bridge.webhookUrl} />}
 							</div>
 						</div>
 
@@ -343,18 +366,12 @@ export function Dashboard() {
 								<div className="flex-1 flex items-center justify-center h-full text-center p-8">
 									<div>
 										<div className="text-zinc-600 text-3xl mb-3">&#x1F4E1;</div>
-										<p className="text-zinc-500 text-sm font-body mb-1">
-											Waiting for webhooks...
-										</p>
-										<p className="text-zinc-600 text-xs font-mono">
-											POST to {bridge.webhookUrl}
-										</p>
+										<p className="text-zinc-500 text-sm font-body mb-1">Waiting for webhooks...</p>
+										<p className="text-zinc-600 text-xs font-mono">POST to {bridge.webhookUrl}</p>
 									</div>
 								</div>
 							) : (
-								bridge.events.map((event) => (
-									<EventRow key={event.id} event={event} />
-								))
+								bridge.events.map((event) => <EventRow key={event.id} event={event} />)
 							)}
 						</div>
 					</div>

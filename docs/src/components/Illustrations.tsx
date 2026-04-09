@@ -33,15 +33,10 @@ export function Callout({
 				<span className="text-lg">{icon}</span>
 			</div>
 			<div>
-				<div
-					className="text-sm font-bold font-headline mb-1"
-					style={{ color }}
-				>
+				<div className="text-sm font-bold font-headline mb-1" style={{ color }}>
 					{title}
 				</div>
-				<div className="text-[13px] text-zinc-400 leading-relaxed font-body">
-					{children}
-				</div>
+				<div className="text-[13px] text-zinc-400 leading-relaxed font-body">{children}</div>
 			</div>
 		</div>
 	);
@@ -62,26 +57,20 @@ export function CompareCard({
 	return (
 		<div className="not-prose bg-[#0a0a0c] border border-white/[0.06] rounded-xl overflow-hidden">
 			<div className="px-5 py-3 border-b border-white/[0.04] bg-white/[0.02]">
-				<span className="text-xs font-black text-white font-headline">
-					{title}
-				</span>
+				<span className="text-xs font-black text-white font-headline">{title}</span>
 			</div>
 			<div className="grid grid-cols-2 divide-x divide-white/[0.04]">
 				<div className="p-4">
 					<div className="text-[9px] font-black text-zinc-600 uppercase tracking-[0.2em] mb-2 font-label">
 						{otherName}
 					</div>
-					<div className="text-sm text-zinc-500 font-serif italic">
-						{other}
-					</div>
+					<div className="text-sm text-zinc-500 font-serif italic">{other}</div>
 				</div>
 				<div className="p-4">
 					<div className="text-[9px] font-black text-primary uppercase tracking-[0.2em] mb-2 font-label">
 						BridgeHook
 					</div>
-					<div className="text-sm text-white font-bold font-headline">
-						{bridgehook}
-					</div>
+					<div className="text-sm text-white font-bold font-headline">{bridgehook}</div>
 				</div>
 			</div>
 		</div>
@@ -124,9 +113,7 @@ export function StepTimeline({
 
 					{/* Content */}
 					<div className="pb-6 flex-1">
-						<div className="text-sm font-bold text-white font-headline mb-1">
-							{step.title}
-						</div>
+						<div className="text-sm font-bold text-white font-headline mb-1">{step.title}</div>
 						<div className="text-[13px] text-zinc-400 leading-relaxed font-body mb-2">
 							{step.desc}
 						</div>
@@ -212,13 +199,9 @@ export function SecurityLayers() {
 							>
 								Layer {i + 1}
 							</span>
-							<span className="text-sm font-bold text-white font-headline">
-								{layer.name}
-							</span>
+							<span className="text-sm font-bold text-white font-headline">{layer.name}</span>
 						</div>
-						<div className="text-[12px] text-zinc-500 font-body">
-							{layer.desc}
-						</div>
+						<div className="text-[12px] text-zinc-500 font-body">{layer.desc}</div>
 					</div>
 				</div>
 			))}
@@ -236,9 +219,7 @@ export function ProtocolCompare() {
 					<div className="w-8 h-8 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center text-sm">
 						📡
 					</div>
-					<div className="text-sm font-black text-primary font-headline">
-						SSE
-					</div>
+					<div className="text-sm font-black text-primary font-headline">SSE</div>
 				</div>
 				<div className="space-y-2 mb-4">
 					{[
@@ -248,10 +229,7 @@ export function ProtocolCompare() {
 						"Works through any proxy/CDN",
 						"Trivial to implement",
 					].map((item) => (
-						<div
-							key={item}
-							className="flex items-center gap-2 text-[11px] text-zinc-400 font-body"
-						>
+						<div key={item} className="flex items-center gap-2 text-[11px] text-zinc-400 font-body">
 							<span className="text-primary text-xs">✓</span>
 							{item}
 						</div>
@@ -268,9 +246,7 @@ export function ProtocolCompare() {
 					<div className="w-8 h-8 rounded-lg bg-white/[0.04] border border-white/[0.08] flex items-center justify-center text-sm">
 						🔌
 					</div>
-					<div className="text-sm font-black text-zinc-400 font-headline">
-						WebSocket
-					</div>
+					<div className="text-sm font-black text-zinc-400 font-headline">WebSocket</div>
 				</div>
 				<div className="space-y-2 mb-4">
 					{[
@@ -280,10 +256,7 @@ export function ProtocolCompare() {
 						"Often blocked by proxies",
 						"More complex setup",
 					].map((item) => (
-						<div
-							key={item}
-							className="flex items-center gap-2 text-[11px] text-zinc-500 font-body"
-						>
+						<div key={item} className="flex items-center gap-2 text-[11px] text-zinc-500 font-body">
 							<span className="text-zinc-600 text-xs">—</span>
 							{item}
 						</div>

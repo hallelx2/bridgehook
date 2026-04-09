@@ -31,10 +31,7 @@ const COMPARISONS = [
 	},
 ];
 
-function ComparisonRow({
-	item,
-	index,
-}: { item: (typeof COMPARISONS)[number]; index: number }) {
+function ComparisonRow({ item, index }: { item: (typeof COMPARISONS)[number]; index: number }) {
 	return (
 		<div
 			className="group grid grid-cols-[1fr_56px_1fr] items-center gap-4 md:gap-8 py-5 md:py-6 border-b border-white/[0.06] last:border-0 hover:bg-white/[0.01] transition-colors -mx-6 px-6 md:-mx-10 md:px-10"
@@ -50,9 +47,7 @@ function ComparisonRow({
 			{/* Center icon */}
 			<div className="relative flex items-center justify-center">
 				<div className="w-11 h-11 rounded-full bg-primary/10 border border-primary/25 flex items-center justify-center group-hover:bg-primary/20 group-hover:border-primary/40 group-hover:shadow-[0_0_20px_rgba(144,147,255,0.2)] transition-all duration-300">
-					<span className="material-symbols-outlined text-primary text-xl">
-						{item.icon}
-					</span>
+					<span className="material-symbols-outlined text-primary text-xl">{item.icon}</span>
 				</div>
 			</div>
 
@@ -82,17 +77,15 @@ export function Benefits() {
 
 			<div className="text-center mb-16 relative z-10">
 				<div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-white/[0.03] border border-white/[0.06] text-[10px] font-bold text-secondary tracking-[0.2em] uppercase mb-6 font-label">
-					<span className="material-symbols-outlined text-secondary text-sm">
-						compare_arrows
-					</span>
+					<span className="material-symbols-outlined text-secondary text-sm">compare_arrows</span>
 					vs Traditional Tunnels
 				</div>
 				<h2 className="text-4xl md:text-6xl font-black text-white tracking-tighter font-headline mb-4">
 					The old way is over
 				</h2>
 				<p className="text-zinc-400 text-lg max-w-xl mx-auto leading-relaxed font-body">
-					Every tunnel tool makes you install software, create accounts,
-					and manage processes. BridgeHook eliminates all of it.
+					Every tunnel tool makes you install software, create accounts, and manage processes.
+					BridgeHook eliminates all of it.
 				</p>
 			</div>
 

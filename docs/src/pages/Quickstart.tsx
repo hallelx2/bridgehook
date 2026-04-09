@@ -41,27 +41,35 @@ export function Quickstart() {
 			/>
 
 			<Callout icon="⚠️" title="Keep the Tab Open" color="#fcd34d">
-				Your browser tab must stay open. The browser IS the bridge — closing the tab disconnects the relay and stops forwarding.
-				For persistent background operation, use the desktop app (system tray).
+				Your browser tab must stay open. The browser IS the bridge — closing the tab disconnects the
+				relay and stops forwarding. For persistent background operation, use the desktop app (system
+				tray).
 			</Callout>
 
 			<h2>Testing Manually</h2>
 			<p>You can test your setup without a webhook provider using cURL:</p>
-			<pre><code>{`curl -X POST https://relay.bridgehook.dev/hook/ch_9x4kf2m \\
+			<pre>
+				<code>{`curl -X POST https://relay.bridgehook.dev/hook/ch_9x4kf2m \\
   -H "Content-Type: application/json" \\
-  -d '{"test": true, "event": "checkout.session.completed"}'`}</code></pre>
+  -d '{"test": true, "event": "checkout.session.completed"}'`}</code>
+			</pre>
 			<p>
-				You should see the event appear in the dashboard and get forwarded to your local server. The response from your server will display alongside the request.
+				You should see the event appear in the dashboard and get forwarded to your local server. The
+				response from your server will display alongside the request.
 			</p>
 
 			<h2>CORS Requirement</h2>
 			<p>
-				Your local dev server needs to accept cross-origin requests from the BridgeHook origin. Most frameworks support this in dev mode. If not, add this header:
+				Your local dev server needs to accept cross-origin requests from the BridgeHook origin. Most
+				frameworks support this in dev mode. If not, add this header:
 			</p>
-			<pre><code>Access-Control-Allow-Origin: *</code></pre>
+			<pre>
+				<code>Access-Control-Allow-Origin: *</code>
+			</pre>
 
 			<h3>Framework Examples</h3>
-			<pre><code>{`// Express
+			<pre>
+				<code>{`// Express
 app.use(cors());
 
 // Next.js (API route)
@@ -71,10 +79,12 @@ app.use(cors());
 app.add_middleware(CORSMiddleware, allow_origins=["*"])
 
 // Go (net/http)
-w.Header().Set("Access-Control-Allow-Origin", "*")`}</code></pre>
+w.Header().Set("Access-Control-Allow-Origin", "*")`}</code>
+			</pre>
 
 			<Callout icon="🔁" title="Replay Events" color="#9093ff">
-				All events are stored in the database for 24 hours. You can view historical events when you reconnect, and replay any event to your local server with one click.
+				All events are stored in the database for 24 hours. You can view historical events when you
+				reconnect, and replay any event to your local server with one click.
 			</Callout>
 		</>
 	);

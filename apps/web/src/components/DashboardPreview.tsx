@@ -59,10 +59,7 @@ const EVENTS = [
 	},
 ];
 
-function AnimatedLine({
-	children,
-	delay,
-}: { children: React.ReactNode; delay: number }) {
+function AnimatedLine({ children, delay }: { children: React.ReactNode; delay: number }) {
 	const ref = useRef<HTMLDivElement>(null);
 	const [visible, setVisible] = useState(false);
 
@@ -92,9 +89,7 @@ function StatusDot({ status }: { status: number }) {
 			: status >= 300
 				? "bg-yellow-500 shadow-[0_0_6px_rgba(234,179,8,0.5)]"
 				: "bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.5)]";
-	return (
-		<span className={`inline-block w-2 h-2 rounded-full ${color}`} />
-	);
+	return <span className={`inline-block w-2 h-2 rounded-full ${color}`} />;
 }
 
 function MethodBadge({ method }: { method: string }) {
@@ -130,10 +125,7 @@ function CopyButton() {
 	);
 }
 
-function SidebarSection({
-	label,
-	children,
-}: { label: string; children: React.ReactNode }) {
+function SidebarSection({ label, children }: { label: string; children: React.ReactNode }) {
 	return (
 		<div>
 			<div className="text-[9px] font-black text-zinc-500 uppercase tracking-[0.25em] font-label mb-2">
@@ -170,14 +162,10 @@ export function DashboardPreview() {
 								<span className="w-3 h-3 rounded bg-primary/30 flex items-center justify-center text-[6px] text-primary font-black">
 									B
 								</span>
-								<span className="font-body text-[11px] text-zinc-300 font-medium">
-									Dashboard
-								</span>
+								<span className="font-body text-[11px] text-zinc-300 font-medium">Dashboard</span>
 							</div>
 							<div className="flex items-center gap-2 px-4 py-1.5 text-zinc-600">
-								<span className="font-body text-[11px] font-medium">
-									Events
-								</span>
+								<span className="font-body text-[11px] font-medium">Events</span>
 							</div>
 						</div>
 
@@ -210,16 +198,12 @@ export function DashboardPreview() {
 							<div className="px-6 py-5 border-b border-white/[0.05]">
 								<div className="flex items-center gap-2.5">
 									<div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary/30 to-primary/10 border border-primary/20 flex items-center justify-center">
-										<span className="text-primary text-xs font-black font-headline">
-											B
-										</span>
+										<span className="text-primary text-xs font-black font-headline">B</span>
 									</div>
 									<div>
 										<span className="font-headline text-sm font-extrabold tracking-tight text-white block leading-none">
 											bridge
-											<span className="text-primary">
-												hook
-											</span>
+											<span className="text-primary">hook</span>
 										</span>
 										<span className="text-[9px] text-zinc-600 font-label font-bold tracking-wider uppercase">
 											Webhook Relay
@@ -252,9 +236,7 @@ export function DashboardPreview() {
 								<SidebarSection label="Forwarding to">
 									<div className="flex items-center gap-2">
 										<span className="w-2 h-2 rounded-full bg-emerald-500/60" />
-										<span className="font-mono text-[13px] text-emerald-400">
-											localhost:3000
-										</span>
+										<span className="font-mono text-[13px] text-emerald-400">localhost:3000</span>
 									</div>
 								</SidebarSection>
 
@@ -262,8 +244,7 @@ export function DashboardPreview() {
 								<SidebarSection label="Webhook URL">
 									<div className="bg-white/[0.03] border border-white/[0.06] rounded-lg p-3 mb-3">
 										<div className="font-mono text-[11px] text-primary break-all leading-relaxed">
-											https://hook.bridgehook.dev
-											/ch_9x4kf2m
+											https://hook.bridgehook.dev /ch_9x4kf2m
 										</div>
 									</div>
 									<CopyButton />
@@ -272,18 +253,12 @@ export function DashboardPreview() {
 								{/* Allowed paths */}
 								<SidebarSection label="Path Allowlist">
 									<div className="space-y-1.5">
-										{[
-											"/webhook/stripe",
-											"/webhook/github",
-											"/webhook/twilio",
-										].map((p) => (
+										{["/webhook/stripe", "/webhook/github", "/webhook/twilio"].map((p) => (
 											<div
 												key={p}
 												className="font-mono text-[11px] text-zinc-400 flex items-center gap-2 py-1"
 											>
-												<span className="text-emerald-500 text-xs">
-													&#x2713;
-												</span>
+												<span className="text-emerald-500 text-xs">&#x2713;</span>
 												{p}
 											</div>
 										))}
@@ -331,20 +306,16 @@ export function DashboardPreview() {
 
 							{/* Column headers */}
 							<div className="grid grid-cols-[44px_64px_1fr_1fr_56px_56px] gap-2 px-6 py-3 border-b border-white/[0.04] bg-white/[0.01]">
-								{["", "Method", "Path", "Event", "Status", "Time"].map(
-									(h) => (
-										<span
-											key={h || "dot"}
-											className={`text-[9px] font-black text-zinc-600 uppercase tracking-[0.25em] font-label ${
-												h === "Status" || h === "Time"
-													? "text-right"
-													: ""
-											}`}
-										>
-											{h}
-										</span>
-									),
-								)}
+								{["", "Method", "Path", "Event", "Status", "Time"].map((h) => (
+									<span
+										key={h || "dot"}
+										className={`text-[9px] font-black text-zinc-600 uppercase tracking-[0.25em] font-label ${
+											h === "Status" || h === "Time" ? "text-right" : ""
+										}`}
+									>
+										{h}
+									</span>
+								))}
 							</div>
 
 							{/* Event rows */}
@@ -353,14 +324,10 @@ export function DashboardPreview() {
 									<AnimatedLine key={i} delay={evt.delay}>
 										<div className="grid grid-cols-[44px_64px_1fr_1fr_56px_56px] gap-2 items-center px-6 py-3.5 hover:bg-white/[0.02] transition-colors group cursor-pointer border-b border-white/[0.02] last:border-0">
 											<div className="flex justify-center">
-												<StatusDot
-													status={evt.status}
-												/>
+												<StatusDot status={evt.status} />
 											</div>
 
-											<MethodBadge
-												method={evt.method}
-											/>
+											<MethodBadge method={evt.method} />
 
 											<span className="font-mono text-[12px] text-zinc-300 group-hover:text-white transition-colors truncate">
 												{evt.path}
@@ -394,23 +361,14 @@ export function DashboardPreview() {
 							<div className="px-6 py-3 border-t border-white/[0.05] flex items-center justify-between bg-white/[0.01]">
 								<div className="flex items-center gap-4">
 									<span className="text-[10px] text-zinc-600 font-body">
-										<span className="text-emerald-400 font-bold">
-											6
-										</span>{" "}
-										successful
+										<span className="text-emerald-400 font-bold">6</span> successful
 									</span>
 									<span className="text-[10px] text-zinc-600 font-body">
-										<span className="text-red-400 font-bold">
-											1
-										</span>{" "}
-										failed
+										<span className="text-red-400 font-bold">1</span> failed
 									</span>
 								</div>
 								<span className="text-[10px] text-zinc-600 font-body">
-									Avg latency:{" "}
-									<span className="text-zinc-400 font-bold">
-										11ms
-									</span>
+									Avg latency: <span className="text-zinc-400 font-bold">11ms</span>
 								</span>
 							</div>
 						</div>

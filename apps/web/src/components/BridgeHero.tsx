@@ -16,7 +16,7 @@ function generateBars() {
 		// Valley: tall edges (95vh), short center (30vh)
 		const minH = 30;
 		const maxH = 95;
-		const height = minH + (maxH - minH) * (distFromCenter ** 0.7);
+		const height = minH + (maxH - minH) * distFromCenter ** 0.7;
 		// Animation: center bars arrive last
 		const delay = (1 - distFromCenter) * 2.5;
 
@@ -72,8 +72,7 @@ export function BridgeHero() {
 
 				{/* Subtitle */}
 				<p className="max-w-xl mx-auto text-zinc-400 text-lg md:text-xl leading-relaxed mb-14 font-medium tracking-tight font-body">
-					No tunnels. No CLI. No binaries. Capture, inspect, and replay
-					HTTP requests in real-time.
+					No tunnels. No CLI. No binaries. Capture, inspect, and replay HTTP requests in real-time.
 				</p>
 
 				{/* CTAs */}

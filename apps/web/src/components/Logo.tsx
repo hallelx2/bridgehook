@@ -40,12 +40,7 @@ export function BridgeHookIcon({
 				strokeWidth="3.5"
 				strokeLinecap="round"
 			/>
-			<path
-				d="M4 20V28"
-				stroke="currentColor"
-				strokeWidth="3.5"
-				strokeLinecap="round"
-			/>
+			<path d="M4 20V28" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" />
 			<path
 				d="M28 20V24C28 26.209 26.209 28 24 28H22"
 				stroke="url(#hook-grad)"
@@ -62,21 +57,13 @@ export function BridgeHookIcon({
 	);
 }
 
-export function Logo({
-	size = "md",
-	showIcon = false,
-	className = "",
-}: LogoProps) {
+export function Logo({ size = "md", showIcon = false, className = "" }: LogoProps) {
 	const s = SIZES[size];
 
 	return (
 		<div className={`flex items-center ${s.gap} ${className}`}>
-			{showIcon && (
-				<BridgeHookIcon size={s.icon} className="text-white" />
-			)}
-			<span
-				className={`font-headline font-extrabold tracking-[-0.04em] leading-none ${s.text}`}
-			>
+			{showIcon && <BridgeHookIcon size={s.icon} className="text-white" />}
+			<span className={`font-headline font-extrabold tracking-[-0.04em] leading-none ${s.text}`}>
 				<span className="text-white">bridge</span>
 				<span className="text-primary">hook</span>
 			</span>
@@ -94,10 +81,7 @@ export function LogoIcon({
 				className="flex items-center justify-center rounded-xl bg-[#09090b]"
 				style={{ width: size, height: size }}
 			>
-				<BridgeHookIcon
-					size={Math.round(size * 0.6)}
-					className="text-white"
-				/>
+				<BridgeHookIcon size={Math.round(size * 0.6)} className="text-white" />
 			</div>
 		);
 	}

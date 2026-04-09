@@ -1,18 +1,18 @@
 import { useState } from "react";
 import { Layout } from "./components/Layout";
-import { Introduction } from "./pages/Introduction";
-import { Quickstart } from "./pages/Quickstart";
-import { HowItWorks } from "./pages/HowItWorks";
-import { SSETechnology } from "./pages/SSETechnology";
+import { Architecture } from "./pages/Architecture";
 import { BrowserBridge } from "./pages/BrowserBridge";
-import { SecurityModel } from "./pages/SecurityModel";
 import { ChannelSecrets } from "./pages/ChannelSecrets";
+import { Tradeoffs, VsCloudflareTunnel, VsLocaltunnel, VsNgrok } from "./pages/Comparison";
+import { HowItWorks } from "./pages/HowItWorks";
+import { Introduction } from "./pages/Introduction";
 import { PathAllowlist } from "./pages/PathAllowlist";
-import { VsNgrok, VsCloudflareTunnel, VsLocaltunnel, Tradeoffs } from "./pages/Comparison";
+import { Quickstart } from "./pages/Quickstart";
 import { RelayAPI } from "./pages/RelayAPI";
 import { SSEEvents } from "./pages/SSEEvents";
+import { SSETechnology } from "./pages/SSETechnology";
+import { SecurityModel } from "./pages/SecurityModel";
 import { SelfHosting } from "./pages/SelfHosting";
-import { Architecture } from "./pages/Architecture";
 
 const PAGES: Record<string, () => React.JSX.Element> = {
 	introduction: Introduction,

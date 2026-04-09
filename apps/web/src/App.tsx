@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Benefits } from "./components/Benefits";
 import { BentoGrid } from "./components/BentoGrid";
 import { BridgeHero } from "./components/BridgeHero";

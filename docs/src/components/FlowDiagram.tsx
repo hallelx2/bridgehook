@@ -23,12 +23,8 @@ function DiagramNode({ icon, label, sublabel, color }: NodeProps) {
 			>
 				<span className="text-2xl">{icon}</span>
 			</div>
-			<div className="font-headline font-bold text-white text-sm tracking-tight">
-				{label}
-			</div>
-			<div className="font-mono text-[10px] text-zinc-500 mt-0.5">
-				{sublabel}
-			</div>
+			<div className="font-headline font-bold text-white text-sm tracking-tight">{label}</div>
+			<div className="font-mono text-[10px] text-zinc-500 mt-0.5">{sublabel}</div>
 		</div>
 	);
 }
@@ -37,13 +33,7 @@ function Arrow({ color = "#9093ff" }: { color?: string }) {
 	return (
 		<div className="flex items-center px-2">
 			<svg width="60" height="24" viewBox="0 0 60 24" fill="none">
-				<path
-					d="M0 12H50"
-					stroke={color}
-					strokeWidth="1.5"
-					strokeDasharray="4 3"
-					opacity="0.4"
-				/>
+				<path d="M0 12H50" stroke={color} strokeWidth="1.5" strokeDasharray="4 3" opacity="0.4" />
 				<path
 					d="M46 6L54 12L46 18"
 					stroke={color}
@@ -81,19 +71,12 @@ export function ArchitectureDiagram() {
 					<div className="text-[9px] font-black text-primary uppercase tracking-[0.3em] font-label">
 						Cloud Relay
 					</div>
-					<DiagramNode
-						icon="☁️"
-						label="Relay Server"
-						sublabel="Cloudflare Worker"
-						color="#9093ff"
-					/>
+					<DiagramNode icon="☁️" label="Relay Server" sublabel="Cloudflare Worker" color="#9093ff" />
 				</div>
 
 				<div className="flex flex-col items-center gap-1">
 					<Arrow color="#9093ff" />
-					<span className="text-[9px] font-bold text-primary/50 font-mono">
-						SSE
-					</span>
+					<span className="text-[9px] font-bold text-primary/50 font-mono">SSE</span>
 				</div>
 
 				{/* Your machine */}
@@ -102,12 +85,7 @@ export function ArchitectureDiagram() {
 						Your Machine
 					</div>
 					<div className="flex flex-col items-center gap-3">
-						<DiagramNode
-							icon="🌐"
-							label="Your Browser"
-							sublabel="BridgeHook JS"
-							color="#ddb7ff"
-						/>
+						<DiagramNode icon="🌐" label="Your Browser" sublabel="BridgeHook JS" color="#ddb7ff" />
 						<svg width="2" height="24" viewBox="0 0 2 24" fill="none">
 							<path
 								d="M1 0V24"
@@ -117,12 +95,7 @@ export function ArchitectureDiagram() {
 								opacity="0.4"
 							/>
 						</svg>
-						<DiagramNode
-							icon="💻"
-							label="localhost"
-							sublabel=":3000"
-							color="#28c840"
-						/>
+						<DiagramNode icon="💻" label="localhost" sublabel=":3000" color="#28c840" />
 					</div>
 				</div>
 			</div>
@@ -207,7 +180,7 @@ export function DataFlowDiagram() {
 									style={{
 										background: row.color,
 										boxShadow: `0 0 8px ${row.color}`,
-										animation: `flowRight 2s ease-in-out infinite`,
+										animation: "flowRight 2s ease-in-out infinite",
 										animationDelay: `${i * 0.4}s`,
 									}}
 								/>
@@ -225,9 +198,7 @@ export function DataFlowDiagram() {
 						</div>
 
 						{/* To */}
-						<span className="text-xs font-bold text-zinc-400 font-headline">
-							{row.to}
-						</span>
+						<span className="text-xs font-bold text-zinc-400 font-headline">{row.to}</span>
 					</div>
 				))}
 			</div>
@@ -248,12 +219,8 @@ export function ResponsibilityDiagram() {
 						<span className="text-sm">☁️</span>
 					</div>
 					<div>
-						<div className="text-xs font-black text-primary font-headline">
-							Server-Side
-						</div>
-						<div className="text-[9px] text-zinc-600 font-label">
-							Relay Worker + Neon DB
-						</div>
+						<div className="text-xs font-black text-primary font-headline">Server-Side</div>
+						<div className="text-[9px] text-zinc-600 font-label">Relay Worker + Neon DB</div>
 					</div>
 				</div>
 				<ul className="space-y-2">
@@ -264,10 +231,7 @@ export function ResponsibilityDiagram() {
 						"Webhook receiving",
 						"Rate limiting",
 					].map((item) => (
-						<li
-							key={item}
-							className="flex items-center gap-2 text-xs text-zinc-400 font-body"
-						>
+						<li key={item} className="flex items-center gap-2 text-xs text-zinc-400 font-body">
 							<span className="w-1 h-1 rounded-full bg-primary/60" />
 							{item}
 						</li>
@@ -282,12 +246,8 @@ export function ResponsibilityDiagram() {
 						<span className="text-sm">🌐</span>
 					</div>
 					<div>
-						<div className="text-xs font-black text-[#28c840] font-headline">
-							Client-Side
-						</div>
-						<div className="text-[9px] text-zinc-600 font-label">
-							Your Browser
-						</div>
+						<div className="text-xs font-black text-[#28c840] font-headline">Client-Side</div>
+						<div className="text-[9px] text-zinc-600 font-label">Your Browser</div>
 					</div>
 				</div>
 				<ul className="space-y-2">
@@ -298,10 +258,7 @@ export function ResponsibilityDiagram() {
 						"Response capture",
 						"UI rendering",
 					].map((item) => (
-						<li
-							key={item}
-							className="flex items-center gap-2 text-xs text-zinc-400 font-body"
-						>
+						<li key={item} className="flex items-center gap-2 text-xs text-zinc-400 font-body">
 							<span className="w-1 h-1 rounded-full bg-[#28c840]/60" />
 							{item}
 						</li>

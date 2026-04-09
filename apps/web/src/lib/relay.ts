@@ -52,17 +52,11 @@ export type SSEEvent =
 	| SSEResponseEvent;
 
 /** Create a new channel on the relay (server-side persists to Neon) */
-export async function createChannel(
-	port: number,
-	allowedPaths: string[],
-): Promise<ChannelInfo> {
+export async function createChannel(port: number, allowedPaths: string[]): Promise<ChannelInfo> {
 	// Generate a secret client-side, hash it, send hash to server
 	const secret = crypto.randomUUID();
 	const encoder = new TextEncoder();
-	const hashBuffer = await crypto.subtle.digest(
-		"SHA-256",
-		encoder.encode(secret),
-	);
+	const hashBuffer = await crypto.subtle.digest("SHA-256", encoder.encode(secret));
 	const secretHash = Array.from(new Uint8Array(hashBuffer))
 		.map((b) => b.toString(16).padStart(2, "0"))
 		.join("");
@@ -97,13 +91,8 @@ export async function deleteChannel(channelId: string): Promise<void> {
 }
 
 /** Fetch historical events for a channel */
-export async function getEvents(
-	channelId: string,
-	limit = 50,
-): Promise<WebhookEventData[]> {
-	const res = await fetch(
-		`${RELAY_URL}/api/channels/${channelId}/events?limit=${limit}`,
-	);
+export async function getEvents(channelId: string, limit = 50): Promise<WebhookEventData[]> {
+	const res = await fetch(`${RELAY_URL}/api/channels/${channelId}/events?limit=${limit}`);
 	if (!res.ok) throw new Error(`Failed to get events: ${res.status}`);
 	return res.json();
 }
@@ -114,9 +103,7 @@ export function connectSSE(
 	onEvent: (event: SSEEvent) => void,
 	onError?: (error: Event) => void,
 ): () => void {
-	const source = new EventSource(
-		`${RELAY_URL}/hook/${channelId}/events`,
-	);
+	const source = new EventSource(`${RELAY_URL}/hook/${channelId}/events`);
 
 	source.onmessage = (msg) => {
 		const data = JSON.parse(msg.data) as SSEEvent;

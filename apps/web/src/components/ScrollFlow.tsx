@@ -116,38 +116,29 @@ export function ScrollFlow() {
 	}, []);
 
 	// Which node is active based on progress
-	const activeIndex = Math.min(
-		Math.floor(progress * STEPS.length),
-		STEPS.length - 1,
-	);
+	const activeIndex = Math.min(Math.floor(progress * STEPS.length), STEPS.length - 1);
 
 	// Stroke dashoffset for the reveal
 	const revealLength = pathLength * progress;
 	const dashOffset = pathLength - revealLength;
 
 	return (
-		<section
-			ref={sectionRef}
-			id="flow"
-			className="max-w-5xl mx-auto px-4 md:px-8 py-32 relative"
-		>
+		<section ref={sectionRef} id="flow" className="max-w-5xl mx-auto px-4 md:px-8 py-32 relative">
 			{/* Background glow */}
 			<div className="absolute top-1/3 left-1/2 -translate-x-1/2 w-[500px] h-[800px] bg-primary/[0.03] rounded-full blur-[120px] pointer-events-none" />
 
 			{/* Header */}
 			<div className="text-center mb-20 relative z-10">
 				<div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-white/[0.03] border border-white/[0.06] text-[10px] font-bold text-tertiary tracking-[0.2em] uppercase mb-6 font-label">
-					<span className="material-symbols-outlined text-tertiary text-sm">
-						route
-					</span>
+					<span className="material-symbols-outlined text-tertiary text-sm">route</span>
 					Request Flow
 				</div>
 				<h2 className="text-4xl md:text-6xl font-black text-white tracking-tighter font-headline mb-4">
 					See every step
 				</h2>
 				<p className="text-zinc-400 text-lg max-w-xl mx-auto leading-relaxed font-body">
-					Scroll to trace a webhook from the moment it fires to the
-					response your server sends back. Every hop, visualized.
+					Scroll to trace a webhook from the moment it fires to the response your server sends back.
+					Every hop, visualized.
 				</p>
 			</div>
 
@@ -190,13 +181,7 @@ export function ScrollFlow() {
 						/>
 					)}
 					{/* Invisible path for measurement */}
-					<path
-						ref={pathRef}
-						d={PATH_D}
-						stroke="transparent"
-						strokeWidth="1"
-						fill="none"
-					/>
+					<path ref={pathRef} d={PATH_D} stroke="transparent" strokeWidth="1" fill="none" />
 
 					{/* Node dots on the path */}
 					{STEPS.map((step, i) => {
@@ -205,13 +190,7 @@ export function ScrollFlow() {
 							<g key={step.title}>
 								{/* Outer glow */}
 								{isActive && (
-									<circle
-										cx={nodeX(i)}
-										cy={nodeY(i)}
-										r="12"
-										fill={step.color}
-										opacity="0.15"
-									>
+									<circle cx={nodeX(i)} cy={nodeY(i)} r="12" fill={step.color} opacity="0.15">
 										<animate
 											attributeName="r"
 											values="10;16;10"
@@ -232,11 +211,7 @@ export function ScrollFlow() {
 									cy={nodeY(i)}
 									r="6"
 									fill={isActive ? step.color : "#18181b"}
-									stroke={
-										isActive
-											? step.color
-											: "rgba(255,255,255,0.1)"
-									}
+									stroke={isActive ? step.color : "rgba(255,255,255,0.1)"}
 									strokeWidth="2"
 									style={{ transition: "all 0.5s ease" }}
 								/>
@@ -258,21 +233,10 @@ export function ScrollFlow() {
 							</animateMotion>
 						</circle>
 					)}
-					<path
-						id="flowPathRef"
-						d={PATH_D}
-						stroke="transparent"
-						fill="none"
-					/>
+					<path id="flowPathRef" d={PATH_D} stroke="transparent" fill="none" />
 
 					<defs>
-						<linearGradient
-							id="flowGradient"
-							x1="0"
-							y1="0"
-							x2="0"
-							y2="1"
-						>
+						<linearGradient id="flowGradient" x1="0" y1="0" x2="0" y2="1">
 							<stop offset="0%" stopColor="#ffb0cd" />
 							<stop offset="25%" stopColor="#9093ff" />
 							<stop offset="50%" stopColor="#ddb7ff" />
@@ -292,15 +256,11 @@ export function ScrollFlow() {
 						<div
 							key={step.title}
 							className={`absolute transition-all duration-700 w-[calc(50%-60px)] ${
-								isActive
-									? "opacity-100 translate-y-0"
-									: "opacity-15 translate-y-3"
+								isActive ? "opacity-100 translate-y-0" : "opacity-15 translate-y-3"
 							}`}
 							style={{
 								top: `${topPos}px`,
-								...(isLeft
-									? { left: 0 }
-									: { right: 0 }),
+								...(isLeft ? { left: 0 } : { right: 0 }),
 							}}
 						>
 							<div
@@ -320,18 +280,14 @@ export function ScrollFlow() {
 									<div
 										className="w-9 h-9 rounded-lg flex items-center justify-center transition-all duration-500"
 										style={{
-											background: isActive
-												? `${step.color}12`
-												: "rgba(255,255,255,0.03)",
+											background: isActive ? `${step.color}12` : "rgba(255,255,255,0.03)",
 											border: `1px solid ${isActive ? `${step.color}25` : "rgba(255,255,255,0.06)"}`,
 										}}
 									>
 										<span
 											className="material-symbols-outlined text-lg transition-colors duration-500"
 											style={{
-												color: isActive
-													? step.color
-													: "#3f3f46",
+												color: isActive ? step.color : "#3f3f46",
 											}}
 										>
 											{step.icon}
@@ -356,12 +312,8 @@ export function ScrollFlow() {
 								<div
 									className="font-mono text-[11px] px-3 py-2 rounded-lg transition-all duration-500"
 									style={{
-										background: isActive
-											? `${step.color}08`
-											: "rgba(255,255,255,0.02)",
-										color: isActive
-											? step.color
-											: "#3f3f46",
+										background: isActive ? `${step.color}08` : "rgba(255,255,255,0.02)",
+										color: isActive ? step.color : "#3f3f46",
 										border: `1px solid ${isActive ? `${step.color}18` : "rgba(255,255,255,0.04)"}`,
 									}}
 								>

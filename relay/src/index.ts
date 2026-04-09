@@ -1,12 +1,8 @@
+import { CHANNEL_EXPIRY_HOURS, MAX_BODY_SIZE_BYTES, MAX_BUFFERED_EVENTS } from "@bridgehook/shared";
+import { events, channels } from "@bridgehook/shared/db/schema";
 import { neon } from "@neondatabase/serverless";
+import { desc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/neon-http";
-import { channels, events } from "@bridgehook/shared/db/schema";
-import { eq, desc } from "drizzle-orm";
-import {
-	MAX_BUFFERED_EVENTS,
-	MAX_BODY_SIZE_BYTES,
-	CHANNEL_EXPIRY_HOURS,
-} from "@bridgehook/shared";
 
 export interface Env {
 	DATABASE_URL: string;
@@ -67,9 +63,7 @@ export default {
 				};
 
 				const channelId = crypto.randomUUID().replace(/-/g, "").slice(0, 12);
-				const expiresAt = new Date(
-					Date.now() + CHANNEL_EXPIRY_HOURS * 60 * 60 * 1000,
-				);
+				const expiresAt = new Date(Date.now() + CHANNEL_EXPIRY_HOURS * 60 * 60 * 1000);
 
 				const [channel] = await db
 					.insert(channels)
@@ -129,10 +123,7 @@ export default {
 			// ── List events for channel ──
 			if (path.match(/^\/api\/channels\/[a-z0-9]+\/events$/) && request.method === "GET") {
 				const channelId = path.split("/")[3];
-				const limit = Math.min(
-					Number(url.searchParams.get("limit") || "50"),
-					MAX_BUFFERED_EVENTS,
-				);
+				const limit = Math.min(Number(url.searchParams.get("limit") || "50"), MAX_BUFFERED_EVENTS);
 
 				const rows = await db
 					.select()
@@ -165,13 +156,11 @@ export default {
 				if (!sseConnections.has(channelId)) {
 					sseConnections.set(channelId, new Set());
 				}
-				sseConnections.get(channelId)!.add(writer);
+				sseConnections.get(channelId)?.add(writer);
 
 				// Send connected event
 				writer.write(
-					encoder.encode(
-						`data: ${JSON.stringify({ type: "connected", channelId })}\n\n`,
-					),
+					encoder.encode(`data: ${JSON.stringify({ type: "connected", channelId })}\n\n`),
 				);
 
 				// Cleanup on disconnect
@@ -254,11 +243,7 @@ export default {
 					}
 				}
 
-				return json(
-					{ received: true, eventId: evt.id, channelId },
-					202,
-					origin,
-				);
+				return json({ received: true, eventId: evt.id, channelId }, 202, origin);
 			}
 
 			// ── Receive response from browser ──
@@ -311,11 +296,7 @@ export default {
 			return json({ error: "Not Found" }, 404, origin);
 		} catch (err) {
 			console.error("Relay error:", err);
-			return json(
-				{ error: "Internal Server Error" },
-				500,
-				origin,
-			);
+			return json({ error: "Internal Server Error" }, 500, origin);
 		}
 	},
 } satisfies ExportedHandler<Env>;

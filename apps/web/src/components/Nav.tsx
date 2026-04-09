@@ -14,22 +14,13 @@ export function Nav() {
 				>
 					Features
 				</a>
-				<a
-					href="#flow"
-					className="text-neutral-400 hover:text-white transition-all"
-				>
+				<a href="#flow" className="text-neutral-400 hover:text-white transition-all">
 					How it works
 				</a>
-				<a
-					href="#comparison"
-					className="text-neutral-400 hover:text-white transition-all"
-				>
+				<a href="#comparison" className="text-neutral-400 hover:text-white transition-all">
 					Compare
 				</a>
-				<a
-					href="#"
-					className="text-neutral-400 hover:text-white transition-all"
-				>
+				<a href="#" className="text-neutral-400 hover:text-white transition-all">
 					Docs
 				</a>
 			</div>

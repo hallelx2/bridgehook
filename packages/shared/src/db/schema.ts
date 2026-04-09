@@ -5,9 +5,7 @@ export const channels = pgTable("channels", {
 	secretHash: text("secret_hash").notNull(),
 	port: integer("port").notNull().default(3000),
 	allowedPaths: text("allowed_paths").notNull().default("[]"),
-	createdAt: timestamp("created_at", { withTimezone: true })
-		.notNull()
-		.defaultNow(),
+	createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 	expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
 });
 
@@ -25,9 +23,7 @@ export const events = pgTable("events", {
 	responseBody: text("response_body"),
 	latencyMs: integer("latency_ms"),
 	error: text("error"),
-	receivedAt: timestamp("received_at", { withTimezone: true })
-		.notNull()
-		.defaultNow(),
+	receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 export type ChannelRow = typeof channels.$inferSelect;

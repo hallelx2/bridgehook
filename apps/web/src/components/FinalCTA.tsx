@@ -9,9 +9,8 @@ export function FinalCTA() {
 						faster?
 					</h2>
 					<p className="max-w-2xl mx-auto text-zinc-400 text-xl mb-14 font-medium">
-						Ditch complex tunnels for BridgeHook's instant
-						browser-based webhook endpoints. Zero install, zero
-						config.
+						Ditch complex tunnels for BridgeHook's instant browser-based webhook endpoints. Zero
+						install, zero config.
 					</p>
 					<div className="flex flex-col sm:flex-row justify-center gap-6">
 						<button

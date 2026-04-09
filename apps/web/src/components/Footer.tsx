@@ -102,8 +102,7 @@ export function Footer() {
 
 			<div className="max-w-7xl mx-auto px-8 mt-32 pt-12 border-t border-white/5">
 				<p className="text-zinc-600 text-[10px] font-bold tracking-[0.4em] uppercase font-label">
-					&copy; 2025 BridgeHook. Built on Cloudflare Workers. Open
-					source.
+					&copy; 2025 BridgeHook. Built on Cloudflare Workers. Open source.
 				</p>
 			</div>
 		</footer>
