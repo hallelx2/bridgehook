@@ -1,0 +1,25 @@
+{
+	"name": "@bridgehook/relay",
+	"version": "0.0.1",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"dev": "wrangler dev",
+		"deploy": "wrangler deploy",
+		"typecheck": "tsc --noEmit",
+		"db:generate": "drizzle-kit generate",
+		"db:push": "drizzle-kit push",
+		"db:studio": "drizzle-kit studio"
+	},
+	"dependencies": {
+		"@bridgehook/shared": "workspace:*",
+		"@neondatabase/serverless": "^0.10.0",
+		"drizzle-orm": "^0.38.0"
+	},
+	"devDependencies": {
+		"@cloudflare/workers-types": "^4.20241230.0",
+		"drizzle-kit": "^0.30.0",
+		"typescript": "^5.7.3",
+		"wrangler": "^3.99.0"
+	}
+}
