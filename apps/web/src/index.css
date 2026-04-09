@@ -1,0 +1,178 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+	body {
+		background: #030303;
+		color: #fafafa;
+		font-family: "Plus Jakarta Sans", sans-serif;
+		-webkit-font-smoothing: antialiased;
+		overflow-x: hidden;
+	}
+
+	::selection {
+		background: rgba(144, 147, 255, 0.3);
+		color: #babbff;
+	}
+}
+
+/* Glass navigation */
+.glass-nav {
+	background: rgba(3, 3, 3, 0.8);
+	backdrop-filter: blur(16px);
+	border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Telescoping gradient pillars — deep muted spectrum, bottom-heavy fade */
+.telescope-pillar {
+	border-radius: 0;
+	position: absolute;
+	bottom: 0;
+	filter: none;
+	transition: height 1s ease-in-out;
+	opacity: 0.35;
+}
+
+/* Deep indigo → muted purple → dusky violet → muted rose */
+/* Colors are darkened. Gradient fades to transparent at 50% height — only bottom half is visible */
+.telescope-pillar:nth-child(1) {
+	background: linear-gradient(to top, #1e1b4b, transparent 50%);
+}
+.telescope-pillar:nth-child(2) {
+	background: linear-gradient(to top, #252262, transparent 50%);
+}
+.telescope-pillar:nth-child(3) {
+	background: linear-gradient(to top, #312e81, transparent 50%);
+}
+.telescope-pillar:nth-child(4) {
+	background: linear-gradient(to top, #3730a3, transparent 55%);
+}
+.telescope-pillar:nth-child(5) {
+	background: linear-gradient(to top, #4338ca, transparent 55%);
+}
+.telescope-pillar:nth-child(6) {
+	background: linear-gradient(to top, #4c3fba, transparent 55%);
+}
+.telescope-pillar:nth-child(7) {
+	background: linear-gradient(to top, #5545b0, transparent 60%);
+}
+.telescope-pillar:nth-child(8) {
+	background: linear-gradient(to top, #5b4a9e, transparent 60%);
+}
+.telescope-pillar:nth-child(9) {
+	background: linear-gradient(to top, #614e8c, transparent 60%);
+}
+.telescope-pillar:nth-child(10) {
+	background: linear-gradient(to top, #6b4f7d, transparent 55%);
+}
+.telescope-pillar:nth-child(11) {
+	background: linear-gradient(to top, #74506e, transparent 55%);
+}
+.telescope-pillar:nth-child(12) {
+	background: linear-gradient(to top, #7d4f5f, transparent 55%);
+}
+.telescope-pillar:nth-child(13) {
+	background: linear-gradient(to top, #864e50, transparent 50%);
+}
+.telescope-pillar:nth-child(14) {
+	background: linear-gradient(to top, #8a4d48, transparent 50%);
+}
+.telescope-pillar:nth-child(15) {
+	background: linear-gradient(to top, #8e4c40, transparent 50%);
+}
+
+/* Wavy dot grid background */
+.wavy-grid {
+	background-image: radial-gradient(
+		circle at 2px 2px,
+		rgba(255, 255, 255, 0.05) 1px,
+		transparent 0
+	);
+	background-size: 40px 40px;
+}
+
+/* Moving border card (Aceternity-style) — elevated surface */
+.moving-border-card {
+	position: relative;
+	background: #111113;
+	border-radius: 1.25rem;
+	z-index: 0;
+	overflow: hidden;
+	padding: 1px;
+}
+.moving-border-card::before {
+	content: "";
+	position: absolute;
+	z-index: -1;
+	inset: -50%;
+	background: conic-gradient(
+		from 0deg,
+		transparent,
+		rgba(144, 147, 255, 0.4),
+		transparent 30%
+	);
+	animation: rotate 4s linear infinite;
+}
+.moving-border-content {
+	background: #111113;
+	border-radius: calc(1.25rem - 1px);
+	width: 100%;
+	height: 100%;
+}
+
+@keyframes rotate {
+	from {
+		transform: rotate(0deg);
+	}
+	to {
+		transform: rotate(360deg);
+	}
+}
+
+/* Traveling glow dot for scroll flow */
+@keyframes travelDown {
+	0% {
+		top: 0;
+		opacity: 0;
+	}
+	10% {
+		opacity: 1;
+	}
+	90% {
+		opacity: 1;
+	}
+	100% {
+		top: 100%;
+		opacity: 0;
+	}
+}
+
+/* Shimmer for CTA button */
+@keyframes shimmer {
+	0% {
+		background-position: 200% 0;
+	}
+	100% {
+		background-position: -200% 0;
+	}
+}
+
+/* Border beam effect */
+.border-beam-container {
+	position: relative;
+	overflow: hidden;
+}
+.border-beam {
+	position: absolute;
+	inset: 0;
+	border: 1px solid transparent;
+	border-radius: inherit;
+	background: linear-gradient(90deg, transparent, #9093ff, transparent) border-box;
+	mask: linear-gradient(#fff 0 0) padding-box, linear-gradient(#fff 0 0);
+	-webkit-mask: linear-gradient(#fff 0 0) padding-box, linear-gradient(#fff 0 0);
+	-webkit-mask-composite: destination-out;
+	mask-composite: exclude;
+	z-index: 20;
+	pointer-events: none;
+}
