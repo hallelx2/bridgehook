@@ -1,0 +1,13 @@
+export const DEFAULT_PORT = 3000;
+
+export const CHANNEL_EXPIRY_HOURS = 24;
+
+export const MAX_BUFFERED_EVENTS = 100;
+
+export const MAX_BODY_SIZE_BYTES = 1_048_576; // 1MB
+
+export const MAX_SSE_CONNECTIONS_PER_CHANNEL = 5;
+
+export const RATE_LIMIT_REQUESTS_PER_MINUTE = 60;
+
+export const COMMON_DEV_PORTS = [3000, 3001, 4000, 5000, 5173, 8000, 8080];
