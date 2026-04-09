@@ -5,7 +5,7 @@ Thanks for your interest in contributing!
 ## Setup
 
 ```bash
-git clone https://github.com/halleluyahadeaga/bridgehook
+git clone https://github.com/hallelx2/bridgehook
 cd bridgehook
 pnpm install
 ```

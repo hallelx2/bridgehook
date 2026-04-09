@@ -258,7 +258,7 @@ export function Layout({
 				{/* Top bar */}
 				<div className="sticky top-0 z-10 bg-background/80 backdrop-blur-xl border-b border-white/[0.04] px-12 py-3 flex items-center justify-between">
 					<div className="text-[11px] font-bold text-zinc-500 font-body">{currentLabel}</div>
-					<div className="text-[10px] text-zinc-600 font-mono">docs.bridgehook.dev</div>
+					<div className="text-[10px] text-zinc-600 font-mono">bridgehook-docs.pages.dev</div>
 				</div>
 
 				<div className="max-w-3xl mx-auto px-12 py-12 prose" data-docs-content>

@@ -25,7 +25,7 @@ Content-Type: application/json
   "channelId": "ch_9x4kf2m",
   "port": 3000,
   "expiresAt": "2026-04-10T22:30:34Z",
-  "webhookUrl": "https://relay.bridgehook.dev/hook/ch_9x4kf2m"
+  "webhookUrl": "https://bridgehook-relay.halleluyaholudele.workers.dev/hook/ch_9x4kf2m"
 }`}</code>
 			</pre>
 
@@ -40,7 +40,7 @@ Content-Type: application/json
   "allowedPaths": ["/webhook/stripe"],
   "createdAt": "2026-04-09T22:30:34Z",
   "expiresAt": "2026-04-10T22:30:34Z",
-  "webhookUrl": "https://relay.bridgehook.dev/hook/ch_9x4kf2m"
+  "webhookUrl": "https://bridgehook-relay.halleluyaholudele.workers.dev/hook/ch_9x4kf2m"
 }`}</code>
 			</pre>
 

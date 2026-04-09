@@ -183,7 +183,7 @@ export function DashboardPreview() {
 								/>
 							</svg>
 							<span className="font-mono text-[11px] text-zinc-500">
-								app.bridgehook.dev/dashboard
+								bridgehook-web.pages.dev/dashboard
 							</span>
 						</div>
 

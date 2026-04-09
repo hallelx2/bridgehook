@@ -61,7 +61,7 @@ export function Introduction() {
 					{
 						title: "Open BridgeHook",
 						desc: "Visit the web app. No account, no download.",
-						code: "app.bridgehook.dev",
+						code: "bridgehook-web.pages.dev",
 						color: "#9093ff",
 					},
 					{
@@ -73,7 +73,7 @@ export function Introduction() {
 					{
 						title: "Copy your webhook URL",
 						desc: "Get a unique URL. Paste it into Stripe, GitHub, or any webhook provider.",
-						code: "relay.bridgehook.dev/hook/ch_9x4kf2m",
+						code: "bridgehook-relay.halleluyaholudele.workers.dev/hook/ch_9x4kf2m",
 						color: "#ffb0cd",
 					},
 					{

@@ -53,7 +53,7 @@ Open a URL. Enter your port. Get a webhook endpoint. Done.
 
 **1. Open the web app**
 ```
-https://app.bridgehook.dev
+https://bridgehook-web.pages.dev
 ```
 
 **2. Enter your port and click Start Bridge**
@@ -64,7 +64,7 @@ Paths: /webhook/stripe, /webhook/github
 
 **3. Copy your webhook URL**
 ```
-https://relay.bridgehook.dev/hook/ch_9x4kf2m
+https://bridgehook-relay.halleluyaholudele.workers.dev/hook/ch_9x4kf2m
 ```
 
 **4. Paste into Stripe/GitHub/Twilio — webhooks flow to localhost**
@@ -120,8 +120,8 @@ bridgehook/
 
 ### Web App (no download needed)
 Just open your browser:
-- **App:** [app.bridgehook.dev](https://app.bridgehook.dev)
-- **Docs:** [docs.bridgehook.dev](https://docs.bridgehook.dev)
+- **App:** [app.bridgehook.dev](https://bridgehook-web.pages.dev)
+- **Docs:** [docs.bridgehook.dev](https://bridgehook-docs.pages.dev)
 
 ### Desktop App (Phase 2)
 
@@ -140,7 +140,7 @@ Background operation without a browser tab. Runs in system tray.
 brew install bridgehook/tap/bridgehook
 
 # Scoop (Windows)
-scoop bucket add bridgehook https://github.com/halleluyahadeaga/scoop-bridgehook
+scoop bucket add bridgehook https://github.com/hallelx2/scoop-bridgehook
 scoop install bridgehook
 
 # npm (thin wrapper)
@@ -176,7 +176,7 @@ Total cost: **$0/month** on free tiers.
 
 ## Documentation
 
-Full docs at [docs.bridgehook.dev](https://docs.bridgehook.dev):
+Full docs at [docs.bridgehook.dev](https://bridgehook-docs.pages.dev):
 
 - **Getting Started** — Introduction, Quickstart
 - **Core Concepts** — How It Works, SSE Technology, The Browser Bridge

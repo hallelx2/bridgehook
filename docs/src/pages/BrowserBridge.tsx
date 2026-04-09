@@ -15,7 +15,7 @@ export function BrowserBridge() {
 			</p>
 			<pre>
 				<code>{`// Same browser tab, same JavaScript:
-fetch("https://relay.bridgehook.dev/...")  // ✓ reaches the internet
+fetch("https://bridgehook-relay.halleluyaholudele.workers.dev/...")  // ✓ reaches the internet
 fetch("http://localhost:3000/...")          // ✓ reaches your machine`}</code>
 			</pre>
 
@@ -73,7 +73,7 @@ source.onmessage = async (event) => {
 				BridgeHook origin:
 			</p>
 			<pre>
-				<code>Access-Control-Allow-Origin: https://app.bridgehook.dev</code>
+				<code>Access-Control-Allow-Origin: https://bridgehook-web.pages.dev</code>
 			</pre>
 			<p>
 				Most frameworks (Express, Next.js, FastAPI, Rails) have CORS middleware that handles this

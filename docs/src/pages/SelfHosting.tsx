@@ -41,7 +41,7 @@ export function SelfHosting() {
 
 			<h3>1. Clone the repo</h3>
 			<pre>
-				<code>{`git clone https://github.com/yourname/bridgehook
+				<code>{`git clone https://github.com/hallelx2/bridgehook
 cd bridgehook
 pnpm install`}</code>
 			</pre>
