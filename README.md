@@ -20,6 +20,7 @@
 
 <p align="center">
   <a href="https://github.com/hallelx2/bridgehook/actions/workflows/ci.yml"><img src="https://github.com/hallelx2/bridgehook/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="https://github.com/hallelx2/bridgehook/actions/workflows/deploy-pages.yml"><img src="https://github.com/hallelx2/bridgehook/actions/workflows/deploy-pages.yml/badge.svg" alt="CD" /></a>
   <a href="https://github.com/hallelx2/bridgehook/releases"><img src="https://img.shields.io/github/v/release/hallelx2/bridgehook?label=release&color=9093ff" alt="Release" /></a>
   <a href="https://github.com/hallelx2/bridgehook/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License" /></a>
   <img src="https://img.shields.io/badge/cost-%240%2Fmo-28c840" alt="Cost: $0/mo" />
