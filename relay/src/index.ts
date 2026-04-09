@@ -163,19 +163,19 @@ export default {
 					encoder.encode(`data: ${JSON.stringify({ type: "connected", channelId })}\n\n`),
 				);
 
-				// Cleanup on disconnect
-				readable.pipeTo(new WritableStream()).catch(() => {
+				// Cleanup on disconnect — use request abort signal
+				request.signal.addEventListener("abort", () => {
 					sseConnections.get(channelId)?.delete(writer);
 					if (sseConnections.get(channelId)?.size === 0) {
 						sseConnections.delete(channelId);
 					}
+					writer.close().catch(() => {});
 				});
 
 				return new Response(readable, {
 					headers: {
 						"Content-Type": "text/event-stream",
 						"Cache-Control": "no-cache",
-						Connection: "keep-alive",
 						...corsHeaders(origin),
 					},
 				});
