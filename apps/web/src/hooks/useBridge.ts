@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { SSEEvent, SSEWebhookEvent, WebhookEventData } from "../lib/relay";
+import type { WebhookEventData } from "../lib/relay";
 import {
-	connectSSE,
 	createChannel,
 	forwardToLocalhost,
 	getEvents,
+	pollEvents,
 	sendResponse,
 } from "../lib/relay";
 
@@ -30,6 +30,21 @@ interface BridgeState {
 	error: string | null;
 }
 
+function toLiveEvent(e: WebhookEventData): LiveEvent {
+	return {
+		id: e.id,
+		method: e.method,
+		path: e.path,
+		requestHeaders: JSON.parse(e.requestHeaders || "{}"),
+		requestBody: e.requestBody,
+		responseStatus: e.responseStatus,
+		responseBody: e.responseBody,
+		latencyMs: e.latencyMs,
+		error: e.error,
+		receivedAt: e.receivedAt,
+	};
+}
+
 export function useBridge() {
 	const [state, setState] = useState<BridgeState>({
 		status: "idle",
@@ -40,43 +55,41 @@ export function useBridge() {
 		error: null,
 	});
 
-	const disconnectRef = useRef<(() => void) | null>(null);
+	const stopPollingRef = useRef<(() => void) | null>(null);
+	const forwardedRef = useRef<Set<string>>(new Set());
 
-	const handleSSEEvent = useCallback(
-		(sseEvent: SSEEvent) => {
-			if (sseEvent.type === "connected") {
+	/**
+	 * When polling detects new events, check for unforwarded ones
+	 * and forward them to localhost (the bridge!).
+	 */
+	const handleNewEvents = useCallback(
+		(events: WebhookEventData[]) => {
+			if (events.length === 0) {
+				// Initial "connected" signal
 				setState((s) => ({ ...s, status: "connected" }));
+				return;
 			}
 
-			if (sseEvent.type === "webhook") {
-				const webhookEvent = sseEvent as SSEWebhookEvent;
-				// Add event to list immediately
-				const liveEvent: LiveEvent = {
-					id: webhookEvent.id,
-					method: webhookEvent.method,
-					path: webhookEvent.path,
-					requestHeaders: webhookEvent.headers,
-					requestBody: webhookEvent.body,
-					responseStatus: null,
-					responseBody: null,
-					latencyMs: null,
-					error: null,
-					receivedAt: webhookEvent.receivedAt,
-				};
+			// Update event list
+			const liveEvents = events.map(toLiveEvent);
+			setState((s) => ({ ...s, events: liveEvents }));
 
-				setState((s) => ({
-					...s,
-					events: [liveEvent, ...s.events].slice(0, 100),
-				}));
+			// Find events that haven't been forwarded yet (no response)
+			const unforwarded = events.filter(
+				(e) => !e.responseStatus && !e.error && !forwardedRef.current.has(e.id),
+			);
 
-				// Forward to localhost (client-side bridge!)
-				forwardToLocalhost(webhookEvent, state.port)
+			// Forward each to localhost
+			for (const evt of unforwarded) {
+				forwardedRef.current.add(evt.id);
+
+				forwardToLocalhost(evt, state.port)
 					.then((response) => {
-						// Update event with response
+						// Update local state with response
 						setState((s) => ({
 							...s,
 							events: s.events.map((e) =>
-								e.id === webhookEvent.id
+								e.id === evt.id
 									? {
 											...e,
 											responseStatus: response.status,
@@ -89,43 +102,28 @@ export function useBridge() {
 
 						// Send response back to relay (server stores in Neon)
 						if (state.channelId) {
-							sendResponse(state.channelId, webhookEvent.id, response);
+							sendResponse(state.channelId, evt.id, response);
 						}
 					})
 					.catch((err) => {
 						setState((s) => ({
 							...s,
 							events: s.events.map((e) =>
-								e.id === webhookEvent.id ? { ...e, error: (err as Error).message } : e,
+								e.id === evt.id ? { ...e, error: (err as Error).message } : e,
 							),
 						}));
 					});
-			}
-
-			if (sseEvent.type === "response") {
-				// Update from server-side confirmation
-				setState((s) => ({
-					...s,
-					events: s.events.map((e) =>
-						e.id === sseEvent.eventId
-							? {
-									...e,
-									responseStatus: sseEvent.status,
-									latencyMs: sseEvent.latencyMs,
-								}
-							: e,
-					),
-				}));
 			}
 		},
 		[state.port, state.channelId],
 	);
 
-	/** Start a new bridge: create channel (server-side), connect SSE, start forwarding */
+	/** Start a new bridge: create channel, start polling */
 	const connect = useCallback(
 		async (port: number, allowedPaths: string[]) => {
 			try {
 				setState((s) => ({ ...s, status: "connecting", port, error: null }));
+				forwardedRef.current = new Set();
 
 				// Server creates channel + persists to Neon
 				const channel = await createChannel(port, allowedPaths);
@@ -138,31 +136,25 @@ export function useBridge() {
 
 				// Load existing events from DB
 				const existingEvents = await getEvents(channel.channelId);
-				const liveEvents: LiveEvent[] = existingEvents.map((e: WebhookEventData) => ({
-					id: e.id,
-					method: e.method,
-					path: e.path,
-					requestHeaders: JSON.parse(e.requestHeaders || "{}"),
-					requestBody: e.requestBody,
-					responseStatus: e.responseStatus,
-					responseBody: e.responseBody,
-					latencyMs: e.latencyMs,
-					error: e.error,
-					receivedAt: e.receivedAt,
-				}));
+				const liveEvents = existingEvents.map(toLiveEvent);
+				// Mark existing events as already forwarded
+				for (const e of existingEvents) {
+					forwardedRef.current.add(e.id);
+				}
+				setState((s) => ({ ...s, events: liveEvents, status: "connected" }));
 
-				setState((s) => ({ ...s, events: liveEvents }));
+				// Start polling for new events (every 2 seconds)
+				const stopPolling = pollEvents(
+					channel.channelId,
+					handleNewEvents,
+					(err) => {
+						console.error("Polling error:", err);
+						// Don't set error state for transient polling failures
+					},
+					2000,
+				);
 
-				// Connect SSE (client-side real-time stream)
-				const disconnect = connectSSE(channel.channelId, handleSSEEvent, () => {
-					setState((s) => ({
-						...s,
-						status: "error",
-						error: "SSE connection lost",
-					}));
-				});
-
-				disconnectRef.current = disconnect;
+				stopPollingRef.current = stopPolling;
 			} catch (err) {
 				setState((s) => ({
 					...s,
@@ -171,13 +163,14 @@ export function useBridge() {
 				}));
 			}
 		},
-		[handleSSEEvent],
+		[handleNewEvents],
 	);
 
 	/** Disconnect the bridge */
 	const disconnect = useCallback(() => {
-		disconnectRef.current?.();
-		disconnectRef.current = null;
+		stopPollingRef.current?.();
+		stopPollingRef.current = null;
+		forwardedRef.current = new Set();
 		setState({
 			status: "idle",
 			channelId: null,
@@ -191,7 +184,7 @@ export function useBridge() {
 	// Cleanup on unmount
 	useEffect(() => {
 		return () => {
-			disconnectRef.current?.();
+			stopPollingRef.current?.();
 		};
 	}, []);
 

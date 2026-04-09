@@ -1,7 +1,10 @@
 /**
  * Client-side API helpers for talking to the relay server.
  * All DB operations happen server-side on the relay — the client
- * only makes fetch() calls and connects via SSE.
+ * only makes fetch() calls.
+ *
+ * Uses polling (not SSE) because Cloudflare Workers free tier
+ * kills idle connections after ~30s. Polling every 2s is reliable.
  */
 
 const RELAY_URL = import.meta.env.VITE_RELAY_URL || "http://localhost:8787";
@@ -53,7 +56,6 @@ export type SSEEvent =
 
 /** Create a new channel on the relay (server-side persists to Neon) */
 export async function createChannel(port: number, allowedPaths: string[]): Promise<ChannelInfo> {
-	// Generate a secret client-side, hash it, send hash to server
 	const secret = crypto.randomUUID();
 	const encoder = new TextEncoder();
 	const hashBuffer = await crypto.subtle.digest("SHA-256", encoder.encode(secret));
@@ -70,9 +72,7 @@ export async function createChannel(port: number, allowedPaths: string[]): Promi
 	if (!res.ok) throw new Error(`Failed to create channel: ${res.status}`);
 	const data = await res.json();
 
-	// Store secret locally
 	localStorage.setItem(`bh_secret_${data.channelId}`, secret);
-
 	return data;
 }
 
@@ -90,31 +90,53 @@ export async function deleteChannel(channelId: string): Promise<void> {
 	localStorage.removeItem(`bh_secret_${channelId}`);
 }
 
-/** Fetch historical events for a channel */
+/** Fetch events for a channel (used for both initial load and polling) */
 export async function getEvents(channelId: string, limit = 50): Promise<WebhookEventData[]> {
 	const res = await fetch(`${RELAY_URL}/api/channels/${channelId}/events?limit=${limit}`);
 	if (!res.ok) throw new Error(`Failed to get events: ${res.status}`);
 	return res.json();
 }
 
-/** Connect to SSE stream for real-time events */
-export function connectSSE(
+/**
+ * Poll for new events every `intervalMs`.
+ * Returns a cleanup function to stop polling.
+ * Calls `onNewEvents` only when new events are detected (by comparing IDs).
+ */
+export function pollEvents(
 	channelId: string,
-	onEvent: (event: SSEEvent) => void,
-	onError?: (error: Event) => void,
+	onNewEvents: (events: WebhookEventData[]) => void,
+	onError?: (error: Error) => void,
+	intervalMs = 2000,
 ): () => void {
-	const source = new EventSource(`${RELAY_URL}/hook/${channelId}/events`);
+	let lastSeenId: string | null = null;
+	let stopped = false;
 
-	source.onmessage = (msg) => {
-		const data = JSON.parse(msg.data) as SSEEvent;
-		onEvent(data);
+	async function poll() {
+		if (stopped) return;
+		try {
+			const events = await getEvents(channelId, 50);
+			// Events come newest-first from the API
+			if (events.length > 0 && events[0].id !== lastSeenId) {
+				lastSeenId = events[0].id;
+				onNewEvents(events);
+			}
+		} catch (err) {
+			onError?.(err as Error);
+		}
+		if (!stopped) {
+			setTimeout(poll, intervalMs);
+		}
+	}
+
+	// Start polling
+	poll();
+
+	// Also fire a "connected" callback immediately
+	onNewEvents([]);
+
+	return () => {
+		stopped = true;
 	};
-
-	source.onerror = (err) => {
-		onError?.(err);
-	};
-
-	return () => source.close();
 }
 
 /**
@@ -122,28 +144,38 @@ export function connectSSE(
  * This runs CLIENT-SIDE in the browser — the browser IS the bridge.
  */
 export async function forwardToLocalhost(
-	event: SSEWebhookEvent,
+	event: SSEWebhookEvent | WebhookEventData,
 	port: number,
 ): Promise<{ status: number; headers: Record<string, string>; body: string; latencyMs: number }> {
 	const start = performance.now();
 
-	// Strip the /hook/:channelId prefix to get the actual path
-	const localPath = event.path.replace(/^\/hook\/[a-z0-9]+/, "") || "/";
+	// Determine path and headers based on event type
+	const eventPath =
+		"headers" in event && typeof event.headers === "object" && !Array.isArray(event.headers)
+			? event.path.replace(/^\/hook\/[a-z0-9]+/, "") || "/"
+			: event.path.replace(/^\/hook\/[a-z0-9]+/, "") || "/";
 
-	const response = await fetch(`http://localhost:${port}${localPath}`, {
-		method: event.method,
-		headers: event.headers,
-		body: event.body || undefined,
+	const headers: Record<string, string> =
+		"requestHeaders" in event ? JSON.parse(event.requestHeaders || "{}") : event.headers;
+
+	const body = "requestBody" in event ? event.requestBody : event.body;
+
+	const method = event.method;
+
+	const response = await fetch(`http://localhost:${port}${eventPath}`, {
+		method,
+		headers,
+		body: body || undefined,
 	});
 
 	const latencyMs = Math.round(performance.now() - start);
-	const body = await response.text();
-	const headers: Record<string, string> = {};
+	const respBody = await response.text();
+	const respHeaders: Record<string, string> = {};
 	response.headers.forEach((v, k) => {
-		headers[k] = v;
+		respHeaders[k] = v;
 	});
 
-	return { status: response.status, headers, body, latencyMs };
+	return { status: response.status, headers: respHeaders, body: respBody, latencyMs };
 }
 
 /** Send the local response back to the relay (server stores it in Neon) */
