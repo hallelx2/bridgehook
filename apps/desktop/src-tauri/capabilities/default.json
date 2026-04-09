@@ -1,0 +1,19 @@
+{
+	"$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/crates/tauri-utils/schema.json",
+	"identifier": "default",
+	"description": "Default capability for BridgeHook desktop app",
+	"windows": ["main"],
+	"permissions": [
+		"core:default",
+		"sql:default",
+		"sql:allow-execute",
+		"sql:allow-select",
+		"store:default",
+		"notification:default",
+		"notification:allow-notify",
+		"notification:allow-is-permission-granted",
+		"notification:allow-request-permission",
+		"clipboard-manager:default",
+		"clipboard-manager:allow-write-text"
+	]
+}
