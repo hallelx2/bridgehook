@@ -2,7 +2,9 @@
   <img src=".github/banner.png" alt="BridgeHook" width="800" />
 </p>
 
-<h1 align="center">bridgehook</h1>
+<p align="center">
+  <img src=".github/logo.svg" alt="bridgehook" height="48" />
+</p>
 
 <p align="center">
   <strong>Zero-install webhook testing. Your browser is the bridge.</strong>
@@ -17,9 +19,9 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/halleluyahadeaga/bridgehook/actions/workflows/ci.yml"><img src="https://github.com/halleluyahadeaga/bridgehook/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
-  <a href="https://github.com/halleluyahadeaga/bridgehook/releases"><img src="https://img.shields.io/github/v/release/halleluyahadeaga/bridgehook?label=release&color=9093ff" alt="Release" /></a>
-  <a href="https://github.com/halleluyahadeaga/bridgehook/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License" /></a>
+  <a href="https://github.com/hallelx2/bridgehook/actions/workflows/ci.yml"><img src="https://github.com/hallelx2/bridgehook/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="https://github.com/hallelx2/bridgehook/releases"><img src="https://img.shields.io/github/v/release/hallelx2/bridgehook?label=release&color=9093ff" alt="Release" /></a>
+  <a href="https://github.com/hallelx2/bridgehook/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License" /></a>
   <img src="https://img.shields.io/badge/cost-%240%2Fmo-28c840" alt="Cost: $0/mo" />
 </p>
 
@@ -126,9 +128,9 @@ Background operation without a browser tab. Runs in system tray.
 
 | Platform | Download | Package Manager |
 |----------|----------|-----------------|
-| **Windows** | [`.msi`](https://github.com/halleluyahadeaga/bridgehook/releases/latest) | `scoop install bridgehook` |
-| **macOS** | [`.dmg`](https://github.com/halleluyahadeaga/bridgehook/releases/latest) | `brew install bridgehook/tap/bridgehook` |
-| **Linux** | [`.AppImage`](https://github.com/halleluyahadeaga/bridgehook/releases/latest) | `snap install bridgehook` |
+| **Windows** | [`.msi`](https://github.com/hallelx2/bridgehook/releases/latest) | `scoop install bridgehook` |
+| **macOS** | [`.dmg`](https://github.com/hallelx2/bridgehook/releases/latest) | `brew install bridgehook/tap/bridgehook` |
+| **Linux** | [`.AppImage`](https://github.com/hallelx2/bridgehook/releases/latest) | `snap install bridgehook` |
 
 ### Package Registries
 
@@ -152,7 +154,7 @@ cargo install bridgehook
 BridgeHook is fully open source. Run the entire stack yourself:
 
 ```bash
-git clone https://github.com/halleluyahadeaga/bridgehook
+git clone https://github.com/hallelx2/bridgehook
 cd bridgehook
 pnpm install
 

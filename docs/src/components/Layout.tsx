@@ -166,9 +166,16 @@ export function Layout({
 				<div className="px-6 py-5 border-b border-white/[0.06]">
 					<a
 						href="/"
-						className="font-headline text-lg font-extrabold tracking-[-0.04em] text-white no-underline"
+						className="flex items-center gap-2.5 no-underline"
 					>
-						bridge<span className="text-primary">hook</span>
+						<svg width="22" height="22" viewBox="0 0 32 32" fill="none">
+							<path d="M4 24V16C4 9.373 9.373 4 16 4C22.627 4 28 9.373 28 16V20" stroke="white" strokeWidth="3.5" strokeLinecap="round"/>
+							<path d="M4 20V28" stroke="white" strokeWidth="3.5" strokeLinecap="round"/>
+							<path d="M28 20V24C28 26.209 26.209 28 24 28H22" stroke="#9093ff" strokeWidth="3.5" strokeLinecap="round"/>
+						</svg>
+						<span className="font-headline text-lg font-extrabold tracking-[-0.04em] text-white">
+							bridge<span className="text-primary">hook</span>
+						</span>
 					</a>
 					<div className="text-[9px] font-bold text-zinc-600 uppercase tracking-[0.2em] mt-1 font-label">
 						Documentation
