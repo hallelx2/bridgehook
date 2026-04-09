@@ -1,4 +1,4 @@
-const http = require("http");
+const http = require("node:http");
 
 const server = http.createServer((req, res) => {
 	// CORS headers — required for BridgeHook to forward requests
@@ -15,7 +15,9 @@ const server = http.createServer((req, res) => {
 
 	// Collect request body
 	let body = "";
-	req.on("data", (chunk) => { body += chunk; });
+	req.on("data", (chunk) => {
+		body += chunk;
+	});
 	req.on("end", () => {
 		console.log(`\n📨 ${req.method} ${req.url}`);
 		console.log(`   Headers: ${JSON.stringify(req.headers, null, 2).split("\n").join("\n   ")}`);
@@ -30,7 +32,7 @@ const server = http.createServer((req, res) => {
 			echo: body ? JSON.parse(body) : null,
 		};
 
-		console.log(`   ✅ Responding 200 OK`);
+		console.log("   ✅ Responding 200 OK");
 
 		res.writeHead(200, { "Content-Type": "application/json" });
 		res.end(JSON.stringify(response, null, 2));
