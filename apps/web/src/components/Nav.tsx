@@ -26,12 +26,14 @@ export function Nav() {
 			</div>
 
 			<div className="flex items-center gap-6 border-l border-white/10 pl-8 ml-2">
-				<button
-					type="button"
-					className="text-neutral-400 hover:text-white transition-all text-sm font-bold font-body"
+				<a
+					href="https://github.com/hallelx2/bridgehook"
+					target="_blank"
+					rel="noopener noreferrer"
+					className="text-neutral-400 hover:text-white transition-all text-sm font-bold font-body no-underline"
 				>
 					GitHub
-				</button>
+				</a>
 				<a
 					href="#/dashboard"
 					className="bg-white text-black px-6 py-2 rounded-full font-bold transition-all hover:scale-105 active:scale-95 shadow-[0_0_20px_rgba(255,255,255,0.2)] font-headline no-underline"
