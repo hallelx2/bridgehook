@@ -5,7 +5,7 @@
   <path d="M38 30V36C38 39.314 35.314 42 32 42H29" stroke="url(#readme-hook)" stroke-width="4.5" stroke-linecap="round"/>
   <!-- Wordmark -->
   <text x="52" y="37" font-family="system-ui,-apple-system,sans-serif" font-size="32" font-weight="800" letter-spacing="-1.2" fill="white">bridge</text>
-  <text x="193" y="37" font-family="system-ui,-apple-system,sans-serif" font-size="32" font-weight="800" letter-spacing="-1.2" fill="#9093ff">hook</text>
+  <text x="166" y="37" font-family="system-ui,-apple-system,sans-serif" font-size="32" font-weight="800" letter-spacing="-1.2" fill="#9093ff">hook</text>
   <defs>
     <linearGradient id="readme-hook" x1="38" y1="30" x2="29" y2="42">
       <stop stop-color="white"/>
