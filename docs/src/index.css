@@ -1,0 +1,149 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+	body {
+		background: #030303;
+		color: #fafafa;
+		font-family: "Plus Jakarta Sans", sans-serif;
+		-webkit-font-smoothing: antialiased;
+	}
+	::selection {
+		background: rgba(144, 147, 255, 0.3);
+		color: #babbff;
+	}
+}
+
+/* Prose styles for doc content */
+.prose h1 {
+	font-family: "Manrope", sans-serif;
+	font-weight: 800;
+	font-size: 2.25rem;
+	letter-spacing: -0.03em;
+	color: #fff;
+	margin-bottom: 1rem;
+	line-height: 1.2;
+}
+.prose h2 {
+	font-family: "Manrope", sans-serif;
+	font-weight: 800;
+	font-size: 1.5rem;
+	letter-spacing: -0.02em;
+	color: #fff;
+	margin-top: 3rem;
+	margin-bottom: 0.75rem;
+	padding-bottom: 0.5rem;
+	border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.prose h3 {
+	font-family: "Manrope", sans-serif;
+	font-weight: 700;
+	font-size: 1.15rem;
+	color: #e4e4e7;
+	margin-top: 2rem;
+	margin-bottom: 0.5rem;
+}
+.prose p {
+	color: #a1a1aa;
+	line-height: 1.8;
+	margin-bottom: 1rem;
+}
+.prose strong {
+	color: #e4e4e7;
+	font-weight: 600;
+}
+.prose a {
+	color: #9093ff;
+	text-decoration: none;
+	border-bottom: 1px solid rgba(144, 147, 255, 0.3);
+	transition: border-color 0.15s;
+}
+.prose a:hover {
+	border-color: #9093ff;
+}
+.prose ul, .prose ol {
+	color: #a1a1aa;
+	padding-left: 1.5rem;
+	margin-bottom: 1rem;
+}
+.prose li {
+	margin-bottom: 0.4rem;
+	line-height: 1.7;
+}
+.prose code {
+	font-family: "JetBrains Mono", ui-monospace, monospace;
+	font-size: 0.85em;
+	background: rgba(255, 255, 255, 0.06);
+	border: 1px solid rgba(255, 255, 255, 0.06);
+	padding: 0.15em 0.4em;
+	border-radius: 4px;
+	color: #babbff;
+}
+.prose pre {
+	background: #0a0a0c;
+	border: 1px solid rgba(255, 255, 255, 0.06);
+	border-radius: 12px;
+	padding: 1.25rem;
+	overflow-x: auto;
+	margin-bottom: 1.5rem;
+}
+.prose pre code {
+	background: none;
+	border: none;
+	padding: 0;
+	font-size: 0.8rem;
+	line-height: 1.7;
+	color: #a1a1aa;
+}
+.prose table {
+	width: 100%;
+	border-collapse: collapse;
+	margin-bottom: 1.5rem;
+}
+.prose th {
+	text-align: left;
+	font-size: 0.7rem;
+	font-weight: 800;
+	text-transform: uppercase;
+	letter-spacing: 0.15em;
+	color: #71717a;
+	padding: 0.75rem 1rem;
+	border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+	font-family: "Sora", sans-serif;
+}
+.prose td {
+	padding: 0.75rem 1rem;
+	border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+	color: #a1a1aa;
+	font-size: 0.9rem;
+}
+.prose blockquote {
+	border-left: 3px solid #9093ff;
+	padding: 0.75rem 1rem;
+	margin: 1.5rem 0;
+	background: rgba(144, 147, 255, 0.04);
+	border-radius: 0 8px 8px 0;
+}
+.prose blockquote p {
+	margin: 0;
+	color: #d4d4d8;
+}
+.prose hr {
+	border: none;
+	border-top: 1px solid rgba(255, 255, 255, 0.06);
+	margin: 2.5rem 0;
+}
+
+/* Flow diagram animation */
+@keyframes flowRight {
+	0% { left: 0; opacity: 0; }
+	10% { opacity: 1; }
+	90% { opacity: 1; }
+	100% { left: 100%; opacity: 0; }
+}
+
+/* Prevent prose styles from overriding diagram components */
+.not-prose * {
+	/* reset prose styles inside diagrams */
+}
