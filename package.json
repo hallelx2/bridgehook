@@ -1,0 +1,27 @@
+{
+	"name": "bridgehook",
+	"private": true,
+	"scripts": {
+		"dev:web": "pnpm --filter @bridgehook/web dev",
+		"dev:desktop": "pnpm --filter @bridgehook/desktop tauri dev",
+		"dev:relay": "pnpm --filter @bridgehook/relay dev",
+		"build:web": "pnpm --filter @bridgehook/web build",
+		"build:desktop": "pnpm --filter @bridgehook/desktop tauri build",
+		"deploy:relay": "pnpm --filter @bridgehook/relay deploy",
+		"deploy:web": "pnpm --filter @bridgehook/web deploy",
+		"typecheck": "pnpm -r typecheck",
+		"lint": "biome check .",
+		"format": "biome format --write ."
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^1.9.4",
+		"typescript": "^5.7.3"
+	},
+	"packageManager": "pnpm@9.15.4",
+	"pnpm": {
+		"onlyBuiltDependencies": ["@biomejs/biome", "esbuild", "sharp", "workerd"]
+	},
+	"engines": {
+		"node": ">=20"
+	}
+}
