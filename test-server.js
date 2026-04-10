@@ -1,12 +1,14 @@
 const http = require("node:http");
 
 const server = http.createServer((req, res) => {
-	// CORS headers — required for BridgeHook to forward requests
+	// CORS + Private Network Access headers
+	// Required for HTTPS pages to reach localhost
 	res.setHeader("Access-Control-Allow-Origin", "*");
 	res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
 	res.setHeader("Access-Control-Allow-Headers", "*");
+	res.setHeader("Access-Control-Allow-Private-Network", "true");
 
-	// Handle CORS preflight
+	// Handle CORS preflight (including Private Network Access preflight)
 	if (req.method === "OPTIONS") {
 		res.writeHead(204);
 		res.end();
@@ -41,5 +43,6 @@ const server = http.createServer((req, res) => {
 
 server.listen(5000, () => {
 	console.log("🚀 Test server running on http://localhost:5000");
+	console.log("   CORS + Private Network Access headers enabled");
 	console.log("   Waiting for webhooks from BridgeHook...\n");
 });

@@ -155,11 +155,30 @@ export async function forwardToLocalhost(
 			? event.path.replace(/^\/hook\/[a-z0-9]+/, "") || "/"
 			: event.path.replace(/^\/hook\/[a-z0-9]+/, "") || "/";
 
-	const headers: Record<string, string> =
+	const rawHeaders: Record<string, string> =
 		"requestHeaders" in event ? JSON.parse(event.requestHeaders || "{}") : event.headers;
 
-	const body = "requestBody" in event ? event.requestBody : event.body;
+	// Strip headers that break localhost forwarding
+	const skipHeaders = new Set([
+		"host",
+		"cf-ray",
+		"cf-connecting-ip",
+		"cf-ipcountry",
+		"cf-visitor",
+		"x-real-ip",
+		"x-forwarded-proto",
+		"x-forwarded-for",
+		"connection",
+		"accept-encoding",
+	]);
+	const headers: Record<string, string> = {};
+	for (const [k, v] of Object.entries(rawHeaders)) {
+		if (!skipHeaders.has(k.toLowerCase())) {
+			headers[k] = v;
+		}
+	}
 
+	const body = "requestBody" in event ? event.requestBody : event.body;
 	const method = event.method;
 
 	const response = await fetch(`http://localhost:${port}${eventPath}`, {
