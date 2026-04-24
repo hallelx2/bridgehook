@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      width: 380px;
+      min-height: 200px;
+      max-height: 520px;
+      background: #0a0a0a;
+      color: #e5e5e5;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 13px;
+      overflow-y: auto;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 16px;
+      border-bottom: 1px solid #262626;
+      background: #111;
+      position: sticky;
+      top: 0;
+    }
+    .logo { font-weight: 700; font-size: 15px; color: #22d3ee; }
+    .badge { font-size: 10px; color: #737373; background: #262626; padding: 2px 8px; border-radius: 10px; }
+
+    .empty {
+      text-align: center;
+      padding: 32px 16px;
+      color: #737373;
+    }
+    .empty p { margin-bottom: 4px; }
+
+    /* Service card */
+    .service {
+      padding: 12px 16px;
+      border-bottom: 1px solid #1a1a1a;
+    }
+    .service-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 6px;
+    }
+    .service-name {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-weight: 600;
+      font-size: 13px;
+    }
+    .dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+    .dot.connected { background: #22c55e; }
+    .dot.disconnected { background: #ef4444; }
+    .dot.inactive { background: #737373; }
+    .dot.error { background: #ef4444; animation: pulse 1.5s infinite; }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    .service-actions { display: flex; gap: 4px; }
+    .btn {
+      border: none;
+      padding: 3px 10px;
+      border-radius: 4px;
+      font-size: 11px;
+      cursor: pointer;
+      font-weight: 500;
+    }
+    .btn-pause { background: #422006; color: #fbbf24; }
+    .btn-resume { background: #052e16; color: #4ade80; }
+    .btn-remove { background: #1c0a0a; color: #f87171; }
+    .btn-copy { background: #0c2534; color: #22d3ee; }
+    .btn:hover { filter: brightness(1.3); }
+
+    .service-meta { font-size: 11px; color: #737373; }
+    .service-meta span { margin-right: 12px; }
+    .url-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 4px;
+    }
+    .url {
+      font-family: monospace;
+      font-size: 10px;
+      color: #22d3ee;
+      background: #111;
+      padding: 2px 6px;
+      border-radius: 3px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 240px;
+    }
+    .error-msg { color: #f87171; font-size: 11px; margin-top: 4px; }
+    .stats { font-size: 11px; color: #525252; margin-top: 4px; }
+
+    /* Add form */
+    #add-section { padding: 12px 16px; border-bottom: 1px solid #1a1a1a; }
+    .form-row { display: flex; gap: 8px; margin-bottom: 8px; }
+    .form-group { flex: 1; }
+    .form-group label { display: block; font-size: 10px; color: #737373; margin-bottom: 3px; }
+    .form-group input {
+      width: 100%;
+      background: #1a1a1a;
+      border: 1px solid #333;
+      color: #e5e5e5;
+      padding: 6px 8px;
+      border-radius: 4px;
+      font-size: 12px;
+    }
+    .form-group input:focus { outline: none; border-color: #22d3ee; }
+    .form-actions { display: flex; gap: 6px; justify-content: flex-end; }
+    .btn-add { background: #0891b2; color: #fff; padding: 5px 14px; }
+    .btn-cancel { background: #262626; color: #a3a3a3; padding: 5px 14px; }
+
+    .btn-new {
+      background: #0891b2;
+      color: #fff;
+      border: none;
+      padding: 5px 12px;
+      border-radius: 4px;
+      font-size: 12px;
+      cursor: pointer;
+      font-weight: 500;
+    }
+    .btn-new:hover { background: #0e7490; }
+
+    /* Detect results */
+    .detect-port {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 0;
+      border-bottom: 1px solid #1a1a1a;
+    }
+    .detect-port:last-child { border-bottom: none; }
+    .detect-port-info { display: flex; align-items: center; gap: 8px; }
+    .detect-port-info .dot { background: #22c55e; }
+    .detect-port-label { font-size: 12px; }
+    .detect-port-label small { color: #737373; font-size: 10px; }
+    .btn-bridge {
+      background: #0891b2;
+      color: #fff;
+      border: none;
+      padding: 3px 12px;
+      border-radius: 4px;
+      font-size: 11px;
+      cursor: pointer;
+      font-weight: 500;
+    }
+    .btn-bridge:hover { background: #0e7490; }
+    .btn-bridge:disabled { background: #333; color: #737373; cursor: default; }
+    .detect-none { color: #737373; font-size: 12px; padding: 8px 0; }
+
+    .copied-toast {
+      position: fixed;
+      bottom: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #22d3ee;
+      color: #000;
+      padding: 4px 16px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+    .copied-toast.show { opacity: 1; }
+  </style>
+</head>
+<body>
+  <header>
+    <div style="display:flex;align-items:center;gap:8px;">
+      <span class="logo">BridgeHook</span>
+      <span class="badge">Extension</span>
+    </div>
+    <div style="display:flex;gap:6px;">
+      <button class="btn-new" id="btn-detect" style="background:#059669;">Detect</button>
+      <button class="btn-new" id="btn-show-add">+ Add</button>
+    </div>
+  </header>
+
+  <!-- Auto-detect results -->
+  <div id="detect-section" style="display:none">
+    <div style="padding:12px 16px;border-bottom:1px solid #1a1a1a;">
+      <div id="detect-scanning" style="color:#737373;font-size:12px;">
+        Scanning ports 3000, 3001, 4000, 5000, 5173, 8000, 8080, 8888...
+      </div>
+      <div id="detect-results" style="display:none;"></div>
+    </div>
+  </div>
+
+  <div id="add-section" style="display:none">
+    <div class="form-row">
+      <div class="form-group">
+        <label for="f-name">Name</label>
+        <input id="f-name" type="text" placeholder="stripe-api" />
+      </div>
+      <div class="form-group" style="max-width:80px">
+        <label for="f-port">Port</label>
+        <input id="f-port" type="number" value="3000" min="1" max="65535" />
+      </div>
+      <div class="form-group">
+        <label for="f-path">Path</label>
+        <input id="f-path" type="text" placeholder="/webhook" value="/webhook" />
+      </div>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-cancel" id="btn-cancel">Cancel</button>
+      <button class="btn btn-add" id="btn-add">Add Service</button>
+    </div>
+  </div>
+
+  <div id="services-list"></div>
+  <div id="empty" class="empty" style="display:none">
+    <p>No services configured</p>
+    <p style="font-size:11px">Click <b>+ Add</b> to start forwarding webhooks</p>
+  </div>
+
+  <div class="copied-toast" id="toast">Copied!</div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

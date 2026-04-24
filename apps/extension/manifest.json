@@ -1,0 +1,26 @@
+{
+	"manifest_version": 3,
+	"name": "BridgeHook",
+	"description": "Forward webhooks from the cloud to your localhost — no CLI, no tunnel, no install.",
+	"version": "0.0.1",
+	"permissions": ["storage", "notifications", "offscreen"],
+	"host_permissions": [
+		"http://localhost:*/*",
+		"https://relay.bridgehook.dev/*",
+		"https://bridgehook-relay.halleluyaholudele.workers.dev/*"
+	],
+	"background": {
+		"service_worker": "background.js",
+		"type": "module"
+	},
+	"action": {
+		"default_popup": "popup.html",
+		"default_icon": {
+			"32": "icons/icon-32.png"
+		}
+	},
+	"icons": {
+		"32": "icons/icon-32.png",
+		"128": "icons/icon-128.png"
+	}
+}

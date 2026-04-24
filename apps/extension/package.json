@@ -1,0 +1,6 @@
+{
+	"name": "@bridgehook/extension",
+	"version": "0.0.1",
+	"private": true,
+	"description": "BridgeHook browser extension — forward webhooks to localhost without CORS issues"
+}
