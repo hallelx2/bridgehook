@@ -97,18 +97,24 @@ export function EventLog({ events, selectedEventId, onSelect }: EventLogProps) {
 	}
 
 	return (
-		<div className="overflow-auto max-h-80">
-			<table className="w-full text-sm">
-				<thead className="text-[11px] text-gray-500 border-b border-gray-700/80 sticky top-0 bg-gray-900 z-10">
+		<div className="h-full overflow-auto">
+			<table className="w-full text-sm table-fixed">
+				<thead className="text-[11px] text-gray-500 border-b border-gray-700/80 sticky top-0 bg-gray-950 z-10">
 					<tr>
-						<th className="text-left py-2.5 px-3 font-semibold uppercase tracking-wider">Time</th>
-						<th className="text-left py-2.5 px-3 font-semibold uppercase tracking-wider">Method</th>
-						<th className="text-left py-2.5 px-3 font-semibold uppercase tracking-wider">
+						<th className="text-left py-2 px-3 font-semibold uppercase tracking-wider w-[80px]">
+							Time
+						</th>
+						<th className="text-left py-2 px-3 font-semibold uppercase tracking-wider w-[70px]">
+							Method
+						</th>
+						<th className="text-left py-2 px-3 font-semibold uppercase tracking-wider w-[140px]">
 							Service
 						</th>
-						<th className="text-left py-2.5 px-3 font-semibold uppercase tracking-wider">Path</th>
-						<th className="text-left py-2.5 px-3 font-semibold uppercase tracking-wider">Status</th>
-						<th className="text-right py-2.5 px-3 font-semibold uppercase tracking-wider">
+						<th className="text-left py-2 px-3 font-semibold uppercase tracking-wider">Path</th>
+						<th className="text-center py-2 px-3 font-semibold uppercase tracking-wider w-[60px]">
+							Status
+						</th>
+						<th className="text-right py-2 px-3 font-semibold uppercase tracking-wider w-[70px]">
 							Latency
 						</th>
 					</tr>
@@ -121,38 +127,38 @@ export function EventLog({ events, selectedEventId, onSelect }: EventLogProps) {
 							onKeyDown={(e) => {
 								if (e.key === "Enter" || e.key === " ") onSelect(event.id);
 							}}
-							className={`border-b border-gray-800/50 cursor-pointer transition-all duration-100 ${
+							className={`border-b border-gray-800/50 cursor-pointer transition-all duration-75 ${
 								selectedEventId === event.id
-									? "bg-cyan-500/5 border-l-2 border-l-cyan-500"
+									? "bg-cyan-500/8 border-l-2 border-l-cyan-400"
 									: index % 2 === 0
-										? "bg-transparent hover:bg-gray-800/40"
-										: "bg-gray-800/20 hover:bg-gray-800/40"
+										? "bg-transparent hover:bg-gray-800/30"
+										: "bg-gray-900/30 hover:bg-gray-800/30"
 							}`}
 						>
-							<td className="py-2 px-3 text-gray-500 font-mono text-xs">
+							<td className="py-1.5 px-3 text-gray-500 font-mono text-[11px] whitespace-nowrap">
 								{formatTime(event.received_at)}
 							</td>
-							<td className="py-2 px-3">
+							<td className="py-1.5 px-3">
 								<span
-									className={`font-mono font-semibold text-xs px-1.5 py-0.5 rounded ${methodColor(event.method)} ${methodBgColor(event.method)}`}
+									className={`font-mono font-bold text-[11px] px-1.5 py-0.5 rounded ${methodColor(event.method)} ${methodBgColor(event.method)}`}
 								>
 									{event.method}
 								</span>
 							</td>
-							<td className="py-2 px-3 text-gray-300 text-xs font-medium">
+							<td className="py-1.5 px-3 text-gray-300 text-[11px] font-medium truncate">
 								{event.service_name || event.service_id.slice(0, 8)}
 							</td>
-							<td className="py-2 px-3 text-gray-400 font-mono text-xs truncate max-w-48">
+							<td className="py-1.5 px-3 text-gray-500 font-mono text-[11px] truncate">
 								{event.path}
 							</td>
-							<td className="py-2 px-3">
+							<td className="py-1.5 px-3 text-center">
 								<span
-									className={`inline-flex items-center font-mono text-[11px] font-semibold px-2 py-0.5 rounded-full ${statusBadgeClasses(event.response_status, !!event.error)}`}
+									className={`inline-flex items-center font-mono text-[10px] font-bold px-1.5 py-0.5 rounded-full ${statusBadgeClasses(event.response_status, !!event.error)}`}
 								>
 									{event.error ? "ERR" : (event.response_status ?? "---")}
 								</span>
 							</td>
-							<td className="py-2 px-3 text-right text-gray-500 font-mono text-xs">
+							<td className="py-1.5 px-3 text-right text-gray-600 font-mono text-[11px] whitespace-nowrap">
 								{event.latency_ms !== null ? `${event.latency_ms}ms` : "---"}
 							</td>
 						</tr>

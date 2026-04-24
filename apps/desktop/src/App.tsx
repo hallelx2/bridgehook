@@ -1,9 +1,10 @@
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { AddServiceForm } from "./components/AddServiceForm";
 import { EventDetail } from "./components/EventDetail";
 import { EventLog } from "./components/EventLog";
 import { ImportForm } from "./components/ImportForm";
+import { ResizeHandle } from "./components/ResizeHandle";
 import { useBridge } from "./hooks/useBridge";
 import { useEvents } from "./hooks/useEvents";
 import { type PortProbe, type Service, useServices } from "./hooks/useServices";
@@ -32,10 +33,20 @@ export function App() {
 	const [bridgingPort, setBridgingPort] = useState<number | null>(null);
 	const [autoDetecting, setAutoDetecting] = useState(false);
 	const [filterServiceId, setFilterServiceId] = useState<string | null>(null);
+	const [sidebarWidth, setSidebarWidth] = useState(240);
+	const [detailWidth, setDetailWidth] = useState(400);
 
 	const selectedEvent = selectedEventId
 		? (events.find((e) => e.id === selectedEventId) ?? null)
 		: null;
+
+	const handleSidebarResize = useCallback((delta: number) => {
+		setSidebarWidth((w) => Math.max(180, Math.min(400, w + delta)));
+	}, []);
+
+	const handleDetailResize = useCallback((delta: number) => {
+		setDetailWidth((w) => Math.max(300, Math.min(600, w - delta)));
+	}, []);
 
 	// Filter events by selected service
 	const filteredEvents = useMemo(() => {
@@ -117,7 +128,7 @@ export function App() {
 			{/* ─── Main: Sidebar + Events + Detail ─────────────── */}
 			<div className="flex flex-1 min-h-0">
 				{/* ─── LEFT SIDEBAR: Services ───────────────────── */}
-				<aside className="w-64 bg-gray-900/60 border-r border-gray-800 flex flex-col shrink-0">
+				<aside style={{ width: sidebarWidth }} className="bg-gray-900/60 flex flex-col shrink-0">
 					<div className="px-3 py-2 border-b border-gray-800/80 flex items-center justify-between">
 						<span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">
 							Services
@@ -250,6 +261,8 @@ export function App() {
 					</div>
 				</aside>
 
+				<ResizeHandle direction="horizontal" onResize={handleSidebarResize} />
+
 				{/* ─── CENTER: Event Log ────────────────────────── */}
 				<div className="flex-1 flex flex-col min-w-0">
 					{/* Filter tabs */}
@@ -296,11 +309,17 @@ export function App() {
 
 				{/* ─── RIGHT SIDEBAR: Event Detail ──────────────── */}
 				{selectedEvent && (
-					<aside className="w-[420px] border-l border-gray-800 bg-gray-900/60 flex flex-col shrink-0 overflow-hidden">
-						<div className="flex-1 overflow-y-auto">
-							<EventDetail event={selectedEvent} onClose={() => setSelectedEventId(null)} />
-						</div>
-					</aside>
+					<>
+						<ResizeHandle direction="horizontal" onResize={handleDetailResize} />
+						<aside
+							style={{ width: detailWidth }}
+							className="bg-gray-900/60 flex flex-col shrink-0 overflow-hidden"
+						>
+							<div className="flex-1 overflow-y-auto">
+								<EventDetail event={selectedEvent} onClose={() => setSelectedEventId(null)} />
+							</div>
+						</aside>
+					</>
 				)}
 			</div>
 		</div>
