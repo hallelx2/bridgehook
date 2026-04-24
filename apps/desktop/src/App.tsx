@@ -1,12 +1,12 @@
-import { useState } from "react";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { useMemo, useState } from "react";
 import { AddServiceForm } from "./components/AddServiceForm";
 import { EventDetail } from "./components/EventDetail";
 import { EventLog } from "./components/EventLog";
 import { ImportForm } from "./components/ImportForm";
-import { ServiceCard } from "./components/ServiceCard";
 import { useBridge } from "./hooks/useBridge";
 import { useEvents } from "./hooks/useEvents";
-import { type PortProbe, useServices } from "./hooks/useServices";
+import { type PortProbe, type Service, useServices } from "./hooks/useServices";
 
 export function App() {
 	const {
@@ -15,7 +15,6 @@ export function App() {
 		addService,
 		removeService,
 		toggleService,
-		scanPorts,
 		autoDetect,
 		importFromExtension,
 	} = useServices();
@@ -29,14 +28,20 @@ export function App() {
 	const [showAddForm, setShowAddForm] = useState(false);
 	const [showImport, setShowImport] = useState(false);
 	const [showDetect, setShowDetect] = useState(false);
-	const [scanning, setScanning] = useState(false);
 	const [detectedPorts, setDetectedPorts] = useState<PortProbe[]>([]);
 	const [bridgingPort, setBridgingPort] = useState<number | null>(null);
 	const [autoDetecting, setAutoDetecting] = useState(false);
+	const [filterServiceId, setFilterServiceId] = useState<string | null>(null);
 
 	const selectedEvent = selectedEventId
 		? (events.find((e) => e.id === selectedEventId) ?? null)
 		: null;
+
+	// Filter events by selected service
+	const filteredEvents = useMemo(() => {
+		if (!filterServiceId) return events;
+		return events.filter((e) => e.service_id === filterServiceId);
+	}, [events, filterServiceId]);
 
 	const existingPorts = new Set(services.map((s) => s.port));
 
@@ -76,7 +81,7 @@ export function App() {
 
 	return (
 		<div className="h-screen bg-gray-950 text-white flex flex-col overflow-hidden">
-			{/* ─── Top Bar ─────────────────────────────────────────── */}
+			{/* ─── Top Bar ──────────────────────────────────────── */}
 			<header className="flex items-center justify-between px-5 py-2.5 bg-gray-900 border-b border-gray-800 shrink-0">
 				<div className="flex items-center gap-2.5">
 					<div className="w-7 h-7 rounded-lg bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center">
@@ -109,12 +114,11 @@ export function App() {
 				)}
 			</header>
 
-			{/* ─── Main Layout: Sidebar + Content ─────────────────── */}
+			{/* ─── Main: Sidebar + Events + Detail ─────────────── */}
 			<div className="flex flex-1 min-h-0">
-				{/* ─── LEFT SIDEBAR ─────────────────────────────────── */}
-				<aside className="w-72 bg-gray-900/60 border-r border-gray-800 flex flex-col shrink-0">
-					{/* Sidebar header */}
-					<div className="px-3 py-2.5 border-b border-gray-800/80 flex items-center justify-between">
+				{/* ─── LEFT SIDEBAR: Services ───────────────────── */}
+				<aside className="w-64 bg-gray-900/60 border-r border-gray-800 flex flex-col shrink-0">
+					<div className="px-3 py-2 border-b border-gray-800/80 flex items-center justify-between">
 						<span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">
 							Services
 						</span>
@@ -124,7 +128,7 @@ export function App() {
 								onClick={handleAutoDetect}
 								disabled={autoDetecting}
 								className="px-2 py-1 text-[10px] font-medium rounded text-emerald-400 hover:bg-emerald-500/10 disabled:opacity-40 transition-all"
-								title="Auto-detect running servers"
+								title="Detect servers"
 							>
 								{autoDetecting ? "..." : "Detect"}
 							</button>
@@ -135,7 +139,7 @@ export function App() {
 									setShowAddForm(false);
 								}}
 								className="px-2 py-1 text-[10px] font-medium rounded text-purple-400 hover:bg-purple-500/10 transition-all"
-								title="Import from extension"
+								title="Import"
 							>
 								Import
 							</button>
@@ -146,16 +150,14 @@ export function App() {
 									setShowImport(false);
 								}}
 								className="px-2 py-1 text-[10px] font-bold rounded bg-cyan-600 text-white hover:bg-cyan-500 transition-all"
-								title="Add new service"
+								title="Add"
 							>
 								+
 							</button>
 						</div>
 					</div>
 
-					{/* Service list */}
 					<div className="flex-1 overflow-y-auto">
-						{/* Detect results */}
 						{showDetect && (
 							<div className="p-3 border-b border-gray-800/60">
 								<div className="flex items-center justify-between mb-2">
@@ -170,8 +172,8 @@ export function App() {
 										&times;
 									</button>
 								</div>
-								{scanning ? (
-									<p className="text-[10px] text-gray-500">Scanning ports...</p>
+								{autoDetecting ? (
+									<p className="text-[10px] text-gray-500">Scanning...</p>
 								) : detectedPorts.length === 0 ? (
 									<p className="text-[10px] text-gray-500">No servers found</p>
 								) : (
@@ -201,7 +203,6 @@ export function App() {
 							</div>
 						)}
 
-						{/* Add / Import forms */}
 						{showAddForm && (
 							<div className="p-3 border-b border-gray-800/60">
 								<AddServiceForm onAdd={handleAddService} onCancel={() => setShowAddForm(false)} />
@@ -219,7 +220,6 @@ export function App() {
 							</div>
 						)}
 
-						{/* Services */}
 						{servicesLoading ? (
 							<div className="p-4 text-center text-gray-600 text-xs">Loading...</div>
 						) : services.length === 0 && !showAddForm ? (
@@ -227,17 +227,16 @@ export function App() {
 								<p className="text-xs text-gray-500 mb-2">No services yet</p>
 								<button
 									type="button"
-									onClick={handleAutoDetect}
-									disabled={autoDetecting}
+									onClick={() => setShowAddForm(true)}
 									className="text-[11px] text-cyan-400 hover:text-cyan-300"
 								>
-									{autoDetecting ? "Detecting..." : "Auto-detect servers"}
+									+ Add a service
 								</button>
 							</div>
 						) : (
 							<div className="p-2 space-y-1">
 								{services.map((service) => (
-									<SidebarServiceItem
+									<SidebarService
 										key={service.id}
 										service={service}
 										connected={isConnected(service.id)}
@@ -251,52 +250,58 @@ export function App() {
 					</div>
 				</aside>
 
-				{/* ─── MAIN CONTENT ─────────────────────────────────── */}
+				{/* ─── CENTER: Event Log ────────────────────────── */}
 				<div className="flex-1 flex flex-col min-w-0">
-					{/* Event log header */}
-					<div className="px-5 py-2.5 border-b border-gray-800 flex items-center justify-between shrink-0 bg-gray-900/40">
-						<div className="flex items-center gap-2">
-							<span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">
-								Activity
-							</span>
-							{events.length > 0 && (
-								<span className="text-[10px] text-gray-600 bg-gray-800 px-1.5 py-0.5 rounded">
-									{events.length}
-								</span>
-							)}
-						</div>
-						{selectedEvent && (
-							<button
-								type="button"
-								onClick={() => setSelectedEventId(null)}
-								className="text-[10px] text-gray-500 hover:text-gray-300"
-							>
-								Close detail
-							</button>
-						)}
+					{/* Filter tabs */}
+					<div className="px-4 py-1.5 border-b border-gray-800 flex items-center gap-1 shrink-0 bg-gray-900/40 overflow-x-auto">
+						<button
+							type="button"
+							onClick={() => setFilterServiceId(null)}
+							className={`px-3 py-1 text-[11px] font-medium rounded-md transition-all whitespace-nowrap ${
+								filterServiceId === null
+									? "bg-cyan-500/15 text-cyan-400"
+									: "text-gray-500 hover:text-gray-300 hover:bg-gray-800/50"
+							}`}
+						>
+							All ({events.length})
+						</button>
+						{services.map((s) => {
+							const count = events.filter((e) => e.service_id === s.id).length;
+							return (
+								<button
+									key={s.id}
+									type="button"
+									onClick={() => setFilterServiceId(s.id)}
+									className={`px-3 py-1 text-[11px] font-medium rounded-md transition-all whitespace-nowrap ${
+										filterServiceId === s.id
+											? "bg-cyan-500/15 text-cyan-400"
+											: "text-gray-500 hover:text-gray-300 hover:bg-gray-800/50"
+									}`}
+								>
+									{s.name} ({count})
+								</button>
+							);
+						})}
 					</div>
 
-					{/* Split: Event log (top) + Detail (bottom) */}
-					<div className="flex-1 flex flex-col min-h-0">
-						{/* Event log */}
-						<div
-							className={`${selectedEvent ? "h-[45%]" : "flex-1"} overflow-auto border-b border-gray-800/50`}
-						>
-							<EventLog
-								events={events}
-								selectedEventId={selectedEventId}
-								onSelect={setSelectedEventId}
-							/>
-						</div>
-
-						{/* Event detail panel */}
-						{selectedEvent && (
-							<div className="flex-1 overflow-auto">
-								<EventDetail event={selectedEvent} onClose={() => setSelectedEventId(null)} />
-							</div>
-						)}
+					{/* Event log */}
+					<div className="flex-1 overflow-auto">
+						<EventLog
+							events={filteredEvents}
+							selectedEventId={selectedEventId}
+							onSelect={(id) => setSelectedEventId(id === selectedEventId ? null : id)}
+						/>
 					</div>
 				</div>
+
+				{/* ─── RIGHT SIDEBAR: Event Detail ──────────────── */}
+				{selectedEvent && (
+					<aside className="w-[420px] border-l border-gray-800 bg-gray-900/60 flex flex-col shrink-0 overflow-hidden">
+						<div className="flex-1 overflow-y-auto">
+							<EventDetail event={selectedEvent} onClose={() => setSelectedEventId(null)} />
+						</div>
+					</aside>
+				)}
 			</div>
 		</div>
 	);
@@ -304,10 +309,7 @@ export function App() {
 
 /* ─── Sidebar Service Item ──────────────────────────────────────────── */
 
-import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import type { Service } from "./hooks/useServices";
-
-function SidebarServiceItem({
+function SidebarService({
 	service,
 	connected,
 	error,
@@ -342,10 +344,9 @@ function SidebarServiceItem({
 
 	return (
 		<div className="rounded-lg p-2.5 bg-gray-800/40 hover:bg-gray-800/70 border border-transparent hover:border-gray-700/50 transition-all group">
-			{/* Name + status */}
-			<div className="flex items-center gap-2 mb-1.5">
+			<div className="flex items-center gap-2 mb-1">
 				<span className={`w-2 h-2 rounded-full shrink-0 ${dotColor} ${dotGlow}`} />
-				<span className="text-[13px] font-medium text-gray-200 truncate flex-1">
+				<span className="text-[12px] font-medium text-gray-200 truncate flex-1">
 					{service.name}
 				</span>
 				<span
@@ -361,13 +362,11 @@ function SidebarServiceItem({
 				</span>
 			</div>
 
-			{/* Target */}
-			<div className="text-[10px] text-gray-500 font-mono mb-1.5 pl-4">
+			<div className="text-[10px] text-gray-500 font-mono pl-4 mb-1">
 				localhost:{service.port}
 				{service.path}
 			</div>
 
-			{/* URL + actions */}
 			<div className="flex items-center gap-1 pl-4">
 				<code className="text-[9px] text-cyan-500/70 truncate flex-1 font-mono">
 					...{service.channel_id}
@@ -375,20 +374,14 @@ function SidebarServiceItem({
 				<button
 					type="button"
 					onClick={handleCopy}
-					className={`text-[9px] px-1.5 py-0.5 rounded transition-all ${
-						copied ? "text-emerald-400" : "text-gray-500 hover:text-cyan-400"
-					}`}
+					className={`text-[9px] px-1.5 py-0.5 rounded transition-all ${copied ? "text-emerald-400" : "text-gray-500 hover:text-cyan-400"}`}
 				>
 					{copied ? "Done" : "Copy"}
 				</button>
 				<button
 					type="button"
 					onClick={() => onToggle(service.id)}
-					className={`text-[9px] px-1.5 py-0.5 rounded ${
-						service.active
-							? "text-yellow-500 hover:text-yellow-400"
-							: "text-green-500 hover:text-green-400"
-					}`}
+					className={`text-[9px] px-1.5 py-0.5 rounded ${service.active ? "text-yellow-500 hover:text-yellow-400" : "text-green-500 hover:text-green-400"}`}
 				>
 					{service.active ? "Pause" : "Start"}
 				</button>
@@ -401,8 +394,7 @@ function SidebarServiceItem({
 				</button>
 			</div>
 
-			{/* Error */}
-			{error && <div className="mt-1.5 pl-4 text-[9px] text-red-400 truncate">{error}</div>}
+			{error && <div className="mt-1 pl-4 text-[9px] text-red-400 truncate">{error}</div>}
 		</div>
 	);
 }
