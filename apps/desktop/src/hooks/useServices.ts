@@ -68,10 +68,8 @@ export function useServices() {
 	}, []);
 
 	const autoDetect = useCallback(async () => {
-		const created = await invoke<Service[]>("auto_detect");
-		await refresh();
-		return created;
-	}, [refresh]);
+		return invoke<PortProbe[]>("auto_detect");
+	}, []);
 
 	const importFromExtension = useCallback(
 		async (webhookUrl: string, name: string, port: number, path: string) => {

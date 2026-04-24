@@ -212,65 +212,9 @@ pub async fn scan_ports() -> Result<Vec<PortProbe>, String> {
     Ok(results)
 }
 
+/// Auto-detect just scans ports — does NOT auto-create bridges.
+/// User clicks "Bridge" on each detected port to create a service.
 #[tauri::command]
-pub async fn auto_detect(
-    app_handle: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
-) -> Result<Vec<Service>, String> {
-    // Scan ports
-    let alive = scan_ports().await?;
-    if alive.is_empty() {
-        return Ok(vec![]);
-    }
-
-    // Get existing services to avoid duplicates
-    let conn = state.db.lock().await;
-    let existing = db::get_services(&conn).map_err(|e| e.to_string())?;
-    drop(conn);
-    let existing_ports: std::collections::HashSet<u16> =
-        existing.iter().map(|s| s.port).collect();
-
-    let mut created = Vec::new();
-    let client = reqwest::Client::new();
-
-    for probe in alive {
-        if existing_ports.contains(&probe.port) {
-            continue;
-        }
-
-        let name = match &probe.server {
-            Some(s) => format!(
-                "{}-{}",
-                s.split('/').next().unwrap_or("server").to_lowercase(),
-                probe.port
-            ),
-            None => format!("localhost-{}", probe.port),
-        };
-
-        let channel_id = svc::create_channel(&client, probe.port, "/").await?;
-        let service = Service {
-            id: uuid::Uuid::new_v4().to_string(),
-            name,
-            port: probe.port,
-            path: "/".to_string(),
-            channel_id,
-            secret: uuid::Uuid::new_v4().to_string(),
-            active: true,
-            created_at: chrono::Utc::now().to_rfc3339(),
-        };
-
-        let conn = state.db.lock().await;
-        db::insert_service(&conn, &service).map_err(|e| e.to_string())?;
-        drop(conn);
-
-        svc::start_bridge(&app_handle, &service, &state).await;
-        log::info!(
-            "Auto-detected localhost:{} → created service '{}'",
-            service.port,
-            service.name
-        );
-        created.push(service);
-    }
-
-    Ok(created)
+pub async fn auto_detect() -> Result<Vec<PortProbe>, String> {
+    scan_ports().await
 }

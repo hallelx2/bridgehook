@@ -47,17 +47,13 @@ export function App() {
 
 	const handleAutoDetect = async () => {
 		setAutoDetecting(true);
+		setShowDetect(true);
+		setDetectedPorts([]);
 		try {
-			const created = await autoDetect();
-			if (created.length === 0) {
-				setScanning(true);
-				setShowDetect(true);
-				const ports = await scanPorts();
-				setDetectedPorts(ports);
-				setScanning(false);
-			}
+			const ports = await autoDetect();
+			setDetectedPorts(ports);
 		} catch (err) {
-			console.error("Auto-detect failed:", err);
+			console.error("Detect failed:", err);
 		} finally {
 			setAutoDetecting(false);
 		}

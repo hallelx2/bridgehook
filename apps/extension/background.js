@@ -411,8 +411,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 				break;
 			}
 			case "auto_detect": {
-				const result = await autoDetectAndBridge();
-				sendResponse(result);
+				// Just scan — don't auto-create bridges
+				const alive = await scanPorts();
+				sendResponse({ detected: alive, created: [] });
 				break;
 			}
 			default:
@@ -455,54 +456,11 @@ async function scanPorts() {
 	return results.filter((r) => r.alive);
 }
 
-/**
- * Auto-detect running servers and create bridges for any that
- * aren't already configured. Notifies the user for each new one.
- */
-async function autoDetectAndBridge() {
-	const alive = await scanPorts();
-	if (alive.length === 0) return { detected: [], created: [] };
-
-	const services = await loadServices();
-	const existingPorts = new Set(services.map((s) => s.port));
-
-	const created = [];
-	for (const server of alive) {
-		if (existingPorts.has(server.port)) continue;
-
-		// Auto-create a service for this detected server
-		const name = server.server
-			? `${server.server.split("/")[0].toLowerCase()}-${server.port}`
-			: `localhost-${server.port}`;
-
-		try {
-			const service = await addService(name, server.port, "/");
-			created.push(service);
-
-			chrome.notifications.create(`detected-${server.port}`, {
-				type: "basic",
-				iconUrl: "icons/icon-128.png",
-				title: "BridgeHook — Server Detected",
-				message: `Found localhost:${server.port}${server.server ? ` (${server.server})` : ""}\nWebhook URL ready — click the extension icon to copy it.`,
-			});
-		} catch (err) {
-			console.error(`[BridgeHook] Failed to auto-create bridge for port ${server.port}:`, err);
-		}
-	}
-
-	return { detected: alive, created };
-}
-
 // ── Startup: Restore Active Bridges ──────────────────────────────────
 
 chrome.runtime.onInstalled.addListener(async () => {
 	console.log("[BridgeHook] Extension installed/updated");
 	await restoreBridges();
-	// Auto-detect running servers on first install
-	const result = await autoDetectAndBridge();
-	if (result.created.length > 0) {
-		console.log(`[BridgeHook] Auto-detected ${result.created.length} server(s)`);
-	}
 });
 
 chrome.runtime.onStartup.addListener(async () => {

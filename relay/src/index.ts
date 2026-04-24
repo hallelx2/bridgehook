@@ -213,7 +213,7 @@ export default {
 				const stub = getChannelDO(env, channelId);
 				stub
 					.fetch(
-						new Request(`https://do/notify`, {
+						new Request("https://do/notify", {
 							method: "POST",
 							body: ssePayload,
 						}),
@@ -264,7 +264,7 @@ export default {
 				const stub = getChannelDO(env, channelId);
 				stub
 					.fetch(
-						new Request(`https://do/notify`, {
+						new Request("https://do/notify", {
 							method: "POST",
 							body: responsePayload,
 						}),
