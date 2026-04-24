@@ -8,4 +8,4 @@ bindings = [{ name = "CHANNEL", class_name = "ChannelDO" }]
 
 [[migrations]]
 tag = "v1"
-new_classes = ["ChannelDO"]
+new_sqlite_classes = ["ChannelDO"]
