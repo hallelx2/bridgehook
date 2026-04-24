@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="512" y2="512" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0e7490"/>
+      <stop offset="100%" stop-color="#06b6d4"/>
+    </linearGradient>
+    <linearGradient id="arrow" x1="200" y1="180" x2="360" y2="380" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#e0f2fe"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Rounded square background -->
+  <rect width="512" height="512" rx="108" fill="url(#bg)"/>
+
+  <!-- Bridge arch -->
+  <path d="M 100 340
+           Q 100 140, 256 140
+           Q 412 140, 412 340"
+        stroke="rgba(255,255,255,0.25)" stroke-width="40" fill="none" stroke-linecap="round"/>
+
+  <!-- Left pillar -->
+  <rect x="80" y="300" width="44" height="100" rx="8" fill="rgba(255,255,255,0.3)"/>
+
+  <!-- Right pillar -->
+  <rect x="388" y="300" width="44" height="100" rx="8" fill="rgba(255,255,255,0.3)"/>
+
+  <!-- Bridge deck / road -->
+  <rect x="80" y="310" width="352" height="28" rx="14" fill="rgba(255,255,255,0.2)"/>
+
+  <!-- Webhook arrow — the hook going down through the bridge -->
+  <!-- Arrow shaft coming from top-left -->
+  <path d="M 160 80 L 310 230" stroke="url(#arrow)" stroke-width="36" stroke-linecap="round"/>
+
+  <!-- Arrow curving down (the "hook") -->
+  <path d="M 310 230 Q 370 230, 370 290 L 370 370"
+        stroke="url(#arrow)" stroke-width="36" fill="none" stroke-linecap="round"/>
+
+  <!-- Arrowhead pointing down -->
+  <path d="M 335 345 L 370 395 L 405 345"
+        stroke="url(#arrow)" stroke-width="36" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
