@@ -19,10 +19,17 @@ export function ServiceCard({ service, connected, error, onToggle, onRemove }: S
 
 	const accentBorder =
 		status === "connected"
-			? "border-l-green-500"
+			? "border-l-emerald-500"
 			: status === "disconnected"
 				? "border-l-red-500"
 				: "border-l-gray-600";
+
+	const statusLabel =
+		status === "connected"
+			? { text: "LIVE", cls: "bg-emerald-500/15 text-emerald-400 ring-1 ring-emerald-500/20" }
+			: status === "disconnected"
+				? { text: "DOWN", cls: "bg-red-500/15 text-red-400 ring-1 ring-red-500/20" }
+				: { text: "PAUSED", cls: "bg-gray-500/15 text-gray-400 ring-1 ring-gray-500/20" };
 
 	const handleCopy = async () => {
 		try {
@@ -36,33 +43,27 @@ export function ServiceCard({ service, connected, error, onToggle, onRemove }: S
 
 	return (
 		<div
-			className={`bg-gray-800/80 rounded-lg p-4 border border-gray-700/60 border-l-[3px] ${accentBorder} hover:bg-gray-800 hover:border-gray-600/60 transition-all duration-200 group`}
+			className={`bg-gray-900/70 rounded-xl p-4 border border-gray-800/80 border-l-[3px] ${accentBorder} transition-all duration-200 hover:bg-gray-900/90 hover:border-gray-700/80 animate-fade-in-up`}
 		>
-			{/* Top row: Name + controls */}
+			{/* Header row */}
 			<div className="flex items-center justify-between mb-3">
 				<div className="flex items-center gap-2.5">
 					<StatusDot status={status} />
-					<h3 className="text-[15px] font-semibold text-white tracking-tight">{service.name}</h3>
+					<h3 className="font-semibold text-white text-[15px]">{service.name}</h3>
 					<span
-						className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full uppercase tracking-wide ${
-							status === "connected"
-								? "bg-green-500/10 text-green-400 border border-green-500/20"
-								: status === "disconnected"
-									? "bg-red-500/10 text-red-400 border border-red-500/20"
-									: "bg-gray-500/10 text-gray-500 border border-gray-500/20"
-						}`}
+						className={`text-[9px] font-bold px-2 py-0.5 rounded-md uppercase tracking-wider ${statusLabel.cls}`}
 					>
-						{status}
+						{statusLabel.text}
 					</span>
 				</div>
 				<div className="flex items-center gap-1.5">
 					<button
 						type="button"
 						onClick={() => onToggle(service.id)}
-						className={`px-3 py-1 text-xs rounded-md font-medium transition-all duration-150 ${
+						className={`px-3 py-1 text-[11px] rounded-lg font-medium transition-all duration-200 ring-1 ${
 							service.active
-								? "bg-yellow-500/10 hover:bg-yellow-500/20 text-yellow-400 border border-yellow-500/20"
-								: "bg-green-500/10 hover:bg-green-500/20 text-green-400 border border-green-500/20"
+								? "ring-yellow-500/30 text-yellow-400 hover:bg-yellow-500/10"
+								: "ring-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10"
 						}`}
 					>
 						{service.active ? "Pause" : "Resume"}
@@ -70,64 +71,57 @@ export function ServiceCard({ service, connected, error, onToggle, onRemove }: S
 					<button
 						type="button"
 						onClick={() => onRemove(service.id)}
-						className="px-3 py-1 text-xs rounded-md font-medium bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 transition-all duration-150"
+						className="px-3 py-1 text-[11px] rounded-lg font-medium ring-1 ring-red-500/20 text-red-400 hover:bg-red-500/10 transition-all duration-200"
 					>
 						Remove
 					</button>
 				</div>
 			</div>
 
-			{/* Target URL */}
-			<div className="flex items-center gap-2 mb-2">
-				<span className="text-[11px] font-medium uppercase tracking-wider text-gray-500 shrink-0 w-12">
-					Target
-				</span>
-				<span className="text-sm font-mono text-gray-200">
-					localhost:{service.port}
-					{service.path}
-				</span>
-			</div>
+			{/* Details */}
+			<div className="space-y-2">
+				<div className="flex items-center gap-3 text-sm">
+					<span className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider w-14 shrink-0">
+						Target
+					</span>
+					<span className="text-gray-300 font-mono text-[13px]">
+						localhost:{service.port}
+						{service.path}
+					</span>
+				</div>
 
-			{/* Webhook URL */}
-			<div className="flex items-center gap-2">
-				<span className="text-[11px] font-medium uppercase tracking-wider text-gray-500 shrink-0 w-12">
-					URL
-				</span>
-				<div className="flex items-center gap-2 min-w-0 flex-1">
-					<code className="text-xs text-cyan-400/90 bg-gray-900/80 px-2.5 py-1 rounded-md truncate max-w-md font-mono border border-gray-700/50">
-						{webhookUrl}
-					</code>
-					<button
-						type="button"
-						onClick={handleCopy}
-						className={`text-xs font-medium px-2 py-1 rounded-md transition-all duration-150 shrink-0 ${
-							copied
-								? "bg-green-500/10 text-green-400 border border-green-500/20"
-								: "bg-gray-700/50 text-gray-400 hover:text-cyan-400 hover:bg-gray-700 border border-gray-600/50"
-						}`}
-					>
-						{copied ? "Copied!" : "Copy"}
-					</button>
+				<div className="flex items-center gap-3">
+					<span className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider w-14 shrink-0">
+						URL
+					</span>
+					<div className="flex items-center gap-2 flex-1 min-w-0">
+						<code className="text-[11px] text-cyan-400/90 bg-gray-950/80 px-2.5 py-1.5 rounded-lg ring-1 ring-gray-800 truncate font-mono flex-1">
+							{webhookUrl}
+						</code>
+						<button
+							type="button"
+							onClick={handleCopy}
+							className={`px-3 py-1.5 text-[11px] rounded-lg font-medium ring-1 transition-all duration-200 whitespace-nowrap ${
+								copied
+									? "ring-emerald-500/40 text-emerald-400 bg-emerald-500/10"
+									: "ring-gray-700 text-gray-400 hover:text-cyan-400 hover:ring-cyan-500/30 hover:bg-cyan-500/5"
+							}`}
+						>
+							{copied ? "Copied!" : "Copy"}
+						</button>
+					</div>
 				</div>
 			</div>
 
-			{/* Error message */}
+			{/* Error banner */}
 			{error && (
-				<div className="mt-2.5 flex items-start gap-2 bg-red-500/5 border border-red-500/10 rounded-md px-3 py-2">
-					<span className="text-red-400 text-xs shrink-0 mt-px">!</span>
-					<span className="text-red-400 text-xs">{error}</span>
+				<div className="mt-3 px-3 py-2 rounded-lg bg-red-500/5 ring-1 ring-red-500/20 text-red-400 text-xs flex items-center gap-2">
+					<span className="w-4 h-4 rounded-full bg-red-500/20 flex items-center justify-center text-red-400 text-[10px] font-bold shrink-0">
+						!
+					</span>
+					{error}
 				</div>
 			)}
-
-			{/* Created time */}
-			<div className="mt-2.5 text-[10px] text-gray-600">
-				Created{" "}
-				{new Date(service.created_at).toLocaleDateString("en-US", {
-					month: "short",
-					day: "numeric",
-					year: "numeric",
-				})}
-			</div>
 		</div>
 	);
 }

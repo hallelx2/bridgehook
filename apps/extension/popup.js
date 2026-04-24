@@ -72,12 +72,18 @@ function showToast(msg = "Copied!") {
 	setTimeout(() => toast.classList.remove("show"), 1500);
 }
 
-// ── Load Status ──────────────────────────────────────────────────────
+// ── Load Status (only re-render when data changes) ──────────────────
+
+let lastStatusJson = "";
 
 async function loadStatus() {
 	chrome.runtime.sendMessage({ type: "get_status" }, (response) => {
 		if (response?.services) {
-			renderServices(response.services);
+			const json = JSON.stringify(response.services);
+			if (json !== lastStatusJson) {
+				lastStatusJson = json;
+				renderServices(response.services);
+			}
 		}
 	});
 }
@@ -85,7 +91,11 @@ async function loadStatus() {
 // Listen for live status updates
 chrome.runtime.onMessage.addListener((msg) => {
 	if (msg.type === "status") {
-		renderServices(msg.services);
+		const json = JSON.stringify(msg.services);
+		if (json !== lastStatusJson) {
+			lastStatusJson = json;
+			renderServices(msg.services);
+		}
 	}
 });
 
@@ -266,5 +276,5 @@ document.getElementById("f-path").addEventListener("keydown", (e) => {
 
 loadStatus();
 
-// Refresh every 3 seconds while popup is open
-setInterval(loadStatus, 3000);
+// Refresh every 5 seconds as a fallback (broadcastStatus pushes updates in real-time)
+setInterval(loadStatus, 5000);

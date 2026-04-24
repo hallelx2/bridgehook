@@ -89,17 +89,17 @@ export function Dashboard() {
 	const existingPorts = new Set(services.map((s) => s.port));
 
 	return (
-		<div className="flex flex-col gap-4 h-full">
+		<div className="flex flex-col gap-5 h-full">
 			{/* Services Section */}
-			<section>
-				<div className="flex items-center justify-between mb-3">
-					<h2 className="text-lg font-semibold text-white">Services</h2>
+			<section className="animate-fade-in-up">
+				<div className="flex items-center justify-between mb-4">
+					<h2 className="text-lg font-semibold text-white tracking-tight">Services</h2>
 					<div className="flex items-center gap-2">
 						<button
 							type="button"
 							onClick={handleAutoDetect}
 							disabled={autoDetecting}
-							className="px-3 py-1.5 text-sm bg-emerald-600 hover:bg-emerald-700 disabled:bg-gray-600 text-white rounded-lg font-medium transition-colors"
+							className="px-3 py-1.5 text-sm font-medium rounded-lg border border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10 disabled:opacity-40 transition-all duration-200"
 						>
 							{autoDetecting ? "Detecting..." : "Auto-Detect"}
 						</button>
@@ -117,7 +117,7 @@ export function Dashboard() {
 								setShowImport(true);
 								setShowAddForm(false);
 							}}
-							className="px-3 py-1.5 text-sm bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-medium transition-colors"
+							className="px-3 py-1.5 text-sm font-medium rounded-lg border border-purple-500/30 text-purple-400 hover:bg-purple-500/10 transition-all duration-200"
 						>
 							Import
 						</button>
@@ -125,7 +125,7 @@ export function Dashboard() {
 							<button
 								type="button"
 								onClick={() => setShowAddForm(true)}
-								className="px-3 py-1.5 text-sm bg-cyan-600 hover:bg-cyan-700 text-white rounded-lg font-medium transition-colors"
+								className="px-3 py-1.5 text-sm font-medium rounded-lg bg-gradient-to-r from-cyan-600 to-blue-600 text-white hover:from-cyan-500 hover:to-blue-500 shadow-lg shadow-cyan-500/20 transition-all duration-200"
 							>
 								+ Add
 							</button>
@@ -135,7 +135,7 @@ export function Dashboard() {
 
 				{/* Detect results */}
 				{showDetect && (
-					<div className="mb-3 bg-gray-800 rounded-lg border border-gray-700 p-4">
+					<div className="mb-3 bg-gray-900/70 border border-gray-800/80 rounded-xl p-4 animate-fade-in-up">
 						<div className="flex items-center justify-between mb-2">
 							<h3 className="text-sm font-semibold text-white">
 								{scanning ? "Scanning localhost ports..." : "Detected Servers"}
@@ -208,7 +208,7 @@ export function Dashboard() {
 				{servicesLoading ? (
 					<div className="text-gray-500 text-sm py-4 text-center">Loading services...</div>
 				) : services.length === 0 && !showAddForm ? (
-					<div className="text-center py-8 bg-gray-800/50 rounded-lg border border-gray-700 border-dashed">
+					<div className="text-center py-10 bg-gray-900/40 border border-gray-700 border-dashed rounded-xl">
 						<p className="text-gray-400 text-sm">No services configured yet</p>
 						<p className="text-gray-500 text-xs mt-1">
 							Click Auto-Detect to find running servers, or add one manually
@@ -218,7 +218,7 @@ export function Dashboard() {
 								type="button"
 								onClick={handleAutoDetect}
 								disabled={autoDetecting}
-								className="px-4 py-2 text-sm bg-emerald-600 hover:bg-emerald-700 disabled:bg-gray-600 text-white rounded-lg font-medium transition-colors"
+								className="px-4 py-2 text-sm font-medium rounded-lg border border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10 disabled:opacity-40 transition-all duration-200"
 							>
 								{autoDetecting ? "Detecting..." : "Auto-Detect Servers"}
 							</button>
@@ -258,7 +258,7 @@ export function Dashboard() {
 					)}
 				</div>
 
-				<div className="flex-1 min-h-0 bg-gray-900 rounded-lg border border-gray-700 overflow-hidden">
+				<div className="flex-1 min-h-0 bg-gray-900/50 border border-gray-800/60 rounded-xl overflow-hidden">
 					<EventLog
 						events={events}
 						selectedEventId={selectedEventId}
