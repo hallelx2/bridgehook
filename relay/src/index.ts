@@ -4,8 +4,11 @@ import { neon } from "@neondatabase/serverless";
 import { desc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/neon-http";
 
+export { ChannelDO } from "./channel-do.js";
+
 export interface Env {
 	DATABASE_URL: string;
+	CHANNEL: DurableObjectNamespace;
 }
 
 /** CORS headers for all responses */
@@ -28,8 +31,11 @@ function json(data: unknown, status = 200, origin?: string): Response {
 	});
 }
 
-/** In-memory SSE connections per channel (not persisted — ephemeral) */
-const sseConnections = new Map<string, Set<WritableStreamDefaultWriter>>();
+/** Get the Durable Object stub for a channel */
+function getChannelDO(env: Env, channelId: string) {
+	const id = env.CHANNEL.idFromName(channelId);
+	return env.CHANNEL.get(id);
+}
 
 export default {
 	async fetch(request: Request, env: Env): Promise<Response> {
@@ -120,7 +126,7 @@ export default {
 				return json({ deleted: true }, 200, origin);
 			}
 
-			// ── List events for channel ──
+			// ── List events for channel (polling endpoint) ──
 			if (path.match(/^\/api\/channels\/[a-z0-9]+\/events$/) && request.method === "GET") {
 				const channelId = path.split("/")[3];
 				const limit = Math.min(Number(url.searchParams.get("limit") || "50"), MAX_BUFFERED_EVENTS);
@@ -135,11 +141,11 @@ export default {
 				return json(rows, 200, origin);
 			}
 
-			// ── SSE stream for channel ──
+			// ── SSE stream for channel → routed to Durable Object ──
 			if (path.match(/^\/hook\/[a-z0-9]+\/events$/) && request.method === "GET") {
 				const channelId = path.split("/")[2];
 
-				// Verify channel exists
+				// Verify channel exists in Neon
 				const [channel] = await db
 					.select()
 					.from(channels)
@@ -148,37 +154,9 @@ export default {
 
 				if (!channel) return json({ error: "Channel not found" }, 404, origin);
 
-				const { readable, writable } = new TransformStream();
-				const writer = writable.getWriter();
-				const encoder = new TextEncoder();
-
-				// Track connection
-				if (!sseConnections.has(channelId)) {
-					sseConnections.set(channelId, new Set());
-				}
-				sseConnections.get(channelId)?.add(writer);
-
-				// Send connected event
-				writer.write(
-					encoder.encode(`data: ${JSON.stringify({ type: "connected", channelId })}\n\n`),
-				);
-
-				// Cleanup on disconnect — use request abort signal
-				request.signal.addEventListener("abort", () => {
-					sseConnections.get(channelId)?.delete(writer);
-					if (sseConnections.get(channelId)?.size === 0) {
-						sseConnections.delete(channelId);
-					}
-					writer.close().catch(() => {});
-				});
-
-				return new Response(readable, {
-					headers: {
-						"Content-Type": "text/event-stream",
-						"Cache-Control": "no-cache",
-						...corsHeaders(origin),
-					},
-				});
+				// Delegate to Durable Object — it holds the SSE connections
+				const stub = getChannelDO(env, channelId);
+				return stub.fetch(request);
 			}
 
 			// ── Receive webhook (from external sender like Stripe) ──
@@ -207,7 +185,7 @@ export default {
 				});
 				const body = await request.text();
 
-				// Store event in DB
+				// Store event in Neon DB
 				const [evt] = await db
 					.insert(events)
 					.values({
@@ -220,33 +198,34 @@ export default {
 					})
 					.returning();
 
-				// Push to SSE connections
-				const connections = sseConnections.get(channelId);
-				if (connections && connections.size > 0) {
-					const ssePayload = JSON.stringify({
-						type: "webhook",
-						id: evt.id,
-						channelId,
-						method: evt.method,
-						path: evt.path,
-						headers,
-						body,
-						receivedAt: evt.receivedAt.toISOString(),
-					});
-					const encoder = new TextEncoder();
-					const message = encoder.encode(`data: ${ssePayload}\n\n`);
+				// Push to SSE listeners via Durable Object
+				const ssePayload = JSON.stringify({
+					type: "webhook",
+					id: evt.id,
+					channelId,
+					method: evt.method,
+					path: evt.path,
+					headers,
+					body,
+					receivedAt: evt.receivedAt.toISOString(),
+				});
 
-					for (const writer of connections) {
-						writer.write(message).catch(() => {
-							connections.delete(writer);
-						});
-					}
-				}
+				const stub = getChannelDO(env, channelId);
+				stub
+					.fetch(
+						new Request(`https://do/notify`, {
+							method: "POST",
+							body: ssePayload,
+						}),
+					)
+					.catch(() => {
+						// DO notification is best-effort — polling is the fallback
+					});
 
 				return json({ received: true, eventId: evt.id, channelId }, 202, origin);
 			}
 
-			// ── Receive response from browser ──
+			// ── Receive response from browser/extension/desktop ──
 			if (path.match(/^\/hook\/[a-z0-9]+\/response$/) && request.method === "POST") {
 				const channelId = path.split("/")[2];
 				const {
@@ -263,7 +242,7 @@ export default {
 					latencyMs: number;
 				};
 
-				// Update event with response data
+				// Update event in Neon DB
 				await db
 					.update(events)
 					.set({
@@ -274,21 +253,23 @@ export default {
 					})
 					.where(eq(events.id, eventId));
 
-				// Push response update to SSE listeners
-				const connections = sseConnections.get(channelId);
-				if (connections && connections.size > 0) {
-					const payload = JSON.stringify({
-						type: "response",
-						eventId,
-						status,
-						latencyMs,
-					});
-					const encoder = new TextEncoder();
-					const message = encoder.encode(`data: ${payload}\n\n`);
-					for (const writer of connections) {
-						writer.write(message).catch(() => connections.delete(writer));
-					}
-				}
+				// Notify SSE listeners about the response via DO
+				const responsePayload = JSON.stringify({
+					type: "response",
+					eventId,
+					status,
+					latencyMs,
+				});
+
+				const stub = getChannelDO(env, channelId);
+				stub
+					.fetch(
+						new Request(`https://do/notify`, {
+							method: "POST",
+							body: responsePayload,
+						}),
+					)
+					.catch(() => {});
 
 				return json({ ok: true }, 200, origin);
 			}
