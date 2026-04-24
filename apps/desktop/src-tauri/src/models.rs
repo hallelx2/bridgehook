@@ -95,3 +95,12 @@ pub struct ReplayResult {
     pub body: String,
     pub latency_ms: i64,
 }
+
+/// Result of probing a localhost port
+#[derive(Debug, Clone, Serialize)]
+pub struct PortProbe {
+    pub port: u16,
+    pub alive: bool,
+    pub status: u16,
+    pub server: Option<String>,
+}

@@ -13,7 +13,7 @@ interface ServiceCardProps {
 
 export function ServiceCard({ service, connected, error, onToggle, onRemove }: ServiceCardProps) {
 	const [copied, setCopied] = useState(false);
-	const webhookUrl = `https://relay.bridgehook.dev/hook/${service.channel_id}`;
+	const webhookUrl = `https://bridgehook-relay.halleluyaholudele.workers.dev/hook/${service.channel_id}`;
 
 	const status = !service.active ? "inactive" : connected ? "connected" : "disconnected";
 

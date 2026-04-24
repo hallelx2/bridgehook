@@ -63,5 +63,46 @@ export function useServices() {
 		refresh();
 	}, [refresh]);
 
-	return { services, loading, addService, removeService, toggleService, refresh };
+	const scanPorts = useCallback(async () => {
+		return invoke<PortProbe[]>("scan_ports");
+	}, []);
+
+	const autoDetect = useCallback(async () => {
+		const created = await invoke<Service[]>("auto_detect");
+		await refresh();
+		return created;
+	}, [refresh]);
+
+	const importFromExtension = useCallback(
+		async (webhookUrl: string, name: string, port: number, path: string) => {
+			const service = await invoke<Service>("import_from_extension", {
+				webhookUrl,
+				name,
+				port,
+				path,
+			});
+			await refresh();
+			return service;
+		},
+		[refresh],
+	);
+
+	return {
+		services,
+		loading,
+		addService,
+		removeService,
+		toggleService,
+		scanPorts,
+		autoDetect,
+		importFromExtension,
+		refresh,
+	};
+}
+
+export interface PortProbe {
+	port: number;
+	alive: boolean;
+	status: number;
+	server: string | null;
 }
