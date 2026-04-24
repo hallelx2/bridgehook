@@ -1,21 +1,46 @@
 use crate::db;
 use crate::models::{
-    BridgeStatus, SendResponsePayload, Service, SseMessage, WebhookEvent, WebhookEventPayload,
+    BridgeStatus, SendResponsePayload, Service, WebhookEvent, WebhookEventPayload,
 };
-use futures::StreamExt;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use rusqlite::Connection;
-use std::collections::HashMap;
+use serde::Deserialize;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tauri::{Emitter, Manager};
 use tokio::sync::Mutex;
 
-const RELAY_BASE_URL: &str = "https://relay.bridgehook.dev";
-const MAX_BACKOFF_SECS: u64 = 60;
+const RELAY_BASE_URL: &str = "https://bridgehook-relay.halleluyaholudele.workers.dev";
+const POLL_INTERVAL_MS: u64 = 2000;
+const ERROR_BACKOFF_MS: u64 = 10000;
+const MAX_CONSECUTIVE_ERRORS: u32 = 3;
 
-/// Main bridge loop — runs for the lifetime of a service. Handles reconnection
-/// with exponential backoff if the SSE connection drops.
+/// Event row returned from the relay's polling API
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RelayEvent {
+    id: String,
+    #[allow(dead_code)]
+    channel_id: String,
+    method: String,
+    path: String,
+    request_headers: String,
+    request_body: Option<String>,
+    response_status: Option<i32>,
+    #[allow(dead_code)]
+    response_headers: Option<String>,
+    #[allow(dead_code)]
+    response_body: Option<String>,
+    #[allow(dead_code)]
+    latency_ms: Option<i32>,
+    error: Option<String>,
+    received_at: String,
+}
+
+/// Main bridge loop — polls the relay every 2s for new events,
+/// forwards unprocessed ones to localhost, sends responses back.
+/// Same proven approach as the browser extension.
 pub async fn run_bridge(
     app_handle: tauri::AppHandle,
     service: Service,
@@ -26,142 +51,145 @@ pub async fn run_bridge(
         .build()
         .expect("failed to build HTTP client");
 
-    let relay_url = format!("{}/hook/{}/events", RELAY_BASE_URL, service.channel_id);
-    let mut backoff_secs: u64 = 1;
+    let poll_url = format!(
+        "{}/api/channels/{}/events?limit=50",
+        RELAY_BASE_URL, service.channel_id
+    );
+
+    let mut forwarded: HashSet<String> = HashSet::new();
+    let mut consecutive_errors: u32 = 0;
+
+    // Mark existing events as already forwarded (avoid replaying on restart)
+    if let Ok(existing) = fetch_events(&client, &poll_url).await {
+        for evt in &existing {
+            forwarded.insert(evt.id.clone());
+        }
+        log::info!(
+            "[{}] Marked {} existing events as already forwarded",
+            service.name,
+            forwarded.len()
+        );
+    }
+
+    log::info!(
+        "[{}] Bridge started (polling) → localhost:{}{}",
+        service.name,
+        service.port,
+        service.path
+    );
 
     loop {
-        log::info!(
-            "Connecting bridge for service '{}' to {}",
-            service.name,
-            relay_url
-        );
+        match fetch_events(&client, &poll_url).await {
+            Ok(events) => {
+                if consecutive_errors > 0 {
+                    log::info!("[{}] Reconnected to relay", service.name);
+                }
+                consecutive_errors = 0;
 
-        // Emit connected status
-        let _ = app_handle.emit(
-            "bridge-status",
-            BridgeStatus {
-                service_id: service.id.clone(),
-                connected: true,
-                error: None,
-            },
-        );
-
-        match connect_and_process(&app_handle, &service, &client, &relay_url, &db).await {
-            Ok(()) => {
-                log::info!("SSE stream ended for service '{}'", service.name);
-                backoff_secs = 1; // Reset backoff on clean disconnect
-            }
-            Err(e) => {
-                log::error!("Bridge error for '{}': {}", service.name, e);
+                // Emit connected
                 let _ = app_handle.emit(
                     "bridge-status",
                     BridgeStatus {
                         service_id: service.id.clone(),
-                        connected: false,
-                        error: Some(e.to_string()),
+                        connected: true,
+                        error: None,
                     },
+                );
+
+                // Find unforwarded events
+                let unforwarded: Vec<&RelayEvent> = events
+                    .iter()
+                    .filter(|e| {
+                        e.response_status.is_none()
+                            && e.error.is_none()
+                            && !forwarded.contains(&e.id)
+                    })
+                    .collect();
+
+                for evt in unforwarded {
+                    forwarded.insert(evt.id.clone());
+                    handle_event(&app_handle, &service, &client, &db, evt).await;
+                }
+            }
+            Err(e) => {
+                consecutive_errors += 1;
+
+                if consecutive_errors >= MAX_CONSECUTIVE_ERRORS {
+                    let _ = app_handle.emit(
+                        "bridge-status",
+                        BridgeStatus {
+                            service_id: service.id.clone(),
+                            connected: false,
+                            error: Some(format!("Connection failed: {}", e)),
+                        },
+                    );
+                }
+
+                log::error!(
+                    "[{}] Poll error (attempt {}): {}",
+                    service.name,
+                    consecutive_errors,
+                    e
                 );
             }
         }
 
-        // Exponential backoff before reconnect
-        log::info!(
-            "Reconnecting bridge for '{}' in {}s...",
-            service.name,
-            backoff_secs
-        );
-        tokio::time::sleep(Duration::from_secs(backoff_secs)).await;
-        backoff_secs = (backoff_secs * 2).min(MAX_BACKOFF_SECS);
+        let delay = if consecutive_errors > MAX_CONSECUTIVE_ERRORS {
+            ERROR_BACKOFF_MS
+        } else {
+            POLL_INTERVAL_MS
+        };
+        tokio::time::sleep(Duration::from_millis(delay)).await;
     }
 }
 
-/// Connect to the relay SSE stream and process incoming webhook events.
-async fn connect_and_process(
-    app_handle: &tauri::AppHandle,
-    service: &Service,
-    client: &reqwest::Client,
-    relay_url: &str,
-    db: &Arc<Mutex<Connection>>,
-) -> Result<(), String> {
-    let sse_client =
-        eventsource_client::ClientBuilder::for_url(relay_url)
-            .map_err(|e| e.to_string())?
-            .build();
+/// Fetch events from the relay's polling endpoint.
+async fn fetch_events(client: &reqwest::Client, url: &str) -> Result<Vec<RelayEvent>, String> {
+    let response = client
+        .get(url)
+        .timeout(Duration::from_secs(10))
+        .send()
+        .await
+        .map_err(|e| format!("Failed to poll relay: {}", e))?;
 
-    use eventsource_client::Client as SseClient;
-    let mut stream = sse_client.stream();
-
-    while let Some(event) = stream.next().await {
-        match event {
-            Ok(eventsource_client::SSE::Connected(_)) => {
-                log::info!("SSE transport connected for service '{}'", service.name);
-            }
-            Ok(eventsource_client::SSE::Event(ev)) => {
-                match serde_json::from_str::<SseMessage>(&ev.data) {
-                    Ok(msg) => {
-                        if msg.msg_type == "connected" {
-                            log::info!("SSE connected for service '{}'", service.name);
-                            continue;
-                        }
-                        if msg.msg_type == "webhook" {
-                            handle_webhook(app_handle, service, client, db, msg).await;
-                        }
-                    }
-                    Err(e) => {
-                        log::warn!("Failed to parse SSE message: {} — data: {}", e, ev.data);
-                    }
-                }
-            }
-            Ok(eventsource_client::SSE::Comment(_)) => {
-                // Heartbeat / keep-alive, ignore
-            }
-            Err(e) => {
-                return Err(format!("SSE stream error: {}", e));
-            }
-        }
+    if !response.status().is_success() {
+        return Err(format!("Relay returned status {}", response.status()));
     }
 
-    Ok(())
+    response
+        .json::<Vec<RelayEvent>>()
+        .await
+        .map_err(|e| format!("Failed to parse events: {}", e))
 }
 
-/// Handle a single webhook event: forward to localhost, send response back to
-/// the relay, store in SQLite, and emit to the frontend.
-async fn handle_webhook(
+/// Handle a single event: forward to localhost, send response back, store, emit.
+async fn handle_event(
     app_handle: &tauri::AppHandle,
     service: &Service,
     client: &reqwest::Client,
     db: &Arc<Mutex<Connection>>,
-    msg: SseMessage,
+    evt: &RelayEvent,
 ) {
     let start = Instant::now();
-    let event_id = match &msg.id {
-        Some(id) => id.clone(),
-        None => {
-            log::warn!("SSE webhook message missing event ID, skipping");
-            return;
-        }
-    };
-    let method = msg.method.unwrap_or_else(|| "POST".to_string());
-    let event_path = msg.path.unwrap_or_else(|| service.path.clone());
-    let headers = msg.headers.unwrap_or_default();
-    let body = msg.body.unwrap_or_default();
-    let received_at = chrono::Utc::now().to_rfc3339();
+
+    // Strip /hook/channelId prefix from path
+    let event_path = evt
+        .path
+        .strip_prefix(&format!("/hook/{}", service.channel_id))
+        .unwrap_or(&evt.path);
+    let event_path = if event_path.is_empty() { "/" } else { event_path };
+
+    let headers: HashMap<String, String> =
+        serde_json::from_str(&evt.request_headers).unwrap_or_default();
+    let body = evt.request_body.clone().unwrap_or_default();
+    let method = &evt.method;
 
     // Forward to localhost
     let local_url = format!("http://localhost:{}{}", service.port, event_path);
-    log::info!(
-        "[{}] Forwarding {} {} → {}",
-        service.name,
-        method,
-        event_path,
-        local_url
-    );
+    log::info!("[{}] {} {} → {}", service.name, method, event_path, local_url);
 
     let result = client
-        .request(
-            method.parse().unwrap_or(reqwest::Method::POST),
-            &local_url,
-        )
+        .request(method.parse().unwrap_or(reqwest::Method::POST), &local_url)
         .headers(to_header_map(&headers))
         .body(body.clone())
         .send()
@@ -176,14 +204,11 @@ async fn handle_webhook(
             let resp_body = response.text().await.unwrap_or_default();
 
             // Send response back to relay
-            let relay_response_url = format!(
-                "{}/hook/{}/response",
-                RELAY_BASE_URL, service.channel_id
-            );
+            let relay_url = format!("{}/hook/{}/response", RELAY_BASE_URL, service.channel_id);
             if let Err(e) = client
-                .post(&relay_response_url)
+                .post(&relay_url)
                 .json(&SendResponsePayload {
-                    event_id: event_id.clone(),
+                    event_id: evt.id.clone(),
                     status,
                     headers: resp_headers.clone(),
                     body: resp_body.clone(),
@@ -191,12 +216,11 @@ async fn handle_webhook(
                 .send()
                 .await
             {
-                log::error!("Failed to send response to relay: {}", e);
+                log::error!("[{}] Failed to send response to relay: {}", service.name, e);
             }
 
-            // Notify on error status
             if status >= 400 {
-                send_error_notification(app_handle, service, &method, &event_path, status);
+                send_error_notification(app_handle, service, method, event_path, status);
             }
 
             (
@@ -214,45 +238,37 @@ async fn handle_webhook(
             } else {
                 e.to_string()
             };
-
             log::error!("[{}] Forward failed: {}", service.name, error_msg);
-            send_error_notification(
-                app_handle,
-                service,
-                &method,
-                &event_path,
-                0,
-            );
-
+            send_error_notification(app_handle, service, method, event_path, 0);
             (None, None, None, Some(error_msg))
         }
     };
 
-    // Update last event time for tray icon status
+    // Update last event time
     if let Some(state) = app_handle.try_state::<crate::state::AppState>() {
         let mut last_time = state.last_event_time.write().await;
         *last_time = Some(Instant::now());
     }
 
     // Store in SQLite
-    let stored_event = WebhookEvent {
-        id: event_id.clone(),
+    let stored = WebhookEvent {
+        id: evt.id.clone(),
         service_id: service.id.clone(),
         method: method.clone(),
-        path: event_path.clone(),
-        request_headers: serde_json::to_string(&headers).unwrap_or_default(),
+        path: event_path.to_string(),
+        request_headers: evt.request_headers.clone(),
         request_body: Some(body),
         response_status,
         response_headers,
         response_body: response_body.clone(),
         latency_ms: Some(latency_ms),
         error: error.clone(),
-        received_at: received_at.clone(),
+        received_at: evt.received_at.clone(),
     };
 
     let conn = db.lock().await;
-    if let Err(e) = db::insert_event(&conn, &stored_event) {
-        log::error!("Failed to store event in DB: {}", e);
+    if let Err(e) = db::insert_event(&conn, &stored) {
+        log::error!("[{}] Failed to store event: {}", service.name, e);
     }
     drop(conn);
 
@@ -260,35 +276,27 @@ async fn handle_webhook(
     let _ = app_handle.emit(
         "webhook-event",
         WebhookEventPayload {
-            id: event_id,
+            id: evt.id.clone(),
             service_id: service.id.clone(),
             service_name: service.name.clone(),
-            method,
-            path: event_path,
+            method: method.clone(),
+            path: event_path.to_string(),
             request_headers: headers,
-            request_body: stored_event.request_body,
+            request_body: stored.request_body,
             response_status,
             response_body,
             latency_ms: Some(latency_ms),
             error,
-            received_at,
+            received_at: evt.received_at.clone(),
         },
     );
 }
 
-/// Convert a HashMap of headers to a reqwest HeaderMap.
-/// Skips headers that reqwest should set itself (host, content-length, etc.).
 fn to_header_map(headers: &HashMap<String, String>) -> HeaderMap {
-    let skip_headers = [
-        "host",
-        "content-length",
-        "transfer-encoding",
-        "connection",
-    ];
+    let skip = ["host", "content-length", "transfer-encoding", "connection"];
     let mut map = HeaderMap::new();
     for (key, value) in headers {
-        let key_lower = key.to_lowercase();
-        if skip_headers.contains(&key_lower.as_str()) {
+        if skip.contains(&key.to_lowercase().as_str()) {
             continue;
         }
         if let (Ok(name), Ok(val)) = (
@@ -301,18 +309,14 @@ fn to_header_map(headers: &HashMap<String, String>) -> HeaderMap {
     map
 }
 
-/// Extract response headers into a HashMap.
 fn extract_headers(response: &reqwest::Response) -> HashMap<String, String> {
-    let mut headers = HashMap::new();
-    for (key, value) in response.headers() {
-        if let Ok(v) = value.to_str() {
-            headers.insert(key.to_string(), v.to_string());
-        }
-    }
-    headers
+    response
+        .headers()
+        .iter()
+        .filter_map(|(k, v)| v.to_str().ok().map(|v| (k.to_string(), v.to_string())))
+        .collect()
 }
 
-/// Send a native notification for error responses or connection failures.
 fn send_error_notification(
     app_handle: &tauri::AppHandle,
     service: &Service,
@@ -321,16 +325,11 @@ fn send_error_notification(
     status: u16,
 ) {
     use tauri_plugin_notification::NotificationExt;
-
     let body = if status > 0 {
         format!("{} returned {}\n{} {}", service.name, status, method, path)
     } else {
-        format!(
-            "{} — connection failed\n{} {}",
-            service.name, method, path
-        )
+        format!("{} — connection failed\n{} {}", service.name, method, path)
     };
-
     let _ = app_handle
         .notification()
         .builder()

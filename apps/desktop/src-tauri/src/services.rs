@@ -1,15 +1,32 @@
 use crate::bridge;
 use crate::models::{CreateChannelResponse, Service};
 use crate::state::AppState;
+use sha2::Digest;
 
-const RELAY_BASE_URL: &str = "https://relay.bridgehook.dev";
+const RELAY_BASE_URL: &str = "https://bridgehook-relay.halleluyaholudele.workers.dev";
 
 /// Create a new channel on the relay server.
+/// Sends a POST to `/api/channels` with a secret hash, port, and allowed paths.
 /// Returns the channel ID assigned by the relay.
-pub async fn create_channel(client: &reqwest::Client) -> Result<String, String> {
-    let url = format!("{}/channels/new", RELAY_BASE_URL);
+pub async fn create_channel(
+    client: &reqwest::Client,
+    port: u16,
+    path: &str,
+) -> Result<String, String> {
+    // Generate a secret and hash it
+    let secret = uuid::Uuid::new_v4().to_string();
+    let secret_hash = hex::encode(sha2::Digest::finalize(
+        sha2::Sha256::new_with_prefix(secret.as_bytes()),
+    ));
+
+    let url = format!("{}/api/channels", RELAY_BASE_URL);
     let response = client
-        .get(&url)
+        .post(&url)
+        .json(&serde_json::json!({
+            "secretHash": secret_hash,
+            "port": port,
+            "allowedPaths": [path],
+        }))
         .send()
         .await
         .map_err(|e| format!("Failed to connect to relay: {}", e))?;

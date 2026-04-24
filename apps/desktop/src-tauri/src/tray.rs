@@ -18,7 +18,7 @@ pub enum TrayStatus {
 pub fn create_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let menu = build_tray_menu(app, &[])?;
 
-    let _tray = TrayIconBuilder::new()
+    let _tray = TrayIconBuilder::with_id("bridgehook-tray")
         .icon(app.default_window_icon().cloned().unwrap())
         .tooltip("BridgeHook")
         .menu(&menu)
