@@ -12,6 +12,52 @@ pub struct Service {
     pub secret: String,
     pub active: bool,
     pub created_at: String,
+    /// Optional path rewrite: if Some("/api/hook"), all forwarded requests land there.
+    #[serde(default)]
+    pub path_rewrite: Option<String>,
+    /// Extra headers to inject on forward. JSON map, e.g. {"X-Forwarded-For": "…"}.
+    #[serde(default)]
+    pub injected_headers: Option<String>,
+    /// Per-service request timeout in ms. None → default (30s).
+    #[serde(default)]
+    pub timeout_ms: Option<u32>,
+    /// Retry count on failure (0 = no retries).
+    #[serde(default)]
+    pub retry_count: u32,
+    /// Delay between retries in ms.
+    #[serde(default = "default_retry_delay")]
+    pub retry_delay_ms: u32,
+    /// JSON array of {name, port, path} environments.
+    #[serde(default)]
+    pub environments: Option<String>,
+    /// Name of the currently active environment (key into `environments`).
+    #[serde(default)]
+    pub active_environment: Option<String>,
+    /// Signing provider: "stripe", "github", "slack", or None.
+    #[serde(default)]
+    pub signing_provider: Option<String>,
+    /// Secret used to verify incoming signatures.
+    #[serde(default)]
+    pub signing_secret: Option<String>,
+    /// JSON {status, headers, body} — if set, localhost is skipped and this is returned.
+    #[serde(default)]
+    pub mock_response: Option<String>,
+    /// Fire a native notification whenever an event arrives on this service.
+    #[serde(default)]
+    pub notify_on_event: bool,
+    /// PKCS#8 DER-encoded ECDSA P-256 private key used to sign authenticated
+    /// requests to the relay. `None` for legacy services that pre-date the
+    /// migration — those won't authenticate against the new relay and must
+    /// be removed and re-added.
+    ///
+    /// `#[serde(skip)]` so the private key never crosses the IPC boundary
+    /// into the front-end. Backed by SQLite column `private_key_pkcs8`.
+    #[serde(skip)]
+    pub private_key_pkcs8: Option<Vec<u8>>,
+}
+
+fn default_retry_delay() -> u32 {
+    1000
 }
 
 /// A stored webhook event with request + response (stored in SQLite)

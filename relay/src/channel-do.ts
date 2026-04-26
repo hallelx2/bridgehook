@@ -1,3 +1,5 @@
+import { MAX_SSE_CONNECTIONS_PER_CHANNEL } from "@bridgehook/shared";
+
 /**
  * Durable Object for per-channel SSE connections.
  *
@@ -22,12 +24,10 @@ export class ChannelDO implements DurableObject {
 		const url = new URL(request.url);
 		const path = url.pathname;
 
-		// SSE stream — client connects here
 		if (request.method === "GET" && path.endsWith("/events")) {
 			return this.handleSSE(request);
 		}
 
-		// Notify — Worker calls this after storing an event in Neon
 		if (request.method === "POST" && path.endsWith("/notify")) {
 			return this.handleNotify(request);
 		}
@@ -36,17 +36,29 @@ export class ChannelDO implements DurableObject {
 	}
 
 	private handleSSE(request: Request): Response {
+		// Enforce per-channel connection cap to prevent resource exhaustion
+		if (this.sseWriters.size >= MAX_SSE_CONNECTIONS_PER_CHANNEL) {
+			return new Response("Too many connections", {
+				status: 429,
+				headers: { "Access-Control-Allow-Origin": "*" },
+			});
+		}
+
 		const { readable, writable } = new TransformStream();
 		const writer = writable.getWriter();
 		this.sseWriters.add(writer);
 
-		// Send connected event
-		writer.write(this.encoder.encode(`data: ${JSON.stringify({ type: "connected" })}\n\n`));
+		// Send connected event (best-effort)
+		writer
+			.write(this.encoder.encode(`data: ${JSON.stringify({ type: "connected" })}\n\n`))
+			.catch((err) => console.error("SSE initial write failed:", err));
 
 		// Cleanup on disconnect
 		request.signal.addEventListener("abort", () => {
 			this.sseWriters.delete(writer);
-			writer.close().catch(() => {});
+			writer.close().catch(() => {
+				/* already closed */
+			});
 		});
 
 		return new Response(readable, {
@@ -69,15 +81,24 @@ export class ChannelDO implements DurableObject {
 		const payload = await request.text();
 		const message = this.encoder.encode(`data: ${payload}\n\n`);
 
+		// Fan out in parallel — a slow client must not block others.
+		// Remove writers whose write rejects (client disconnected).
+		const writers = Array.from(this.sseWriters);
+		const results = await Promise.allSettled(writers.map((w) => w.write(message)));
+
 		let pushed = 0;
-		for (const writer of this.sseWriters) {
-			try {
-				await writer.write(message);
+		results.forEach((r, i) => {
+			if (r.status === "fulfilled") {
 				pushed++;
-			} catch {
-				this.sseWriters.delete(writer);
+			} else {
+				const w = writers[i];
+				this.sseWriters.delete(w);
+				console.error("SSE writer failed, removed:", r.reason);
+				w.close().catch(() => {
+					/* already closed */
+				});
 			}
-		}
+		});
 
 		return new Response(JSON.stringify({ pushed, connected: this.sseWriters.size }), {
 			status: 200,

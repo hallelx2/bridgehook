@@ -1,37 +1,46 @@
+import { cn } from "../lib/cn";
+
 interface StatusDotProps {
 	status: "connected" | "idle" | "disconnected" | "inactive";
 	size?: "sm" | "md";
+	className?: string;
 }
 
-const colors: Record<StatusDotProps["status"], string> = {
-	connected: "bg-green-500",
-	idle: "bg-yellow-500",
-	disconnected: "bg-red-500",
-	inactive: "bg-gray-500",
+const dotColor: Record<StatusDotProps["status"], string> = {
+	connected: "bg-uranium",
+	idle: "bg-warn",
+	disconnected: "bg-err",
+	inactive: "bg-fg-ghost",
 };
 
-const ringColors: Record<StatusDotProps["status"], string> = {
-	connected: "ring-green-500/30",
-	idle: "ring-yellow-500/30",
-	disconnected: "ring-red-500/30",
-	inactive: "ring-gray-500/20",
-};
-
-const glowClasses: Record<StatusDotProps["status"], string> = {
-	connected: "animate-glow-green",
-	idle: "animate-glow-yellow",
-	disconnected: "animate-glow-red",
+const dotShadow: Record<StatusDotProps["status"], string> = {
+	connected: "shadow-[0_0_8px_rgba(204,255,0,0.6)]",
+	idle: "shadow-[0_0_6px_rgba(244,195,97,0.5)]",
+	disconnected: "shadow-[0_0_6px_rgba(255,122,122,0.5)]",
 	inactive: "",
 };
 
-export function StatusDot({ status, size = "md" }: StatusDotProps) {
-	const sizeClass = size === "sm" ? "w-2 h-2" : "w-2.5 h-2.5";
-	const ringSize = size === "sm" ? "ring-2" : "ring-[3px]";
+const pulse: Record<StatusDotProps["status"], string> = {
+	connected: "animate-pulse-soft",
+	idle: "animate-pulse-soft",
+	disconnected: "",
+	inactive: "",
+};
 
+export function StatusDot({ status, size = "md", className }: StatusDotProps) {
+	const sz = size === "sm" ? "w-1.5 h-1.5" : "w-2 h-2";
 	return (
 		<span
-			className={`inline-block rounded-full ${colors[status]} ${sizeClass} ${ringSize} ${ringColors[status]} ${glowClasses[status]}`}
+			className={cn(
+				"inline-block rounded-full",
+				sz,
+				dotColor[status],
+				dotShadow[status],
+				pulse[status],
+				className,
+			)}
 			title={status}
+			aria-label={status}
 		/>
 	);
 }

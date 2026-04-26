@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Architecture } from "./components/Architecture";
 import { Benefits } from "./components/Benefits";
 import { BentoGrid } from "./components/BentoGrid";
 import { BridgeHero } from "./components/BridgeHero";
@@ -19,6 +20,7 @@ function LandingPage() {
 				<DashboardPreview />
 				<BentoGrid />
 				<ScrollFlow />
+				<Architecture />
 				<Benefits />
 				<ComparisonTable />
 				<FinalCTA />

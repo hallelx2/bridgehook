@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { deleteChannelKey, getChannelPrivateKey } from "../lib/crypto";
 import type { WebhookEventData } from "../lib/relay";
 import {
+	RELAY_URL,
 	createChannel,
 	forwardToLocalhost,
+	getChannel,
 	getEvents,
 	pollEvents,
+	safeParseJson,
 	sendResponse,
 } from "../lib/relay";
 
@@ -21,13 +25,88 @@ export interface LiveEvent {
 	receivedAt: string;
 }
 
+export interface MockConfig {
+	enabled: boolean;
+	status: number;
+	body: string;
+	headers: Record<string, string>;
+}
+
+type Status = "idle" | "connecting" | "connected" | "reconnecting" | "error";
+
 interface BridgeState {
-	status: "idle" | "connecting" | "connected" | "error";
+	status: Status;
 	channelId: string | null;
 	webhookUrl: string | null;
 	port: number;
+	allowedPaths: string[];
 	events: LiveEvent[];
 	error: string | null;
+	pollFailures: number;
+	mock: MockConfig;
+	secrets: Record<string, string>;
+}
+
+interface StoredChannel {
+	channelId: string;
+	port: number;
+	allowedPaths: string[];
+}
+
+const STORE_KEY = "bh_channel_v1";
+const MOCK_KEY = "bh_mock_v1";
+const SECRETS_KEY = "bh_secrets_v1";
+
+const DEFAULT_MOCK: MockConfig = {
+	enabled: false,
+	status: 200,
+	body: '{"received":true}',
+	headers: { "content-type": "application/json" },
+};
+
+// Headers the browser manages or the relay injects — stripped before
+// replaying so fetch() doesn't reject the call.
+const REPLAY_SKIP_HEADERS = new Set([
+	"host",
+	"content-length",
+	"connection",
+	"accept-encoding",
+	"cf-ray",
+	"cf-connecting-ip",
+	"cf-ipcountry",
+	"cf-visitor",
+	"x-real-ip",
+	"x-forwarded-proto",
+	"x-forwarded-for",
+]);
+
+function loadStored<T>(key: string, fallback: T): T {
+	if (typeof localStorage === "undefined") return fallback;
+	try {
+		const raw = localStorage.getItem(key);
+		if (!raw) return fallback;
+		return JSON.parse(raw) as T;
+	} catch {
+		return fallback;
+	}
+}
+
+function saveStored(key: string, value: unknown): void {
+	if (typeof localStorage === "undefined") return;
+	try {
+		localStorage.setItem(key, JSON.stringify(value));
+	} catch {
+		// Quota / private mode — ignore silently
+	}
+}
+
+function clearStored(key: string): void {
+	if (typeof localStorage === "undefined") return;
+	try {
+		localStorage.removeItem(key);
+	} catch {
+		// ignore
+	}
 }
 
 function toLiveEvent(e: WebhookEventData): LiveEvent {
@@ -35,7 +114,7 @@ function toLiveEvent(e: WebhookEventData): LiveEvent {
 		id: e.id,
 		method: e.method,
 		path: e.path,
-		requestHeaders: JSON.parse(e.requestHeaders || "{}"),
+		requestHeaders: safeParseJson<Record<string, string>>(e.requestHeaders, {}),
 		requestBody: e.requestBody,
 		responseStatus: e.responseStatus,
 		responseBody: e.responseBody,
@@ -45,48 +124,156 @@ function toLiveEvent(e: WebhookEventData): LiveEvent {
 	};
 }
 
+function errorMessage(err: unknown): string {
+	if (err instanceof Error) return err.message;
+	if (typeof err === "string") return err;
+	try {
+		return JSON.stringify(err);
+	} catch {
+		return "Unknown error";
+	}
+}
+
+/**
+ * Merge a fresh server-side event snapshot with locally-held events.
+ * Preserves local response/error state while the server catches up —
+ * avoids the "response flashes in, then disappears" race where polling
+ * returns the event before our sendResponse round-trip persists.
+ */
+function mergeEvents(existing: LiveEvent[], incoming: WebhookEventData[]): LiveEvent[] {
+	const byId = new Map(existing.map((e) => [e.id, e]));
+	return incoming.map((raw) => {
+		const next = toLiveEvent(raw);
+		const prev = byId.get(next.id);
+		if (!prev) return next;
+		if (!next.responseStatus && !next.error && (prev.responseStatus || prev.error)) {
+			return {
+				...next,
+				responseStatus: prev.responseStatus,
+				responseBody: prev.responseBody,
+				latencyMs: prev.latencyMs,
+				error: prev.error,
+			};
+		}
+		return next;
+	});
+}
+
+function stripReplayHeaders(headers: Record<string, string>): Record<string, string> {
+	const out: Record<string, string> = {};
+	for (const [k, v] of Object.entries(headers)) {
+		if (!REPLAY_SKIP_HEADERS.has(k.toLowerCase())) out[k] = v;
+	}
+	return out;
+}
+
 export function useBridge() {
-	const [state, setState] = useState<BridgeState>({
+	const [state, setState] = useState<BridgeState>(() => ({
 		status: "idle",
 		channelId: null,
 		webhookUrl: null,
 		port: 3000,
+		allowedPaths: [],
 		events: [],
 		error: null,
-	});
+		pollFailures: 0,
+		mock: loadStored<MockConfig>(MOCK_KEY, DEFAULT_MOCK),
+		secrets: loadStored<Record<string, string>>(SECRETS_KEY, {}),
+	}));
 
 	const stopPollingRef = useRef<(() => void) | null>(null);
+	const abortControllerRef = useRef<AbortController | null>(null);
 	const forwardedRef = useRef<Set<string>>(new Set());
+	const isMountedRef = useRef(true);
+
+	// Refs for values accessed from long-lived callbacks to avoid stale closures
+	const portRef = useRef(state.port);
+	const channelIdRef = useRef(state.channelId);
+	const mockRef = useRef(state.mock);
+	useEffect(() => {
+		portRef.current = state.port;
+	}, [state.port]);
+	useEffect(() => {
+		channelIdRef.current = state.channelId;
+	}, [state.channelId]);
+	useEffect(() => {
+		mockRef.current = state.mock;
+	}, [state.mock]);
+
+	const safeSetState = useCallback((updater: (s: BridgeState) => BridgeState) => {
+		if (!isMountedRef.current) return;
+		setState(updater);
+	}, []);
 
 	/**
-	 * When polling detects new events, check for unforwarded ones
-	 * and forward them to localhost (the bridge!).
+	 * Handle a fresh poll snapshot. Merges server state with local, then
+	 * forwards any pending events to localhost — or returns a canned mock
+	 * response when mock mode is enabled.
 	 */
 	const handleNewEvents = useCallback(
 		(events: WebhookEventData[]) => {
 			if (events.length === 0) {
-				// Initial "connected" signal
-				setState((s) => ({ ...s, status: "connected" }));
+				safeSetState((s) =>
+					s.status === "connecting" || s.status === "reconnecting"
+						? { ...s, status: "connected", pollFailures: 0 }
+						: { ...s, pollFailures: 0 },
+				);
 				return;
 			}
 
-			// Update event list
-			const liveEvents = events.map(toLiveEvent);
-			setState((s) => ({ ...s, events: liveEvents }));
+			safeSetState((s) => ({
+				...s,
+				events: mergeEvents(s.events, events),
+				status: "connected",
+				pollFailures: 0,
+			}));
 
-			// Find events that haven't been forwarded yet (no response)
+			const signal = abortControllerRef.current?.signal;
+
 			const unforwarded = events.filter(
 				(e) => !e.responseStatus && !e.error && !forwardedRef.current.has(e.id),
 			);
 
-			// Forward each to localhost
 			for (const evt of unforwarded) {
 				forwardedRef.current.add(evt.id);
+				const currentPort = portRef.current;
+				const currentChannelId = channelIdRef.current;
+				const currentMock = mockRef.current;
 
-				forwardToLocalhost(evt, state.port)
+				// ── Mock mode: skip localhost, return canned response ────────
+				if (currentMock.enabled) {
+					const cannedResponse = {
+						status: currentMock.status,
+						headers: currentMock.headers,
+						body: currentMock.body,
+						latencyMs: 0,
+					};
+					safeSetState((s) => ({
+						...s,
+						events: s.events.map((e) =>
+							e.id === evt.id
+								? {
+										...e,
+										responseStatus: cannedResponse.status,
+										responseBody: cannedResponse.body,
+										latencyMs: cannedResponse.latencyMs,
+									}
+								: e,
+						),
+					}));
+					if (currentChannelId) {
+						sendResponse(currentChannelId, evt.id, cannedResponse, signal).catch((err) => {
+							if (err instanceof DOMException && err.name === "AbortError") return;
+							console.warn("mock response send failed:", err);
+						});
+					}
+					continue;
+				}
+
+				// ── Real mode: forward to localhost, capture, send back ──────
+				forwardToLocalhost(evt, currentPort, signal)
 					.then((response) => {
-						// Update local state with response
-						setState((s) => ({
+						safeSetState((s) => ({
 							...s,
 							events: s.events.map((e) =>
 								e.id === evt.id
@@ -100,91 +287,276 @@ export function useBridge() {
 							),
 						}));
 
-						// Send response back to relay (server stores in Neon)
-						if (state.channelId) {
-							sendResponse(state.channelId, evt.id, response);
+						if (currentChannelId) {
+							sendResponse(currentChannelId, evt.id, response, signal).catch((err) => {
+								if (err instanceof DOMException && err.name === "AbortError") return;
+								console.error("sendResponse failed:", err);
+							});
 						}
 					})
 					.catch((err) => {
-						setState((s) => ({
+						if (err instanceof DOMException && err.name === "AbortError") return;
+						const message = errorMessage(err);
+						safeSetState((s) => ({
 							...s,
-							events: s.events.map((e) =>
-								e.id === evt.id ? { ...e, error: (err as Error).message } : e,
-							),
+							events: s.events.map((e) => (e.id === evt.id ? { ...e, error: message } : e)),
 						}));
 					});
 			}
 		},
-		[state.port, state.channelId],
+		[safeSetState],
 	);
 
-	/** Start a new bridge: create channel, start polling */
+	const handlePollError = useCallback(
+		(err: Error) => {
+			console.error("Polling error:", err);
+			safeSetState((s) => {
+				const failures = s.pollFailures + 1;
+				const status: Status =
+					failures >= 3 && s.status === "connected" ? "reconnecting" : s.status;
+				return { ...s, pollFailures: failures, status };
+			});
+		},
+		[safeSetState],
+	);
+
+	const bootstrapChannel = useCallback(
+		async (
+			channelId: string,
+			port: number,
+			allowedPaths: string[],
+			controller: AbortController,
+		) => {
+			const existing = await getEvents(channelId, 50, controller.signal);
+			if (controller.signal.aborted) return;
+
+			const liveEvents = existing.map(toLiveEvent);
+			// Only mark events as already forwarded if they have a terminal outcome.
+			// Pending events should be retried (useful after a refresh).
+			for (const e of existing) {
+				if (e.responseStatus !== null || e.error !== null) {
+					forwardedRef.current.add(e.id);
+				}
+			}
+
+			safeSetState((s) => ({
+				...s,
+				events: liveEvents,
+				port,
+				allowedPaths,
+				status: "connected",
+			}));
+
+			const stopPolling = pollEvents(
+				channelId,
+				handleNewEvents,
+				handlePollError,
+				2000,
+				controller.signal,
+			);
+			stopPollingRef.current = stopPolling;
+		},
+		[handleNewEvents, handlePollError, safeSetState],
+	);
+
+	/** Create a fresh channel, start polling, persist for rehydration. */
 	const connect = useCallback(
 		async (port: number, allowedPaths: string[]) => {
+			stopPollingRef.current?.();
+			stopPollingRef.current = null;
+			abortControllerRef.current?.abort();
+
+			const controller = new AbortController();
+			abortControllerRef.current = controller;
+
 			try {
-				setState((s) => ({ ...s, status: "connecting", port, error: null }));
+				safeSetState((s) => ({
+					...s,
+					status: "connecting",
+					port,
+					allowedPaths,
+					error: null,
+				}));
 				forwardedRef.current = new Set();
 
-				// Server creates channel + persists to Neon
 				const channel = await createChannel(port, allowedPaths);
+				if (controller.signal.aborted) return;
 
-				setState((s) => ({
+				safeSetState((s) => ({
 					...s,
 					channelId: channel.channelId,
 					webhookUrl: channel.webhookUrl,
 				}));
 
-				// Load existing events from DB
-				const existingEvents = await getEvents(channel.channelId);
-				const liveEvents = existingEvents.map(toLiveEvent);
-				// Mark existing events as already forwarded
-				for (const e of existingEvents) {
-					forwardedRef.current.add(e.id);
-				}
-				setState((s) => ({ ...s, events: liveEvents, status: "connected" }));
+				saveStored(STORE_KEY, {
+					channelId: channel.channelId,
+					port,
+					allowedPaths,
+				} satisfies StoredChannel);
 
-				// Start polling for new events (every 2 seconds)
-				const stopPolling = pollEvents(
-					channel.channelId,
-					handleNewEvents,
-					(err) => {
-						console.error("Polling error:", err);
-						// Don't set error state for transient polling failures
-					},
-					2000,
-				);
-
-				stopPollingRef.current = stopPolling;
+				await bootstrapChannel(channel.channelId, port, allowedPaths, controller);
 			} catch (err) {
-				setState((s) => ({
+				if (err instanceof DOMException && err.name === "AbortError") return;
+				safeSetState((s) => ({
 					...s,
 					status: "error",
-					error: (err as Error).message,
+					error: errorMessage(err),
 				}));
 			}
 		},
-		[handleNewEvents],
+		[bootstrapChannel, safeSetState],
 	);
 
-	/** Disconnect the bridge */
 	const disconnect = useCallback(() => {
 		stopPollingRef.current?.();
 		stopPollingRef.current = null;
+		abortControllerRef.current?.abort();
+		abortControllerRef.current = null;
 		forwardedRef.current = new Set();
-		setState({
+		clearStored(STORE_KEY);
+		// Fire-and-forget IDB key cleanup — the channel is already unusable
+		// without the key, and this reclaims storage.
+		const previousChannelId = channelIdRef.current;
+		if (previousChannelId) {
+			deleteChannelKey(previousChannelId).catch(() => {
+				/* ignore */
+			});
+		}
+		safeSetState((s) => ({
 			status: "idle",
 			channelId: null,
 			webhookUrl: null,
 			port: 3000,
+			allowedPaths: [],
 			events: [],
 			error: null,
+			pollFailures: 0,
+			mock: s.mock,
+			secrets: s.secrets,
+		}));
+	}, [safeSetState]);
+
+	/**
+	 * On mount, rehydrate a previously-active channel if one is stored.
+	 * If the channel has expired server-side, wipe localStorage and fall
+	 * back to the connect form.
+	 */
+	// biome-ignore lint/correctness/useExhaustiveDependencies: intentional run-once-on-mount
+	useEffect(() => {
+		const stored = loadStored<StoredChannel | null>(STORE_KEY, null);
+		if (!stored) return;
+
+		const controller = new AbortController();
+		abortControllerRef.current = controller;
+
+		(async () => {
+			safeSetState((s) => ({ ...s, status: "connecting" }));
+			try {
+				// If the private key was wiped (IDB cleared, different browser profile,
+				// etc.) there's no way to authenticate anymore — drop the stub.
+				const privateKey = await getChannelPrivateKey(stored.channelId);
+				if (!privateKey) {
+					clearStored(STORE_KEY);
+					safeSetState((s) => ({ ...s, status: "idle" }));
+					return;
+				}
+
+				const channel = await getChannel(stored.channelId);
+				if (controller.signal.aborted) return;
+				if (!channel) {
+					clearStored(STORE_KEY);
+					safeSetState((s) => ({ ...s, status: "idle" }));
+					return;
+				}
+
+				safeSetState((s) => ({
+					...s,
+					channelId: channel.channelId,
+					webhookUrl: channel.webhookUrl,
+					port: stored.port,
+					allowedPaths: stored.allowedPaths,
+				}));
+
+				await bootstrapChannel(channel.channelId, stored.port, stored.allowedPaths, controller);
+			} catch (err) {
+				if (err instanceof DOMException && err.name === "AbortError") return;
+				clearStored(STORE_KEY);
+				safeSetState((s) => ({
+					...s,
+					status: "idle",
+					error: errorMessage(err),
+				}));
+			}
+		})();
+
+		return () => {
+			controller.abort();
+		};
+		// Intentional empty deps — rehydration runs once on mount only.
+	}, []);
+
+	/**
+	 * Replay an event by POSTing its original request back to the relay URL.
+	 * The fresh call flows through normal polling, so the replay appears
+	 * as a new row with its own latency and response.
+	 */
+	const replay = useCallback(async (event: LiveEvent) => {
+		const url = `${RELAY_URL}${event.path}`;
+		const headers = stripReplayHeaders(event.requestHeaders);
+		await fetch(url, {
+			method: event.method,
+			headers,
+			body: event.requestBody || undefined,
 		});
 	}, []);
 
-	// Cleanup on unmount
+	/** Replay with modified body and/or headers. Produces a new feed row. */
+	const replayWithEdits = useCallback(
+		async (event: LiveEvent, edits: { body?: string; headers?: Record<string, string> }) => {
+			const url = `${RELAY_URL}${event.path}`;
+			const base = stripReplayHeaders(event.requestHeaders);
+			const merged = { ...base, ...(edits.headers ?? {}) };
+			await fetch(url, {
+				method: event.method,
+				headers: merged,
+				body: edits.body ?? event.requestBody ?? undefined,
+			});
+		},
+		[],
+	);
+
+	const setMock = useCallback(
+		(update: Partial<MockConfig>) => {
+			safeSetState((s) => {
+				const mock = { ...s.mock, ...update };
+				saveStored(MOCK_KEY, mock);
+				return { ...s, mock };
+			});
+		},
+		[safeSetState],
+	);
+
+	const setSecret = useCallback(
+		(provider: string, secret: string) => {
+			safeSetState((s) => {
+				const secrets = { ...s.secrets };
+				if (secret) secrets[provider] = secret;
+				else delete secrets[provider];
+				saveStored(SECRETS_KEY, secrets);
+				return { ...s, secrets };
+			});
+		},
+		[safeSetState],
+	);
+
 	useEffect(() => {
+		isMountedRef.current = true;
 		return () => {
+			isMountedRef.current = false;
 			stopPollingRef.current?.();
+			stopPollingRef.current = null;
+			abortControllerRef.current?.abort();
+			abortControllerRef.current = null;
 		};
 	}, []);
 
@@ -192,5 +564,9 @@ export function useBridge() {
 		...state,
 		connect,
 		disconnect,
+		replay,
+		replayWithEdits,
+		setMock,
+		setSecret,
 	};
 }

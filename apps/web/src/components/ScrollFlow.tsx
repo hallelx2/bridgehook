@@ -1,59 +1,50 @@
+import { CheckCircle2, Cloud, Code2, RadioTower, Route, Webhook } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 /**
  * A single continuous SVG meandering path connects all 5 flow nodes.
  * Cards sit alternating left/right alongside the path.
- * On scroll, a glowing gradient stroke travels along the path and
- * lights up each node as it passes.
+ * On scroll, a single-accent gradient stroke travels along the path and
+ * lights up each node as it passes. (Previously 5 distinct colors — now one.)
  */
-
-const STEPS = [
+const STEPS: { Icon: LucideIcon; title: string; desc: string; code: string }[] = [
 	{
-		icon: "webhook",
-		title: "Webhook Fires",
+		Icon: Webhook,
+		title: "Webhook fires",
 		desc: "Stripe, GitHub, or any provider sends a POST to your unique BridgeHook URL.",
 		code: "POST https://hook.bridgehook.dev/ch_9x4kf2m",
-		color: "#ffb0cd",
 	},
 	{
-		icon: "cloud",
-		title: "Relay Receives",
+		Icon: Cloud,
+		title: "Relay receives",
 		desc: "Our Cloudflare Edge relay catches the request globally with <50ms latency and buffers it.",
-		code: "Event buffered → SSE broadcast",
-		color: "#9093ff",
+		code: "Event buffered → streamed to browser",
 	},
 	{
-		icon: "cell_tower",
-		title: "SSE Pushes to Browser",
-		desc: "The relay streams the event to your browser tab in real-time via Server-Sent Events.",
-		code: "EventSource → data: { method, headers, body }",
-		color: "#ddb7ff",
+		Icon: RadioTower,
+		title: "Pushes to your browser",
+		desc: "The relay streams the event to your browser tab in real time.",
+		code: "EventSource → { method, headers, body }",
 	},
 	{
-		icon: "code",
-		title: "Browser Forwards",
+		Icon: Code2,
+		title: "Browser forwards",
 		desc: "Your browser's JavaScript calls fetch() to forward the exact request to your local dev server.",
 		code: 'fetch("http://localhost:3000/webhook/stripe")',
-		color: "#28c840",
 	},
 	{
-		icon: "check_circle",
-		title: "Response Returns",
+		Icon: CheckCircle2,
+		title: "Response returns",
 		desc: "Your server's response flows back through the relay to the original webhook sender.",
 		code: '← 200 OK { "received": true }',
-		color: "#fcd34d",
 	},
 ];
 
-/**
- * Y positions for each node center along the SVG.
- * SVG viewBox is 200 wide, height is calculated from node count.
- */
 const NODE_SPACING = 220;
 const SVG_WIDTH = 200;
 const SVG_HEIGHT = (STEPS.length - 1) * NODE_SPACING + 40;
 
-/** X positions alternate: left-center, right-center, left-center... */
 function nodeX(i: number) {
 	return i % 2 === 0 ? 60 : 140;
 }
@@ -61,7 +52,6 @@ function nodeY(i: number) {
 	return 20 + i * NODE_SPACING;
 }
 
-/** Build a smooth meandering cubic bezier path through all nodes */
 function buildPath(): string {
 	const parts: string[] = [];
 	for (let i = 0; i < STEPS.length; i++) {
@@ -73,7 +63,6 @@ function buildPath(): string {
 			const prevX = nodeX(i - 1);
 			const prevY = nodeY(i - 1);
 			const midY = (prevY + y) / 2;
-			// S-curve: control points push horizontally toward the opposite side
 			parts.push(`C ${prevX} ${midY}, ${x} ${midY}, ${x} ${y}`);
 		}
 	}
@@ -81,22 +70,20 @@ function buildPath(): string {
 }
 
 const PATH_D = buildPath();
+const ACCENT = "#FF5C26";
 
 export function ScrollFlow() {
 	const sectionRef = useRef<HTMLDivElement>(null);
 	const pathRef = useRef<SVGPathElement>(null);
-	const glowRef = useRef<SVGPathElement>(null);
 	const [progress, setProgress] = useState(0);
 	const [pathLength, setPathLength] = useState(0);
 
-	// Measure path length once
 	useEffect(() => {
 		if (pathRef.current) {
 			setPathLength(pathRef.current.getTotalLength());
 		}
 	}, []);
 
-	// Scroll-driven progress
 	useEffect(() => {
 		const section = sectionRef.current;
 		if (!section) return;
@@ -115,34 +102,27 @@ export function ScrollFlow() {
 		return () => window.removeEventListener("scroll", handleScroll);
 	}, []);
 
-	// Which node is active based on progress
 	const activeIndex = Math.min(Math.floor(progress * STEPS.length), STEPS.length - 1);
-
-	// Stroke dashoffset for the reveal
 	const revealLength = pathLength * progress;
 	const dashOffset = pathLength - revealLength;
 
 	return (
-		<section ref={sectionRef} id="flow" className="max-w-5xl mx-auto px-4 md:px-8 py-32 relative">
-			{/* Background glow */}
-			<div className="absolute top-1/3 left-1/2 -translate-x-1/2 w-[500px] h-[800px] bg-primary/[0.03] rounded-full blur-[120px] pointer-events-none" />
-
+		<section ref={sectionRef} id="flow" className="max-w-5xl mx-auto px-4 md:px-6 py-32 relative">
 			{/* Header */}
 			<div className="text-center mb-20 relative z-10">
-				<div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-white/[0.03] border border-white/[0.06] text-[10px] font-bold text-tertiary tracking-[0.2em] uppercase mb-6 font-label">
-					<span className="material-symbols-outlined text-tertiary text-sm">route</span>
-					Request Flow
+				<div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-surface border border-border text-[10px] font-bold text-primary tracking-[0.2em] uppercase mb-6">
+					<Route size={12} strokeWidth={2} />
+					Request flow
 				</div>
-				<h2 className="text-4xl md:text-6xl font-black text-white tracking-tighter font-headline mb-4">
+				<h2 className="text-4xl md:text-6xl font-extrabold text-on-surface tracking-[-0.035em] mb-4">
 					See every step
 				</h2>
-				<p className="text-zinc-400 text-lg max-w-xl mx-auto leading-relaxed font-body">
+				<p className="text-on-surface-variant text-lg max-w-xl mx-auto leading-relaxed">
 					Scroll to trace a webhook from the moment it fires to the response your server sends back.
 					Every hop, visualized.
 				</p>
 			</div>
 
-			{/* Flow container: SVG path + positioned cards */}
 			<div
 				className="relative z-10 mx-auto"
 				style={{
@@ -159,19 +139,12 @@ export function ScrollFlow() {
 					fill="none"
 				>
 					{/* Background track */}
-					<path
-						d={PATH_D}
-						stroke="rgba(255,255,255,0.04)"
-						strokeWidth="2"
-						strokeLinecap="round"
-						fill="none"
-					/>
-					{/* Revealed glow path */}
+					<path d={PATH_D} stroke="#1e1e22" strokeWidth="2" strokeLinecap="round" fill="none" />
+					{/* Revealed path — single accent */}
 					{pathLength > 0 && (
 						<path
-							ref={glowRef}
 							d={PATH_D}
-							stroke="url(#flowGradient)"
+							stroke={ACCENT}
 							strokeWidth="2.5"
 							strokeLinecap="round"
 							fill="none"
@@ -183,67 +156,33 @@ export function ScrollFlow() {
 					{/* Invisible path for measurement */}
 					<path ref={pathRef} d={PATH_D} stroke="transparent" strokeWidth="1" fill="none" />
 
-					{/* Node dots on the path */}
+					{/* Node dots */}
 					{STEPS.map((step, i) => {
 						const isActive = i <= activeIndex;
 						return (
 							<g key={step.title}>
-								{/* Outer glow */}
 								{isActive && (
-									<circle cx={nodeX(i)} cy={nodeY(i)} r="12" fill={step.color} opacity="0.15">
+									<circle cx={nodeX(i)} cy={nodeY(i)} r="12" fill={ACCENT} opacity="0.18">
 										<animate
 											attributeName="r"
 											values="10;16;10"
 											dur="2s"
 											repeatCount="indefinite"
 										/>
-										<animate
-											attributeName="opacity"
-											values="0.15;0.3;0.15"
-											dur="2s"
-											repeatCount="indefinite"
-										/>
 									</circle>
 								)}
-								{/* Main dot */}
 								<circle
 									cx={nodeX(i)}
 									cy={nodeY(i)}
 									r="6"
-									fill={isActive ? step.color : "#18181b"}
-									stroke={isActive ? step.color : "rgba(255,255,255,0.1)"}
+									fill={isActive ? ACCENT : "#0a0a0c"}
+									stroke={isActive ? ACCENT : "#2a2a2f"}
 									strokeWidth="2"
 									style={{ transition: "all 0.5s ease" }}
 								/>
 							</g>
 						);
 					})}
-
-					{/* Traveling dot */}
-					{pathLength > 0 && progress > 0 && (
-						<circle r="4" fill="#fff" opacity="0.9">
-							<animateMotion
-								dur="3s"
-								repeatCount="indefinite"
-								keyPoints={`${Math.max(0, progress - 0.05)};${progress}`}
-								keyTimes="0;1"
-								calcMode="linear"
-							>
-								<mpath href="#flowPathRef" />
-							</animateMotion>
-						</circle>
-					)}
-					<path id="flowPathRef" d={PATH_D} stroke="transparent" fill="none" />
-
-					<defs>
-						<linearGradient id="flowGradient" x1="0" y1="0" x2="0" y2="1">
-							<stop offset="0%" stopColor="#ffb0cd" />
-							<stop offset="25%" stopColor="#9093ff" />
-							<stop offset="50%" stopColor="#ddb7ff" />
-							<stop offset="75%" stopColor="#28c840" />
-							<stop offset="100%" stopColor="#fcd34d" />
-						</linearGradient>
-					</defs>
 				</svg>
 
 				{/* Cards positioned alongside the path */}
@@ -251,12 +190,13 @@ export function ScrollFlow() {
 					const isLeft = i % 2 === 0;
 					const isActive = i <= activeIndex;
 					const topPos = i * 240;
+					const { Icon } = step;
 
 					return (
 						<div
 							key={step.title}
 							className={`absolute transition-all duration-700 w-[calc(50%-60px)] ${
-								isActive ? "opacity-100 translate-y-0" : "opacity-15 translate-y-3"
+								isActive ? "opacity-100 translate-y-0" : "opacity-30 translate-y-2"
 							}`}
 							style={{
 								top: `${topPos}px`,
@@ -264,58 +204,43 @@ export function ScrollFlow() {
 							}}
 						>
 							<div
-								className={`bg-[#111113] border rounded-xl p-7 transition-all duration-500 ${
-									isActive
-										? "border-white/10 shadow-[0_0_50px_-15px_var(--glow)]"
-										: "border-white/[0.04]"
+								className={`bg-surface border rounded-xl p-7 transition-colors duration-500 ${
+									isActive ? "border-border-strong" : "border-border-subtle"
 								}`}
-								style={
-									{
-										"--glow": `${step.color}30`,
-									} as React.CSSProperties
-								}
 							>
-								{/* Icon + step label */}
 								<div className="flex items-center gap-3 mb-4">
 									<div
-										className="w-9 h-9 rounded-lg flex items-center justify-center transition-all duration-500"
-										style={{
-											background: isActive ? `${step.color}12` : "rgba(255,255,255,0.03)",
-											border: `1px solid ${isActive ? `${step.color}25` : "rgba(255,255,255,0.06)"}`,
-										}}
+										className={`w-9 h-9 rounded-lg flex items-center justify-center transition-colors duration-500 ${
+											isActive
+												? "bg-primary-soft border border-primary/40"
+												: "bg-surface-2 border border-border-subtle"
+										}`}
 									>
-										<span
-											className="material-symbols-outlined text-lg transition-colors duration-500"
-											style={{
-												color: isActive ? step.color : "#3f3f46",
-											}}
-										>
-											{step.icon}
-										</span>
+										<Icon
+											size={18}
+											strokeWidth={1.75}
+											className={isActive ? "text-primary" : "text-on-surface-faint"}
+										/>
 									</div>
-									<span className="text-[10px] font-black text-zinc-600 uppercase tracking-[0.25em] font-label">
+									<span className="text-[10px] font-bold text-on-surface-muted uppercase tracking-[0.25em]">
 										Step {i + 1}
 									</span>
 								</div>
 
-								{/* Title */}
-								<h3 className="text-xl font-black text-white tracking-tight font-headline mb-2">
+								<h3 className="text-xl font-extrabold text-on-surface tracking-tight mb-2">
 									{step.title}
 								</h3>
 
-								{/* Description */}
-								<p className="text-zinc-400 text-[13px] leading-relaxed mb-4 font-body">
+								<p className="text-on-surface-variant text-[13px] leading-relaxed mb-4">
 									{step.desc}
 								</p>
 
-								{/* Code snippet */}
 								<div
-									className="font-mono text-[11px] px-3 py-2 rounded-lg transition-all duration-500"
-									style={{
-										background: isActive ? `${step.color}08` : "rgba(255,255,255,0.02)",
-										color: isActive ? step.color : "#3f3f46",
-										border: `1px solid ${isActive ? `${step.color}18` : "rgba(255,255,255,0.04)"}`,
-									}}
+									className={`font-mono text-[11px] px-3 py-2 rounded-lg transition-colors duration-500 ${
+										isActive
+											? "bg-primary-soft text-primary border border-primary/30"
+											: "bg-surface-2 text-on-surface-faint border border-border-subtle"
+									}`}
 								>
 									{step.code}
 								</div>

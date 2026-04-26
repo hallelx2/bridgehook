@@ -2,7 +2,14 @@ import { integer, pgTable, text, timestamp, varchar } from "drizzle-orm/pg-core"
 
 export const channels = pgTable("channels", {
 	id: varchar("id", { length: 24 }).primaryKey(),
-	secretHash: text("secret_hash").notNull(),
+	// One of `publicKey` or `secretHash` is populated, never both.
+	// - publicKey: hex-encoded ECDSA P-256 public key (130 chars). Modern clients.
+	//   Auth is per-request signature verification.
+	// - secretHash: SHA-256 hex of a shared secret (64 chars). Legacy clients
+	//   (desktop Rust backend, browser extension) that haven't been ported to
+	//   asymmetric signing yet. Auth is bearer-token + constant-time compare.
+	publicKey: text("public_key"),
+	secretHash: text("secret_hash"),
 	port: integer("port").notNull().default(3000),
 	allowedPaths: text("allowed_paths").notNull().default("[]"),
 	createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

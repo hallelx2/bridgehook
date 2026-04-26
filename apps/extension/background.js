@@ -6,9 +6,18 @@
  * mixed content restrictions, so forwarding from HTTPS relay to HTTP
  * localhost works perfectly.
  *
+ * Auth model (matches the web client):
+ *   - On channel create, we generate an ECDSA P-256 keypair via crypto.subtle.
+ *   - The public key is sent to the relay.
+ *   - The private key is re-imported as non-extractable and stored in IndexedDB.
+ *     From that point on `crypto.subtle.exportKey()` will throw — no JS
+ *     (including ours) can read its raw bytes.
+ *   - Every authenticated relay request is signed:
+ *         sig = ECDSA(key, "METHOD\nPATH\nTIMESTAMP\nSHA256(body)")
+ *
  * Architecture:
- *   Relay (HTTPS) → SSE/polling → Extension background.js → fetch → localhost (HTTP)
- *   localhost response → Extension → POST → Relay
+ *   Relay (HTTPS) → polling → Extension background.js → fetch → localhost (HTTP)
+ *   localhost response → Extension → POST (signed) → Relay
  */
 
 const RELAY_URL = "https://bridgehook-relay.halleluyaholudele.workers.dev";
@@ -36,44 +45,178 @@ const pollingControllers = new Map();
  * @property {number} errorCount
  */
 
+// ── IndexedDB (CryptoKey storage) ────────────────────────────────────
+
+const IDB_NAME = "bridgehook";
+const IDB_VERSION = 1;
+const IDB_STORE = "channel-keys";
+let dbPromise = null;
+
+function openDB() {
+	if (dbPromise) return dbPromise;
+	dbPromise = new Promise((resolve, reject) => {
+		const req = indexedDB.open(IDB_NAME, IDB_VERSION);
+		req.onupgradeneeded = () => {
+			const db = req.result;
+			if (!db.objectStoreNames.contains(IDB_STORE)) db.createObjectStore(IDB_STORE);
+		};
+		req.onsuccess = () => resolve(req.result);
+		req.onerror = () => reject(req.error ?? new Error("IndexedDB open failed"));
+	});
+	dbPromise.catch(() => {
+		dbPromise = null;
+	});
+	return dbPromise;
+}
+
+function tx(mode) {
+	return openDB().then((db) => db.transaction(IDB_STORE, mode).objectStore(IDB_STORE));
+}
+
+function idbWrap(req) {
+	return new Promise((resolve, reject) => {
+		req.onsuccess = () => resolve(req.result);
+		req.onerror = () => reject(req.error ?? new Error("IndexedDB request failed"));
+	});
+}
+
+async function idbGet(key) {
+	const store = await tx("readonly");
+	return idbWrap(store.get(key));
+}
+async function idbPut(key, value) {
+	const store = await tx("readwrite");
+	await idbWrap(store.put(value, key));
+}
+async function idbDelete(key) {
+	const store = await tx("readwrite");
+	await idbWrap(store.delete(key));
+}
+
+// ── Crypto helpers ───────────────────────────────────────────────────
+
+const KEY_ALG = { name: "ECDSA", namedCurve: "P-256" };
+const SIGN_ALG = { name: "ECDSA", hash: "SHA-256" };
+
+function toHex(buf) {
+	const arr = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+	let out = "";
+	for (let i = 0; i < arr.length; i++) out += arr[i].toString(16).padStart(2, "0");
+	return out;
+}
+
+async function sha256Hex(input) {
+	const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input));
+	return toHex(buf);
+}
+
+const keyRecord = (channelId) => `channel-key:${channelId}`;
+
+/**
+ * Generate a fresh keypair for the channel. Returns the hex-encoded raw
+ * public key. The non-extractable private key is persisted in IndexedDB.
+ */
+async function generateChannelKey(channelId) {
+	const pair = await crypto.subtle.generateKey(KEY_ALG, true, ["sign", "verify"]);
+	const pubRaw = await crypto.subtle.exportKey("raw", pair.publicKey);
+	const publicKeyHex = toHex(pubRaw);
+
+	// Re-import as non-extractable. From now on no script can export the bytes.
+	const pkcs8 = await crypto.subtle.exportKey("pkcs8", pair.privateKey);
+	const nonExtractable = await crypto.subtle.importKey("pkcs8", pkcs8, KEY_ALG, false, ["sign"]);
+	new Uint8Array(pkcs8).fill(0);
+
+	await idbPut(keyRecord(channelId), {
+		privateKey: nonExtractable,
+		publicKeyHex,
+	});
+	return publicKeyHex;
+}
+
+async function getChannelPrivateKey(channelId) {
+	const rec = await idbGet(keyRecord(channelId));
+	return rec?.privateKey ?? null;
+}
+
+async function deleteChannelKey(channelId) {
+	try {
+		await idbDelete(keyRecord(channelId));
+	} catch {
+		/* best-effort */
+	}
+}
+
+/**
+ * Sign and send an authenticated request. Adds X-BH-Timestamp + X-BH-Signature.
+ */
+async function signedFetch(channelId, url, init = {}) {
+	const privateKey = await getChannelPrivateKey(channelId);
+	if (!privateKey) throw new Error(`No signing key for channel ${channelId}`);
+
+	const method = (init.method ?? "GET").toUpperCase();
+	const pathname = new URL(url).pathname;
+	const timestamp = Date.now().toString();
+	const bodyStr = typeof init.body === "string" ? init.body : "";
+	const canonical = `${method}\n${pathname}\n${timestamp}\n${await sha256Hex(bodyStr)}`;
+
+	const sig = await crypto.subtle.sign(SIGN_ALG, privateKey, new TextEncoder().encode(canonical));
+	const headers = new Headers(init.headers);
+	headers.set("X-BH-Timestamp", timestamp);
+	headers.set("X-BH-Signature", toHex(sig));
+	return fetch(url, { ...init, headers });
+}
+
 // ── Relay API ────────────────────────────────────────────────────────
 
 async function createChannel(port, path) {
-	// Generate a secret hash for channel authentication
-	const secret = crypto.randomUUID();
-	const encoder = new TextEncoder();
-	const hashBuffer = await crypto.subtle.digest("SHA-256", encoder.encode(secret));
-	const secretHash = Array.from(new Uint8Array(hashBuffer))
-		.map((b) => b.toString(16).padStart(2, "0"))
-		.join("");
+	// Generate into a temporary slot — we don't know the channel id until the
+	// server responds. On success we move the IDB record into place.
+	const tempId = `pending-${crypto.randomUUID()}`;
+	const publicKey = await generateChannelKey(tempId);
 
-	const res = await fetch(`${RELAY_URL}/api/channels`, {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ secretHash, port, allowedPaths: [path] }),
-	});
-	if (!res.ok) throw new Error(`Relay returned ${res.status}`);
-	const data = await res.json();
-	return data.channelId;
+	try {
+		const res = await fetch(`${RELAY_URL}/api/channels`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ publicKey, port, allowedPaths: [path] }),
+		});
+		if (!res.ok) {
+			const text = await res.text().catch(() => "");
+			throw new Error(`Relay returned ${res.status}${text ? ` — ${text}` : ""}`);
+		}
+		const data = await res.json();
+		// Move the key record from tempId → real channelId.
+		const rec = await idbGet(keyRecord(tempId));
+		if (rec) {
+			await idbPut(keyRecord(data.channelId), rec);
+			await idbDelete(keyRecord(tempId));
+		}
+		return data.channelId;
+	} catch (err) {
+		await deleteChannelKey(tempId);
+		throw err;
+	}
 }
 
 async function fetchEvents(channelId, limit = 50) {
-	const res = await fetch(`${RELAY_URL}/api/channels/${channelId}/events?limit=${limit}`);
+	const url = `${RELAY_URL}/api/channels/${channelId}/events?limit=${limit}`;
+	const res = await signedFetch(channelId, url);
 	if (!res.ok) throw new Error(`Failed to get events: ${res.status}`);
 	return res.json();
 }
 
 async function sendResponseToRelay(channelId, eventId, response) {
-	await fetch(`${RELAY_URL}/hook/${channelId}/response`, {
+	const body = JSON.stringify({
+		eventId,
+		status: response.status,
+		headers: response.headers,
+		body: response.body,
+		latencyMs: response.latencyMs,
+	});
+	await signedFetch(channelId, `${RELAY_URL}/hook/${channelId}/response`, {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({
-			eventId,
-			status: response.status,
-			headers: response.headers,
-			body: response.body,
-			latencyMs: response.latencyMs,
-		}),
+		body,
 	});
 }
 
@@ -89,13 +232,11 @@ async function forwardToLocalhost(event, port, servicePath) {
 	// Extract path: strip the /hook/channelId prefix
 	const eventPath = event.path?.replace(/^\/hook\/[a-z0-9]+/, "") || servicePath || "/";
 
-	// Parse headers
 	const rawHeaders =
 		typeof event.requestHeaders === "string"
 			? JSON.parse(event.requestHeaders || "{}")
 			: event.headers || {};
 
-	// Strip headers that break localhost forwarding
 	const skip = new Set([
 		"host",
 		"cf-ray",
@@ -113,9 +254,7 @@ async function forwardToLocalhost(event, port, servicePath) {
 
 	const headers = {};
 	for (const [k, v] of Object.entries(rawHeaders)) {
-		if (!skip.has(k.toLowerCase())) {
-			headers[k] = v;
-		}
+		if (!skip.has(k.toLowerCase())) headers[k] = v;
 	}
 
 	const body = event.requestBody ?? event.body ?? undefined;
@@ -130,7 +269,6 @@ async function forwardToLocalhost(event, port, servicePath) {
 		response.headers.forEach((v, k) => {
 			respHeaders[k] = v;
 		});
-
 		return {
 			status: response.status,
 			headers: respHeaders,
@@ -143,23 +281,12 @@ async function forwardToLocalhost(event, port, servicePath) {
 		const msg = err.message?.includes("Failed to fetch")
 			? `Connection refused — is localhost:${port} running?`
 			: err.message;
-
-		return {
-			status: 0,
-			headers: {},
-			body: "",
-			latencyMs,
-			error: msg,
-		};
+		return { status: 0, headers: {}, body: "", latencyMs, error: msg };
 	}
 }
 
 // ── Bridge Loop ──────────────────────────────────────────────────────
 
-/**
- * Start the bridge polling loop for a service.
- * Polls the relay for new events, forwards to localhost, sends responses back.
- */
 function startBridge(service) {
 	if (pollingControllers.has(service.id)) {
 		stopBridge(service.id);
@@ -178,12 +305,10 @@ function startBridge(service) {
 			const events = await fetchEvents(service.channelId);
 			consecutiveErrors = 0;
 
-			// Update service status
 			service.status = "connected";
 			service.error = null;
 			broadcastStatus();
 
-			// Find unforwarded events (no response yet)
 			const unforwarded = events.filter(
 				(e) => !e.responseStatus && !e.error && !forwarded.has(e.id),
 			);
@@ -196,8 +321,6 @@ function startBridge(service) {
 
 				if (result.error) {
 					service.errorCount = (service.errorCount || 0) + 1;
-
-					// Show notification on error
 					chrome.notifications.create({
 						type: "basic",
 						iconUrl: "icons/icon-128.png",
@@ -205,10 +328,7 @@ function startBridge(service) {
 						message: `${service.name}: ${result.error}`,
 					});
 				} else {
-					// Send response back to relay
 					await sendResponseToRelay(service.channelId, evt.id, result);
-
-					// Notify on HTTP error status
 					if (result.status >= 400) {
 						service.errorCount = (service.errorCount || 0) + 1;
 						chrome.notifications.create({
@@ -219,7 +339,6 @@ function startBridge(service) {
 						});
 					}
 				}
-
 				broadcastStatus();
 			}
 		} catch (err) {
@@ -230,7 +349,6 @@ function startBridge(service) {
 		}
 
 		if (!controller.signal.aborted) {
-			// Poll every 2 seconds, with backoff on errors
 			const delay = consecutiveErrors > 3 ? 10000 : 2000;
 			setTimeout(poll, delay);
 		}
@@ -295,6 +413,8 @@ async function addService(name, port, path) {
 
 async function removeService(serviceId) {
 	stopBridge(serviceId);
+	const service = activeBridges.get(serviceId);
+	if (service?.channelId) await deleteChannelKey(service.channelId);
 	activeBridges.delete(serviceId);
 
 	const services = await loadServices();
@@ -341,7 +461,6 @@ function broadcastStatus() {
 		webhookUrl: `${RELAY_URL}/hook/${s.channelId}`,
 	}));
 
-	// Update badge
 	const activeCount = services.filter((s) => s.active && s.status === "connected").length;
 	const errorCount = services.reduce((sum, s) => sum + (s.errorCount || 0), 0);
 
@@ -355,9 +474,8 @@ function broadcastStatus() {
 		chrome.action.setBadgeText({ text: "" });
 	}
 
-	// Send to popup if open
 	chrome.runtime.sendMessage({ type: "status", services }).catch(() => {
-		// Popup not open, ignore
+		// Popup not open
 	});
 }
 
@@ -411,7 +529,6 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 				break;
 			}
 			case "auto_detect": {
-				// Just scan — don't auto-create bridges
 				const alive = await scanPorts();
 				sendResponse({ detected: alive, created: [] });
 				break;
@@ -427,10 +544,6 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
 const COMMON_PORTS = [3000, 3001, 4000, 5000, 5173, 8000, 8080, 8888];
 
-/**
- * Probe a single port to see if a server is running.
- * Extensions can fetch localhost without CORS — so this just works.
- */
 async function probePort(port) {
 	try {
 		const controller = new AbortController();
@@ -440,7 +553,6 @@ async function probePort(port) {
 			signal: controller.signal,
 		});
 		clearTimeout(timeout);
-		// Any response (even 404) means a server is listening
 		const serverHeader = res.headers.get("server") || res.headers.get("x-powered-by") || null;
 		return { port, alive: true, status: res.status, server: serverHeader };
 	} catch {
@@ -448,9 +560,6 @@ async function probePort(port) {
 	}
 }
 
-/**
- * Scan all common ports and return which ones have running servers.
- */
 async function scanPorts() {
 	const results = await Promise.all(COMMON_PORTS.map(probePort));
 	return results.filter((r) => r.alive);
@@ -471,12 +580,17 @@ chrome.runtime.onStartup.addListener(async () => {
 async function restoreBridges() {
 	const services = await loadServices();
 	for (const service of services) {
+		// If the IDB key was wiped (browser data cleared, profile change, etc.) we
+		// can no longer authenticate — the channel is unrecoverable. Skip it.
+		const hasKey = !!(await getChannelPrivateKey(service.channelId));
+		if (!hasKey) {
+			console.warn(`[BridgeHook] No signing key for "${service.name}" — skipping`);
+			continue;
+		}
 		service.status = "disconnected";
 		service.error = null;
 		activeBridges.set(service.id, service);
-		if (service.active) {
-			startBridge(service);
-		}
+		if (service.active) startBridge(service);
 	}
 	broadcastStatus();
 }

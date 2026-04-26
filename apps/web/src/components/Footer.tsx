@@ -2,41 +2,41 @@ import { Logo } from "./Logo";
 
 export function Footer() {
 	return (
-		<footer className="bg-black py-32 border-t border-white/5">
-			<div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-start px-8">
-				<div className="mb-16 md:mb-0">
+		<footer className="bg-background py-24 border-t border-border-subtle">
+			<div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-start px-6">
+				<div className="mb-12 md:mb-0">
 					<Logo size="lg" />
-					<p className="text-zinc-600 mt-6 text-sm font-bold tracking-[0.2em] uppercase font-label">
+					<p className="text-on-surface-muted mt-4 text-xs font-bold tracking-[0.2em] uppercase">
 						Zero-install webhook testing.
 					</p>
 				</div>
 
-				<div className="grid grid-cols-2 md:grid-cols-3 gap-16 md:gap-32 font-body">
+				<div className="grid grid-cols-2 md:grid-cols-3 gap-12 md:gap-24">
 					<div>
-						<h4 className="text-white font-black text-xs uppercase tracking-[0.2em] mb-8 font-headline">
+						<h4 className="text-on-surface font-bold text-xs uppercase tracking-[0.2em] mb-6">
 							Platform
 						</h4>
-						<ul className="space-y-4">
+						<ul className="space-y-3">
 							<li>
 								<a
 									href="#"
-									className="text-zinc-400 hover:text-primary transition-colors text-sm font-medium"
+									className="text-on-surface-variant hover:text-primary transition-colors text-sm font-medium no-underline"
 								>
-									Web App
+									Web app
 								</a>
 							</li>
 							<li>
 								<a
 									href="#"
-									className="text-zinc-400 hover:text-primary transition-colors text-sm font-medium"
+									className="text-on-surface-variant hover:text-primary transition-colors text-sm font-medium no-underline"
 								>
-									Desktop App
+									Desktop app
 								</a>
 							</li>
 							<li>
 								<a
 									href="#"
-									className="text-zinc-400 hover:text-primary transition-colors text-sm font-medium"
+									className="text-on-surface-variant hover:text-primary transition-colors text-sm font-medium no-underline"
 								>
 									Relay API
 								</a>
@@ -44,14 +44,14 @@ export function Footer() {
 						</ul>
 					</div>
 					<div>
-						<h4 className="text-white font-black text-xs uppercase tracking-[0.2em] mb-8 font-headline">
+						<h4 className="text-on-surface font-bold text-xs uppercase tracking-[0.2em] mb-6">
 							Resources
 						</h4>
-						<ul className="space-y-4">
+						<ul className="space-y-3">
 							<li>
 								<a
 									href="#"
-									className="text-zinc-400 hover:text-primary transition-colors text-sm font-medium"
+									className="text-on-surface-variant hover:text-primary transition-colors text-sm font-medium no-underline"
 								>
 									Documentation
 								</a>
@@ -59,7 +59,7 @@ export function Footer() {
 							<li>
 								<a
 									href="#"
-									className="text-zinc-400 hover:text-primary transition-colors text-sm font-medium"
+									className="text-on-surface-variant hover:text-primary transition-colors text-sm font-medium no-underline"
 								>
 									GitHub
 								</a>
@@ -67,7 +67,7 @@ export function Footer() {
 							<li>
 								<a
 									href="#"
-									className="text-zinc-400 hover:text-primary transition-colors text-sm font-medium"
+									className="text-on-surface-variant hover:text-primary transition-colors text-sm font-medium no-underline"
 								>
 									Status
 								</a>
@@ -75,14 +75,14 @@ export function Footer() {
 						</ul>
 					</div>
 					<div>
-						<h4 className="text-white font-black text-xs uppercase tracking-[0.2em] mb-8 font-headline">
+						<h4 className="text-on-surface font-bold text-xs uppercase tracking-[0.2em] mb-6">
 							Company
 						</h4>
-						<ul className="space-y-4">
+						<ul className="space-y-3">
 							<li>
 								<a
 									href="#"
-									className="text-zinc-400 hover:text-primary transition-colors text-sm font-medium"
+									className="text-on-surface-variant hover:text-primary transition-colors text-sm font-medium no-underline"
 								>
 									About
 								</a>
@@ -90,7 +90,7 @@ export function Footer() {
 							<li>
 								<a
 									href="#"
-									className="text-zinc-400 hover:text-primary transition-colors text-sm font-medium"
+									className="text-on-surface-variant hover:text-primary transition-colors text-sm font-medium no-underline"
 								>
 									Blog
 								</a>
@@ -100,8 +100,8 @@ export function Footer() {
 				</div>
 			</div>
 
-			<div className="max-w-7xl mx-auto px-8 mt-32 pt-12 border-t border-white/5">
-				<p className="text-zinc-600 text-[10px] font-bold tracking-[0.4em] uppercase font-label">
+			<div className="max-w-7xl mx-auto px-6 mt-20 pt-8 border-t border-border-subtle">
+				<p className="text-on-surface-muted text-[10px] font-bold tracking-[0.3em] uppercase">
 					&copy; 2025 BridgeHook. Built on Cloudflare Workers. Free &amp; open source.
 				</p>
 			</div>

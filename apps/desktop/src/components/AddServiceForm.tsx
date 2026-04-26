@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 
 interface AddServiceFormProps {
 	onAdd: (name: string, port: number, path: string) => Promise<void>;
@@ -6,6 +6,9 @@ interface AddServiceFormProps {
 }
 
 export function AddServiceForm({ onAdd, onCancel }: AddServiceFormProps) {
+	const nameId = useId();
+	const portId = useId();
+	const pathId = useId();
 	const [name, setName] = useState("");
 	const [port, setPort] = useState(3000);
 	const [path, setPath] = useState("/webhook");
@@ -29,56 +32,83 @@ export function AddServiceForm({ onAdd, onCancel }: AddServiceFormProps) {
 		}
 	};
 
+	const labelCls = "block text-micro font-semibold text-fg-faint uppercase tracking-[0.18em] mb-1";
+	const inputCls =
+		"w-full bg-ink-0 border border-edge rounded-sm px-2 h-7 text-caption text-fg placeholder-fg-ghost focus:outline-none focus:border-uranium/40 transition-colors tabular";
+
 	return (
 		<form onSubmit={handleSubmit} className="space-y-2.5">
 			<div className="flex items-center justify-between">
-				<span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
-					New Service
+				<span className="text-micro font-semibold text-fg-muted uppercase tracking-[0.18em]">
+					&gt; new service
 				</span>
 				<button
 					type="button"
 					onClick={onCancel}
-					className="text-gray-600 hover:text-gray-400 text-xs"
+					aria-label="Cancel"
+					className="text-fg-ghost hover:text-fg-muted text-body w-4 h-4 flex items-center justify-center"
 				>
-					&times;
+					×
 				</button>
 			</div>
 
-			<input
-				type="text"
-				value={name}
-				onChange={(e) => setName(e.target.value)}
-				placeholder="Service name (e.g. stripe-api)"
-				className="w-full bg-gray-900 border border-gray-700 rounded-md px-2.5 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-cyan-500/50"
-			/>
-
-			<div className="flex gap-2">
+			<div>
+				<label htmlFor={nameId} className={labelCls}>
+					name
+				</label>
 				<input
-					type="number"
-					value={port}
-					onChange={(e) => setPort(Number(e.target.value))}
-					min={1}
-					max={65535}
-					className="w-20 bg-gray-900 border border-gray-700 rounded-md px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-cyan-500/50"
-					placeholder="Port"
-				/>
-				<input
+					id={nameId}
 					type="text"
-					value={path}
-					onChange={(e) => setPath(e.target.value)}
-					placeholder="/webhook"
-					className="flex-1 bg-gray-900 border border-gray-700 rounded-md px-2.5 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-cyan-500/50"
+					value={name}
+					onChange={(e) => setName(e.target.value)}
+					placeholder="stripe-api"
+					className={inputCls}
 				/>
 			</div>
 
-			{error && <p className="text-red-400 text-[10px]">{error}</p>}
+			<div className="flex gap-2">
+				<div className="w-20">
+					<label htmlFor={portId} className={labelCls}>
+						port
+					</label>
+					<input
+						id={portId}
+						type="number"
+						value={port}
+						onChange={(e) => setPort(Number(e.target.value))}
+						min={1}
+						max={65535}
+						className={inputCls}
+					/>
+				</div>
+				<div className="flex-1">
+					<label htmlFor={pathId} className={labelCls}>
+						path
+					</label>
+					<input
+						id={pathId}
+						type="text"
+						value={path}
+						onChange={(e) => setPath(e.target.value)}
+						placeholder="/webhook"
+						className={inputCls}
+					/>
+				</div>
+			</div>
+
+			{error && (
+				<p className="text-err text-caption tabular">
+					<span className="font-bold mr-1">!</span>
+					{error}
+				</p>
+			)}
 
 			<button
 				type="submit"
 				disabled={loading}
-				className="w-full py-1.5 text-xs font-medium bg-cyan-600 hover:bg-cyan-500 disabled:bg-gray-700 text-white rounded-md transition-all"
+				className="w-full h-8 text-caption font-semibold uppercase tracking-wider bg-uranium hover:bg-uranium-dim disabled:opacity-30 text-uranium-ink rounded-sm transition-colors"
 			>
-				{loading ? "Creating..." : "Add Service"}
+				{loading ? "creating…" : "+ add service"}
 			</button>
 		</form>
 	);

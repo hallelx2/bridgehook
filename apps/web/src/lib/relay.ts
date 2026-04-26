@@ -1,11 +1,15 @@
 /**
  * Client-side API helpers for talking to the relay server.
- * All DB operations happen server-side on the relay — the client
- * only makes fetch() calls.
  *
- * Uses polling (not SSE) because Cloudflare Workers free tier
- * kills idle connections after ~30s. Polling every 2s is reliable.
+ * All DB operations happen server-side on the relay — the client only makes
+ * fetch() calls. Authenticated requests are signed with a per-channel ECDSA
+ * key stored as a non-extractable CryptoKey in IndexedDB. See ./crypto.ts.
+ *
+ * Uses polling (not SSE) because Cloudflare Workers free tier kills idle
+ * connections after ~30s. Polling every 2s is reliable.
  */
+
+import { deleteChannelKey, generateChannelKey, signedFetch } from "./crypto";
 
 const RELAY_URL = import.meta.env.VITE_RELAY_URL || "http://localhost:8787";
 
@@ -54,111 +58,183 @@ export type SSEEvent =
 	| SSEWebhookEvent
 	| SSEResponseEvent;
 
-/** Create a new channel on the relay (server-side persists to Neon) */
-export async function createChannel(port: number, allowedPaths: string[]): Promise<ChannelInfo> {
-	const secret = crypto.randomUUID();
-	const encoder = new TextEncoder();
-	const hashBuffer = await crypto.subtle.digest("SHA-256", encoder.encode(secret));
-	const secretHash = Array.from(new Uint8Array(hashBuffer))
-		.map((b) => b.toString(16).padStart(2, "0"))
-		.join("");
-
-	const res = await fetch(`${RELAY_URL}/api/channels`, {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ secretHash, port, allowedPaths }),
-	});
-
-	if (!res.ok) throw new Error(`Failed to create channel: ${res.status}`);
-	const data = await res.json();
-
-	localStorage.setItem(`bh_secret_${data.channelId}`, secret);
-	return data;
+// ── Safe JSON parse helper (re-exported for hooks) ────────────────────────
+export function safeParseJson<T>(raw: string | null | undefined, fallback: T): T {
+	if (!raw) return fallback;
+	try {
+		return JSON.parse(raw) as T;
+	} catch {
+		return fallback;
+	}
 }
 
-/** Fetch channel info */
+// ── Create channel ────────────────────────────────────────────────────────
+/**
+ * Generates a per-channel keypair, stores the private key non-extractable in
+ * IndexedDB, and sends the public key to the relay. The server will verify
+ * all subsequent authenticated requests against that public key.
+ */
+export async function createChannel(port: number, allowedPaths: string[]): Promise<ChannelInfo> {
+	// Temporarily hold a channel id placeholder; IDB is keyed by channel id,
+	// but we don't know the id until the server responds. We generate into a
+	// temp slot, then rename on success.
+	const tempId = `pending-${crypto.randomUUID()}`;
+	const publicKey = await generateChannelKey(tempId);
+
+	try {
+		const res = await fetch(`${RELAY_URL}/api/channels`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ publicKey, port, allowedPaths }),
+		});
+
+		if (!res.ok) {
+			const text = await res.text().catch(() => "");
+			throw new Error(`Failed to create channel: ${res.status}${text ? ` — ${text}` : ""}`);
+		}
+		const data = (await res.json()) as ChannelInfo;
+
+		// Move the key record from the temp id to the real channel id.
+		await renameKey(tempId, data.channelId);
+		return data;
+	} catch (err) {
+		// If channel creation failed, don't leak the orphan key.
+		await deleteChannelKey(tempId);
+		throw err;
+	}
+}
+
+async function renameKey(fromId: string, toId: string): Promise<void> {
+	// Pull the existing record and re-put under the new id. The CryptoKey
+	// object survives structured clone — including its non-extractable flag.
+	const { idbGet, idbPut, idbDelete } = await import("./idb");
+	const record = await idbGet(`channel-key:${fromId}`);
+	if (!record) return;
+	await idbPut(`channel-key:${toId}`, record);
+	await idbDelete(`channel-key:${fromId}`);
+}
+
+// ── Get channel info (public — no auth needed) ────────────────────────────
 export async function getChannel(channelId: string): Promise<ChannelInfo | null> {
-	const res = await fetch(`${RELAY_URL}/api/channels/${channelId}`);
+	const res = await fetch(`${RELAY_URL}/api/channels/${encodeURIComponent(channelId)}`);
 	if (res.status === 404) return null;
 	if (!res.ok) throw new Error(`Failed to get channel: ${res.status}`);
-	return res.json();
+	return res.json() as Promise<ChannelInfo>;
 }
 
-/** Delete a channel */
+// ── Delete channel (signed) ───────────────────────────────────────────────
 export async function deleteChannel(channelId: string): Promise<void> {
-	await fetch(`${RELAY_URL}/api/channels/${channelId}`, { method: "DELETE" });
-	localStorage.removeItem(`bh_secret_${channelId}`);
+	try {
+		await signedFetch(
+			`${channelId}`,
+			`${RELAY_URL}/api/channels/${encodeURIComponent(channelId)}`,
+			{
+				method: "DELETE",
+			},
+		);
+	} finally {
+		await deleteChannelKey(channelId);
+	}
 }
 
-/** Fetch events for a channel (used for both initial load and polling) */
-export async function getEvents(channelId: string, limit = 50): Promise<WebhookEventData[]> {
-	const res = await fetch(`${RELAY_URL}/api/channels/${channelId}/events?limit=${limit}`);
+// ── Fetch events (signed) ─────────────────────────────────────────────────
+export async function getEvents(
+	channelId: string,
+	limit = 50,
+	signal?: AbortSignal,
+): Promise<WebhookEventData[]> {
+	const params = new URLSearchParams({ limit: String(limit) });
+	const res = await signedFetch(
+		channelId,
+		`${RELAY_URL}/api/channels/${encodeURIComponent(channelId)}/events?${params}`,
+		{ signal },
+	);
 	if (!res.ok) throw new Error(`Failed to get events: ${res.status}`);
-	return res.json();
+	return res.json() as Promise<WebhookEventData[]>;
 }
 
+// ── Polling ───────────────────────────────────────────────────────────────
 /**
  * Poll for new events every `intervalMs`.
  * Returns a cleanup function to stop polling.
  * Calls `onNewEvents` only when new events are detected (by comparing IDs).
+ *
+ * On transient errors, applies exponential backoff (capped at 30s).
  */
 export function pollEvents(
 	channelId: string,
 	onNewEvents: (events: WebhookEventData[]) => void,
 	onError?: (error: Error) => void,
 	intervalMs = 2000,
+	signal?: AbortSignal,
 ): () => void {
 	let lastSeenId: string | null = null;
 	let stopped = false;
+	let timer: ReturnType<typeof setTimeout> | null = null;
+	let consecutiveErrors = 0;
+	const maxBackoffMs = 30_000;
+
+	function schedule(delay: number) {
+		if (stopped) return;
+		timer = setTimeout(poll, delay);
+	}
 
 	async function poll() {
 		if (stopped) return;
 		try {
-			const events = await getEvents(channelId, 50);
-			// Events come newest-first from the API
+			const events = await getEvents(channelId, 50, signal);
+			consecutiveErrors = 0;
 			if (events.length > 0 && events[0].id !== lastSeenId) {
 				lastSeenId = events[0].id;
 				onNewEvents(events);
 			}
+			schedule(intervalMs);
 		} catch (err) {
-			onError?.(err as Error);
-		}
-		if (!stopped) {
-			setTimeout(poll, intervalMs);
+			if (stopped) return;
+			if (err instanceof DOMException && err.name === "AbortError") return;
+
+			consecutiveErrors++;
+			const errObj = err instanceof Error ? err : new Error(String(err));
+			onError?.(errObj);
+
+			const backoff = Math.min(intervalMs * 2 ** consecutiveErrors, maxBackoffMs);
+			schedule(backoff);
 		}
 	}
 
-	// Start polling
+	const onAbort = () => stop();
+	signal?.addEventListener("abort", onAbort);
+
 	poll();
 
-	// Also fire a "connected" callback immediately
+	// Fire an initial "connected" signal so UI can flip state
 	onNewEvents([]);
 
-	return () => {
+	function stop() {
+		if (stopped) return;
 		stopped = true;
-	};
+		if (timer) clearTimeout(timer);
+		signal?.removeEventListener("abort", onAbort);
+	}
+
+	return stop;
 }
 
-/**
- * Forward a webhook event to localhost.
- * This runs CLIENT-SIDE in the browser — the browser IS the bridge.
- */
+// ── Forward webhook to localhost (unchanged — no signing needed) ──────────
 export async function forwardToLocalhost(
 	event: SSEWebhookEvent | WebhookEventData,
 	port: number,
+	signal?: AbortSignal,
 ): Promise<{ status: number; headers: Record<string, string>; body: string; latencyMs: number }> {
 	const start = performance.now();
 
-	// Determine path and headers based on event type
-	const eventPath =
-		"headers" in event && typeof event.headers === "object" && !Array.isArray(event.headers)
-			? event.path.replace(/^\/hook\/[a-z0-9]+/, "") || "/"
-			: event.path.replace(/^\/hook\/[a-z0-9]+/, "") || "/";
+	const eventPath = event.path.replace(/^\/hook\/[a-z0-9]+/, "") || "/";
 
 	const rawHeaders: Record<string, string> =
-		"requestHeaders" in event ? JSON.parse(event.requestHeaders || "{}") : event.headers;
+		"requestHeaders" in event
+			? safeParseJson<Record<string, string>>(event.requestHeaders, {})
+			: event.headers;
 
-	// Strip headers that break localhost forwarding
 	const skipHeaders = new Set([
 		"host",
 		"cf-ray",
@@ -170,6 +246,7 @@ export async function forwardToLocalhost(
 		"x-forwarded-for",
 		"connection",
 		"accept-encoding",
+		"content-length",
 	]);
 	const headers: Record<string, string> = {};
 	for (const [k, v] of Object.entries(rawHeaders)) {
@@ -185,6 +262,7 @@ export async function forwardToLocalhost(
 		method,
 		headers,
 		body: body || undefined,
+		signal,
 	});
 
 	const latencyMs = Math.round(performance.now() - start);
@@ -197,19 +275,19 @@ export async function forwardToLocalhost(
 	return { status: response.status, headers: respHeaders, body: respBody, latencyMs };
 }
 
-/** Send the local response back to the relay (server stores it in Neon) */
+// ── Send response back to relay (signed) ──────────────────────────────────
 export async function sendResponse(
 	channelId: string,
 	eventId: string,
 	response: { status: number; headers: Record<string, string>; body: string; latencyMs: number },
+	signal?: AbortSignal,
 ): Promise<void> {
-	await fetch(`${RELAY_URL}/hook/${channelId}/response`, {
+	const body = JSON.stringify({ eventId, ...response });
+	await signedFetch(channelId, `${RELAY_URL}/hook/${encodeURIComponent(channelId)}/response`, {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({
-			eventId,
-			...response,
-		}),
+		body,
+		signal,
 	});
 }
 

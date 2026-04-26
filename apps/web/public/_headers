@@ -1,0 +1,12 @@
+# Security headers for the BridgeHook dashboard (Cloudflare Pages convention)
+# https://developers.cloudflare.com/pages/configuration/headers/
+
+/*
+  # Strict CSP: scripts and styles only from our origin; connects to relay + localhost for bridge forwarding.
+  # Google Fonts is allow-listed because index.html imports Manrope + JetBrains Mono.
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://bridgehook-relay.halleluyaholudele.workers.dev http://localhost:* http://127.0.0.1:*; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), interest-cohort=()
+  Strict-Transport-Security: max-age=31536000; includeSubDomains

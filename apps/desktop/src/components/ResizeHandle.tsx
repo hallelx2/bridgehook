@@ -50,9 +50,9 @@ export function ResizeHandle({ direction, onResize }: ResizeHandleProps) {
 			onMouseDown={handleMouseDown}
 			className={`${
 				isHorizontal
-					? "w-1 cursor-col-resize hover:w-1 hover:bg-cyan-500/30"
-					: "h-1 cursor-row-resize hover:h-1 hover:bg-cyan-500/30"
-			} bg-gray-800 transition-colors duration-150 shrink-0 relative group`}
+					? "w-px cursor-col-resize hover:bg-uranium/50"
+					: "h-px cursor-row-resize hover:bg-uranium/50"
+			} bg-edge transition-colors duration-150 shrink-0 relative group`}
 		>
 			{/* Wider hit area */}
 			<div

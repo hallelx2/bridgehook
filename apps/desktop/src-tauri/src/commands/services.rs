@@ -2,6 +2,7 @@ use crate::db;
 use crate::models::{PortProbe, Service};
 use crate::services as svc;
 use crate::state::AppState;
+use crate::tray;
 use std::time::Duration;
 
 #[tauri::command]
@@ -12,23 +13,37 @@ pub async fn add_service(
     port: u16,
     path: String,
 ) -> Result<Service, String> {
-    // 1. Create a channel on the relay
+    // 1. Create a channel on the relay (generates a per-channel ECDSA keypair).
     let client = reqwest::Client::new();
-    let channel_id = svc::create_channel(&client, port, &path).await?;
+    let created = svc::create_channel(&client, port, &path).await?;
 
-    // 2. Generate a local secret for this service record
+    // 2. The `secret` column on Service is legacy bookkeeping; the real
+    //    auth credential lives in `private_key_pkcs8` (set below).
     let secret = uuid::Uuid::new_v4().to_string();
 
-    // 3. Build the service record
+    // 3. Build the service record. `private_key_pkcs8` holds the bytes the
+    //    bridge will use to sign every relay request from now on.
     let service = Service {
         id: uuid::Uuid::new_v4().to_string(),
         name,
         port,
         path,
-        channel_id,
+        channel_id: created.channel_id,
         secret,
         active: true,
         created_at: chrono::Utc::now().to_rfc3339(),
+        path_rewrite: None,
+        injected_headers: None,
+        timeout_ms: None,
+        retry_count: 0,
+        retry_delay_ms: 1000,
+        environments: None,
+        active_environment: None,
+        signing_provider: None,
+        signing_secret: None,
+        mock_response: None,
+        notify_on_event: false,
+        private_key_pkcs8: Some(created.private_key_pkcs8),
     };
 
     // 4. Store in SQLite
@@ -48,11 +63,13 @@ pub async fn add_service(
         service.channel_id
     );
 
+    tray::refresh_tray(&app_handle).await;
     Ok(service)
 }
 
 #[tauri::command]
 pub async fn remove_service(
+    app_handle: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     service_id: String,
 ) -> Result<(), String> {
@@ -60,10 +77,13 @@ pub async fn remove_service(
     svc::stop_bridge(&service_id, &state).await;
 
     // Delete from DB
-    let conn = state.db.lock().await;
-    db::delete_service(&conn, &service_id).map_err(|e| e.to_string())?;
+    {
+        let conn = state.db.lock().await;
+        db::delete_service(&conn, &service_id).map_err(|e| e.to_string())?;
+    }
 
     log::info!("Removed service {}", service_id);
+    tray::refresh_tray(&app_handle).await;
     Ok(())
 }
 
@@ -78,23 +98,25 @@ pub async fn toggle_service(
         .map_err(|e| e.to_string())?
         .ok_or_else(|| "Service not found".to_string())?;
 
-    if service.active {
-        // Pause: stop bridge and mark inactive
+    let new_active = if service.active {
+        // Pause
         svc::stop_bridge(&service_id, &state).await;
         db::update_service_active(&conn, &service_id, false).map_err(|e| e.to_string())?;
         drop(conn);
         log::info!("Paused service '{}'", service.name);
-        Ok(false)
+        false
     } else {
-        // Resume: mark active and start bridge
+        // Resume
         db::update_service_active(&conn, &service_id, true).map_err(|e| e.to_string())?;
         let mut updated = service.clone();
         updated.active = true;
         drop(conn);
         svc::start_bridge(&app_handle, &updated, &state).await;
         log::info!("Resumed service '{}'", service.name);
-        Ok(true)
-    }
+        true
+    };
+    tray::refresh_tray(&app_handle).await;
+    Ok(new_active)
 }
 
 #[tauri::command]
@@ -126,6 +148,9 @@ pub async fn import_from_extension(
         return Err("Invalid channel ID in URL".to_string());
     }
 
+    // Imported from extension: we don't have the extension's private key, so
+    // this service has no signing credential. The bridge will fail-fast with
+    // an auth error until the user re-creates the channel locally.
     let service = Service {
         id: uuid::Uuid::new_v4().to_string(),
         name,
@@ -135,6 +160,18 @@ pub async fn import_from_extension(
         secret: uuid::Uuid::new_v4().to_string(),
         active: true,
         created_at: chrono::Utc::now().to_rfc3339(),
+        path_rewrite: None,
+        injected_headers: None,
+        timeout_ms: None,
+        retry_count: 0,
+        retry_delay_ms: 1000,
+        environments: None,
+        active_environment: None,
+        signing_provider: None,
+        signing_secret: None,
+        mock_response: None,
+        notify_on_event: false,
+        private_key_pkcs8: None,
     };
 
     {
@@ -150,6 +187,7 @@ pub async fn import_from_extension(
         channel_id
     );
 
+    tray::refresh_tray(&app_handle).await;
     Ok(service)
 }
 
@@ -217,4 +255,24 @@ pub async fn scan_ports() -> Result<Vec<PortProbe>, String> {
 #[tauri::command]
 pub async fn auto_detect() -> Result<Vec<PortProbe>, String> {
     scan_ports().await
+}
+
+/// Update the configuration of an existing service. Restarts the bridge if running.
+#[tauri::command]
+pub async fn update_service(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    service: Service,
+) -> Result<Service, String> {
+    {
+        let conn = state.db.lock().await;
+        db::update_service_config(&conn, &service).map_err(|e| e.to_string())?;
+    }
+    // If the service is active, restart the bridge so new config applies.
+    if service.active {
+        svc::stop_bridge(&service.id, &state).await;
+        svc::start_bridge(&app_handle, &service, &state).await;
+    }
+    tray::refresh_tray(&app_handle).await;
+    Ok(service)
 }

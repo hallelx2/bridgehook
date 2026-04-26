@@ -2,8 +2,7 @@
  * BridgeHook logo system.
  *
  * Wordmark: "bridgehook" in Manrope extrabold with tight tracking.
- * "bridge" in white, "hook" in primary purple. Lowercase, no spaces.
- * This is the primary brand mark used everywhere.
+ * "bridge" in white, "hook" in accent orange. Lowercase, no spaces.
  *
  * Icon: Bridge arch + hook curl SVG for favicon/compact contexts.
  */
@@ -43,16 +42,10 @@ export function BridgeHookIcon({
 			<path d="M4 20V28" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" />
 			<path
 				d="M28 20V24C28 26.209 26.209 28 24 28H22"
-				stroke="url(#hook-grad)"
+				stroke="#FF5C26"
 				strokeWidth="3.5"
 				strokeLinecap="round"
 			/>
-			<defs>
-				<linearGradient id="hook-grad" x1="28" y1="20" x2="22" y2="28">
-					<stop stopColor="currentColor" />
-					<stop offset="1" stopColor="#9093ff" />
-				</linearGradient>
-			</defs>
 		</svg>
 	);
 }
@@ -62,9 +55,9 @@ export function Logo({ size = "md", showIcon = false, className = "" }: LogoProp
 
 	return (
 		<div className={`flex items-center ${s.gap} ${className}`}>
-			{showIcon && <BridgeHookIcon size={s.icon} className="text-white" />}
-			<span className={`font-headline font-extrabold tracking-[-0.04em] leading-none ${s.text}`}>
-				<span className="text-white">bridge</span>
+			{showIcon && <BridgeHookIcon size={s.icon} className="text-on-surface" />}
+			<span className={`font-extrabold tracking-[-0.04em] leading-none ${s.text}`}>
+				<span className="text-on-surface">bridge</span>
 				<span className="text-primary">hook</span>
 			</span>
 		</div>
@@ -78,12 +71,12 @@ export function LogoIcon({
 	if (withBackground) {
 		return (
 			<div
-				className="flex items-center justify-center rounded-xl bg-[#09090b]"
+				className="flex items-center justify-center rounded-xl bg-surface"
 				style={{ width: size, height: size }}
 			>
-				<BridgeHookIcon size={Math.round(size * 0.6)} className="text-white" />
+				<BridgeHookIcon size={Math.round(size * 0.6)} className="text-on-surface" />
 			</div>
 		);
 	}
-	return <BridgeHookIcon size={size} className="text-white" />;
+	return <BridgeHookIcon size={size} className="text-on-surface" />;
 }

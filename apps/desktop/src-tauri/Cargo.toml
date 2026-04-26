@@ -23,7 +23,12 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 tokio = { version = "1", features = ["full"] }
 uuid = { version = "1", features = ["v4"] }
 sha2 = "0.10"
+hmac = "0.12"
 hex = "0.4"
+# ECDSA P-256 signing for relay auth (matches the web/extension client).
+# `pkcs8` lets us serialize the private key for storage; `ecdsa` is the signing API.
+p256 = { version = "0.13", features = ["ecdsa", "pkcs8"] }
+rand_core = { version = "0.6", features = ["std"] }
 chrono = { version = "0.4", features = ["serde"] }
 log = "0.4"
 env_logger = "0.11"

@@ -9,3 +9,16 @@ bindings = [{ name = "CHANNEL", class_name = "ChannelDO" }]
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["ChannelDO"]
+
+# ── Scheduled cleanup ─────────────────────────────────────────────────────
+# Runs hourly. The handler in src/index.ts deletes channels whose
+# expires_at < now() (events cascade via FK).
+[triggers]
+crons = ["0 * * * *"]
+
+# ── Rate-limit KV namespace ───────────────────────────────────────────────
+# Per-IP token bucket for POST /api/channels (10 req/min).
+# Soft-fails if binding is absent, so dev still works without KV.
+[[kv_namespaces]]
+binding = "RATE_LIMIT"
+id = "647c7df6a0e64bf3882738057ad42f38"

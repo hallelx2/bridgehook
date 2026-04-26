@@ -1,6 +1,7 @@
 export interface Channel {
 	id: string;
-	secretHash: string;
+	/** Hex-encoded ECDSA P-256 public key. */
+	publicKey: string;
 	createdAt: string;
 	expiresAt: string;
 	connectedClients: number;

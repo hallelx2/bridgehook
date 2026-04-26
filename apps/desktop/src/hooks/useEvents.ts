@@ -39,7 +39,9 @@ export interface ReplayResult {
 	latency_ms: number;
 }
 
-const MAX_LIVE_EVENTS = 200;
+// Buffer limit for the live event stream. Event log virtualization means
+// we can carry more without a render cost; older events fall out the bottom.
+const MAX_LIVE_EVENTS = 2000;
 
 export function useEvents(serviceId?: string) {
 	const [events, setEvents] = useState<WebhookEventPayload[]>([]);
@@ -94,5 +96,9 @@ export function useEvents(serviceId?: string) {
 		return invoke<ReplayResult>("replay_event", { eventId });
 	}, []);
 
-	return { events, loading, replayEvent, refresh: loadHistory };
+	const clearEvents = useCallback(() => {
+		setEvents([]);
+	}, []);
+
+	return { events, loading, replayEvent, clearEvents, refresh: loadHistory };
 }

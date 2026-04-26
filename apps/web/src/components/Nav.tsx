@@ -2,43 +2,52 @@ import { Logo } from "./Logo";
 
 export function Nav() {
 	return (
-		<nav className="fixed top-8 left-1/2 -translate-x-1/2 z-50 flex items-center gap-8 glass-nav rounded-full px-8 py-3 shadow-2xl tracking-tight text-sm font-medium">
+		<nav className="fixed top-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-6 nav-surface rounded-full px-5 py-2.5 text-sm">
 			<a href="#" className="no-underline">
 				<Logo size="sm" showIcon />
 			</a>
 
-			<div className="hidden md:flex items-center gap-8 font-body">
+			<div className="hidden md:flex items-center gap-6">
 				<a
 					href="#features"
-					className="text-neutral-400 font-semibold hover:text-white transition-all"
+					className="text-on-surface-variant font-medium hover:text-on-surface transition-colors"
 				>
 					Features
 				</a>
-				<a href="#flow" className="text-neutral-400 hover:text-white transition-all">
+				<a
+					href="#flow"
+					className="text-on-surface-variant font-medium hover:text-on-surface transition-colors"
+				>
 					How it works
 				</a>
-				<a href="#comparison" className="text-neutral-400 hover:text-white transition-all">
+				<a
+					href="#comparison"
+					className="text-on-surface-variant font-medium hover:text-on-surface transition-colors"
+				>
 					Compare
 				</a>
-				<a href="#" className="text-neutral-400 hover:text-white transition-all">
+				<a
+					href="#"
+					className="text-on-surface-variant font-medium hover:text-on-surface transition-colors"
+				>
 					Docs
 				</a>
 			</div>
 
-			<div className="flex items-center gap-6 border-l border-white/10 pl-8 ml-2">
+			<div className="flex items-center gap-4 border-l border-border pl-5 ml-1">
 				<a
 					href="https://github.com/hallelx2/bridgehook"
 					target="_blank"
 					rel="noopener noreferrer"
-					className="text-neutral-400 hover:text-white transition-all text-sm font-bold font-body no-underline"
+					className="text-on-surface-variant hover:text-on-surface transition-colors text-sm font-semibold no-underline"
 				>
 					GitHub
 				</a>
 				<a
 					href="#/dashboard"
-					className="bg-white text-black px-6 py-2 rounded-full font-bold transition-all hover:scale-105 active:scale-95 shadow-[0_0_20px_rgba(255,255,255,0.2)] font-headline no-underline"
+					className="bg-on-surface text-background px-4 py-1.5 rounded-full font-semibold transition-colors hover:bg-primary hover:text-on-surface no-underline text-sm"
 				>
-					Get Started
+					Open app
 				</a>
 			</div>
 		</nav>

@@ -1,5 +1,8 @@
 export interface CreateChannelRequest {
-	secretHash: string;
+	/** Hex-encoded ECDSA P-256 public key (raw uncompressed, 130 hex chars). */
+	publicKey: string;
+	port: number;
+	allowedPaths?: string[];
 }
 
 export interface CreateChannelResponse {

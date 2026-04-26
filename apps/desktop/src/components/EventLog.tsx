@@ -1,170 +1,225 @@
+import { useEffect, useRef } from "react";
 import type { WebhookEventPayload } from "../hooks/useEvents";
+import { cn } from "../lib/cn";
+import { formatTime } from "../lib/format";
 
 interface EventLogProps {
 	events: WebhookEventPayload[];
 	selectedEventId: string | null;
 	onSelect: (eventId: string) => void;
+	loading?: boolean;
+	serviceNameById?: Record<string, string>;
 }
 
-function formatTime(isoString: string): string {
-	try {
-		const date = new Date(isoString);
-		return date.toLocaleTimeString("en-US", { hour12: false });
-	} catch {
-		return isoString;
-	}
-}
-
-function statusColor(status: number | null): string {
-	if (status === null) return "text-red-400";
-	if (status < 300) return "text-green-400";
-	if (status < 400) return "text-yellow-400";
-	return "text-red-400";
-}
-
-function statusBadgeClasses(status: number | null, hasError: boolean): string {
-	if (hasError) return "bg-red-500/10 text-red-400 border border-red-500/20";
-	if (status === null) return "bg-gray-500/10 text-gray-400 border border-gray-500/20";
-	if (status < 300) return "bg-green-500/10 text-green-400 border border-green-500/20";
-	if (status < 400) return "bg-yellow-500/10 text-yellow-400 border border-yellow-500/20";
-	return "bg-red-500/10 text-red-400 border border-red-500/20";
-}
-
-function methodColor(method: string): string {
+function methodClass(method: string): string {
 	switch (method.toUpperCase()) {
+		case "GET":
+			return "method-get";
 		case "POST":
-			return "text-cyan-400";
+			return "method-post";
 		case "PUT":
-			return "text-yellow-400";
+			return "method-put";
 		case "PATCH":
-			return "text-orange-400";
+			return "method-patch";
 		case "DELETE":
-			return "text-red-400";
+			return "method-delete";
 		default:
-			return "text-gray-400";
+			return "method-default";
 	}
 }
 
-function methodBgColor(method: string): string {
-	switch (method.toUpperCase()) {
-		case "POST":
-			return "bg-cyan-500/5";
-		case "PUT":
-			return "bg-yellow-500/5";
-		case "PATCH":
-			return "bg-orange-500/5";
-		case "DELETE":
-			return "bg-red-500/5";
-		default:
-			return "bg-gray-500/5";
-	}
+function statusToken(status: number | null, hasError: boolean) {
+	if (hasError) return { text: "ERR", className: "text-err", glyph: "✕" };
+	if (status === null) return { text: "···", className: "text-fg-ghost", glyph: "○" };
+	if (status < 300) return { text: String(status), className: "text-ok", glyph: "✓" };
+	if (status < 400) return { text: String(status), className: "text-warn", glyph: "↗" };
+	if (status < 500) return { text: String(status), className: "text-warn", glyph: "!" };
+	return { text: String(status), className: "text-err", glyph: "✕" };
 }
 
-export function EventLog({ events, selectedEventId, onSelect }: EventLogProps) {
-	if (events.length === 0) {
+function formatLatency(ms: number | null): string {
+	if (ms === null || ms === undefined) return "—";
+	if (ms < 1) return "<1";
+	if (ms < 1000) return `${Math.round(ms)}`;
+	return `${(ms / 1000).toFixed(1)}k`;
+}
+
+export function EventLog({
+	events,
+	selectedEventId,
+	onSelect,
+	loading,
+	serviceNameById,
+}: EventLogProps) {
+	const containerRef = useRef<HTMLDivElement>(null);
+
+	// Keyboard navigation: j/k or Arrow Down/Up
+	useEffect(() => {
+		const handler = (e: KeyboardEvent) => {
+			if (e.target instanceof HTMLElement) {
+				const tag = e.target.tagName;
+				if (tag === "INPUT" || tag === "TEXTAREA" || e.target.isContentEditable) return;
+			}
+			if (events.length === 0) return;
+			const currentIdx = selectedEventId ? events.findIndex((ev) => ev.id === selectedEventId) : -1;
+
+			if (e.key === "j" || e.key === "ArrowDown") {
+				e.preventDefault();
+				const next = Math.min(events.length - 1, currentIdx + 1);
+				if (events[next]) onSelect(events[next].id);
+			} else if (e.key === "k" || e.key === "ArrowUp") {
+				e.preventDefault();
+				const next = Math.max(0, currentIdx === -1 ? 0 : currentIdx - 1);
+				if (events[next]) onSelect(events[next].id);
+			} else if (e.key === "Escape" && selectedEventId) {
+				onSelect(selectedEventId);
+			}
+		};
+		window.addEventListener("keydown", handler);
+		return () => window.removeEventListener("keydown", handler);
+	}, [events, selectedEventId, onSelect]);
+
+	if (!loading && events.length === 0) {
 		return (
-			<div className="flex flex-col items-center justify-center text-center py-16 px-6">
-				<div className="w-12 h-12 rounded-xl bg-gray-800/80 border border-gray-700/50 flex items-center justify-center mb-4">
-					<svg
-						width="20"
-						height="20"
-						viewBox="0 0 20 20"
-						fill="none"
-						xmlns="http://www.w3.org/2000/svg"
-					>
-						<path
-							d="M10 2L18 6v8l-8 4-8-4V6l8-4z"
-							stroke="currentColor"
-							strokeWidth="1.5"
-							strokeLinejoin="round"
-							className="text-gray-600"
-						/>
-						<path
-							d="M10 10v8M10 10l8-4M10 10L2 6"
-							stroke="currentColor"
-							strokeWidth="1.5"
-							strokeLinejoin="round"
-							className="text-gray-700"
-						/>
-					</svg>
+			<div className="h-full grid place-items-center grid-texture">
+				<div className="text-center px-8 py-12 max-w-sm">
+					<div className="relative w-16 h-16 mx-auto mb-6">
+						<div className="absolute inset-0 border border-uranium/20 rounded-sm rotate-45" />
+						<div className="absolute inset-2 border border-uranium/10 rotate-45" />
+						<div className="absolute inset-0 flex items-center justify-center">
+							<span className="w-2 h-2 bg-uranium/50 animate-pulse-soft" />
+						</div>
+					</div>
+					<p className="text-display text-fg mb-2">stdin: idle</p>
+					<p className="text-caption text-fg-faint leading-relaxed">
+						Webhook events stream here as they arrive at your bridges.
+					</p>
+					<div className="mt-6 inline-flex items-center gap-2 text-micro text-fg-ghost uppercase tracking-widest">
+						<KbdMicro>j</KbdMicro>
+						<KbdMicro>k</KbdMicro>
+						<span>navigate</span>
+						<span className="text-edge-strong">·</span>
+						<KbdMicro>esc</KbdMicro>
+						<span>close</span>
+					</div>
 				</div>
-				<p className="text-sm font-medium text-gray-400 mb-1">No events yet</p>
-				<p className="text-xs text-gray-600 max-w-[240px] leading-relaxed">
-					Webhook events will appear here in real-time as they arrive at your endpoints
-				</p>
 			</div>
 		);
 	}
 
 	return (
-		<div className="h-full overflow-auto">
-			<table className="w-full text-sm table-fixed">
-				<thead className="text-[11px] text-gray-500 border-b border-gray-700/80 sticky top-0 bg-gray-950 z-10">
-					<tr>
-						<th className="text-left py-2 px-3 font-semibold uppercase tracking-wider w-[80px]">
-							Time
-						</th>
-						<th className="text-left py-2 px-3 font-semibold uppercase tracking-wider w-[70px]">
-							Method
-						</th>
-						<th className="text-left py-2 px-3 font-semibold uppercase tracking-wider w-[140px]">
-							Service
-						</th>
-						<th className="text-left py-2 px-3 font-semibold uppercase tracking-wider">Path</th>
-						<th className="text-center py-2 px-3 font-semibold uppercase tracking-wider w-[60px]">
-							Status
-						</th>
-						<th className="text-right py-2 px-3 font-semibold uppercase tracking-wider w-[70px]">
-							Latency
-						</th>
-					</tr>
-				</thead>
-				<tbody>
-					{events.map((event, index) => (
-						<tr
+		<div ref={containerRef} className="h-full overflow-auto font-sans">
+			{/* Column header — sticky */}
+			<div className="sticky top-0 z-10 grid grid-cols-[14px_72px_56px_140px_1fr_64px_64px] gap-2 px-3 h-7 items-center bg-ink-0 border-b border-edge text-micro text-fg-faint uppercase tracking-[0.18em] select-none">
+				<span />
+				<span>time</span>
+				<span>verb</span>
+				<span>service</span>
+				<span>path</span>
+				<span className="text-right">status</span>
+				<span className="text-right">ms</span>
+			</div>
+
+			<ol aria-label="Webhook events" className="list-none m-0 p-0">
+				{events.map((event, index) => {
+					const selected = selectedEventId === event.id;
+					const serviceLabel =
+						event.service_name ||
+						serviceNameById?.[event.service_id] ||
+						event.service_id.slice(0, 8);
+					const status = statusToken(event.response_status, !!event.error);
+					return (
+						<li
 							key={event.id}
 							onClick={() => onSelect(event.id)}
 							onKeyDown={(e) => {
-								if (e.key === "Enter" || e.key === " ") onSelect(event.id);
+								if (e.key === "Enter" || e.key === " ") {
+									e.preventDefault();
+									onSelect(event.id);
+								}
 							}}
-							className={`border-b border-gray-800/50 cursor-pointer transition-all duration-75 ${
-								selectedEventId === event.id
-									? "bg-cyan-500/8 border-l-2 border-l-cyan-400"
-									: index % 2 === 0
-										? "bg-transparent hover:bg-gray-800/30"
-										: "bg-gray-900/30 hover:bg-gray-800/30"
-							}`}
+							// biome-ignore lint/a11y/noNoninteractiveTabindex: row is intentionally focusable for j/k navigation
+							tabIndex={0}
+							className={cn(
+								"group grid grid-cols-[14px_72px_56px_140px_1fr_64px_64px] gap-2 px-3 h-7 items-center border-b border-edge/40 cursor-pointer outline-none transition-colors text-body",
+								selected
+									? "bg-uranium/5 rule-accent"
+									: "hover:bg-ink-3/50 focus-visible:bg-ink-3/50",
+								index === 0 && "animate-event-flash",
+							)}
+							aria-current={selected}
 						>
-							<td className="py-1.5 px-3 text-gray-500 font-mono text-[11px] whitespace-nowrap">
+							{/* Marker — pending: dim dot, ok: filled, error: filled red */}
+							<span className="flex items-center justify-center">
+								<span
+									className={cn(
+										"w-1 h-1 rounded-full",
+										event.error
+											? "bg-err"
+											: event.response_status === null
+												? "bg-fg-ghost animate-pulse-soft"
+												: event.response_status < 400
+													? "bg-uranium/70 group-hover:bg-uranium"
+													: "bg-warn",
+									)}
+								/>
+							</span>
+
+							{/* Time */}
+							<span className="text-fg-faint tabular text-micro tracking-tight">
 								{formatTime(event.received_at)}
-							</td>
-							<td className="py-1.5 px-3">
-								<span
-									className={`font-mono font-bold text-[11px] px-1.5 py-0.5 rounded ${methodColor(event.method)} ${methodBgColor(event.method)}`}
-								>
-									{event.method}
-								</span>
-							</td>
-							<td className="py-1.5 px-3 text-gray-300 text-[11px] font-medium truncate">
-								{event.service_name || event.service_id.slice(0, 8)}
-							</td>
-							<td className="py-1.5 px-3 text-gray-500 font-mono text-[11px] truncate">
+							</span>
+
+							{/* Method */}
+							<span
+								className={cn(
+									"justify-self-start px-1.5 py-px rounded-sm text-micro font-bold uppercase tracking-wider tabular",
+									methodClass(event.method),
+								)}
+							>
+								{event.method}
+							</span>
+
+							{/* Service */}
+							<span className="text-fg-muted truncate text-caption">
+								<span className="text-fg-ghost mr-1">›</span>
+								{serviceLabel}
+							</span>
+
+							{/* Path */}
+							<span className="text-fg truncate text-caption tabular tracking-tight">
 								{event.path}
-							</td>
-							<td className="py-1.5 px-3 text-center">
-								<span
-									className={`inline-flex items-center font-mono text-[10px] font-bold px-1.5 py-0.5 rounded-full ${statusBadgeClasses(event.response_status, !!event.error)}`}
-								>
-									{event.error ? "ERR" : (event.response_status ?? "---")}
-								</span>
-							</td>
-							<td className="py-1.5 px-3 text-right text-gray-600 font-mono text-[11px] whitespace-nowrap">
-								{event.latency_ms !== null ? `${event.latency_ms}ms` : "---"}
-							</td>
-						</tr>
-					))}
-				</tbody>
-			</table>
+							</span>
+
+							{/* Status */}
+							<span className="justify-self-end flex items-center gap-1.5 text-caption tabular">
+								<span className={cn("text-micro", status.className)}>{status.glyph}</span>
+								<span className={cn("font-semibold", status.className)}>{status.text}</span>
+							</span>
+
+							{/* Latency */}
+							<span className="justify-self-end text-fg-faint text-caption tabular">
+								{formatLatency(event.latency_ms)}
+								<span className="text-fg-ghost ml-0.5">ms</span>
+							</span>
+						</li>
+					);
+				})}
+			</ol>
+
+			{/* Footer caret — feels like a tail-following log */}
+			<div className="px-3 h-6 flex items-center text-micro text-fg-ghost uppercase tracking-widest select-none border-t border-edge/40">
+				<span className="text-uranium animate-caret-blink mr-1">▍</span>
+				waiting on stream
+			</div>
 		</div>
+	);
+}
+
+function KbdMicro({ children }: { children: React.ReactNode }) {
+	return (
+		<kbd className="px-1.5 py-0.5 rounded-sm border border-edge bg-ink-2 text-fg-muted normal-case tracking-normal">
+			{children}
+		</kbd>
 	);
 }

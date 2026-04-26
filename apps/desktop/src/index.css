@@ -1,71 +1,197 @@
+@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400;1,500&display=swap");
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
-	body {
-		background: #030712;
+	:root {
+		color-scheme: dark;
+		--bg: #0c0d11;
+		--noise: 0.018;
 	}
-	/* Thin dark scrollbar */
+
+	html,
+	body,
+	#root {
+		height: 100%;
+		background: var(--bg);
+	}
+
+	body {
+		font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+		font-feature-settings: "calt" 1, "ss01" 1, "ss02" 1, "zero" 1;
+		font-variant-ligatures: contextual;
+		-webkit-font-smoothing: antialiased;
+		-moz-osx-font-smoothing: grayscale;
+		color: #e8e9ed;
+
+		/* A subtle film of noise + a centered radial wash. Sets a floor of
+		   "atmosphere" so flat dark surfaces don't feel sterile. */
+		background-color: var(--bg);
+		background-image: radial-gradient(
+				ellipse 80% 60% at 50% -10%,
+				rgba(204, 255, 0, 0.05),
+				transparent 60%
+			), radial-gradient(ellipse 60% 50% at 50% 110%, rgba(132, 205, 255, 0.025), transparent 60%);
+		background-attachment: fixed;
+	}
+
+	/* Hairline focus ring everywhere, never the browser default */
+	:focus-visible {
+		outline: 1px solid #ccff00;
+		outline-offset: 1px;
+		border-radius: 2px;
+	}
+
+	/* Selection */
+	::selection {
+		background: rgba(204, 255, 0, 0.28);
+		color: #ffffff;
+	}
+
+	/* Tabular numbers for any number-heavy element */
+	.tabular,
+	code,
+	pre {
+		font-variant-numeric: tabular-nums;
+	}
+}
+
+@layer utilities {
+	/* ── Scrollbars ────────────────────────────────────────────────── */
 	::-webkit-scrollbar {
-		width: 6px;
+		width: 10px;
+		height: 10px;
 	}
 	::-webkit-scrollbar-track {
 		background: transparent;
 	}
 	::-webkit-scrollbar-thumb {
-		background: rgba(75, 85, 99, 0.4);
-		border-radius: 3px;
+		background: rgba(105, 110, 130, 0.18);
+		border-radius: 0;
+		border: 3px solid transparent;
+		background-clip: padding-box;
 	}
 	::-webkit-scrollbar-thumb:hover {
-		background: rgba(75, 85, 99, 0.6);
+		background: rgba(204, 255, 0, 0.35);
+		background-clip: padding-box;
+		border: 3px solid transparent;
 	}
-}
+	::-webkit-scrollbar-corner {
+		background: transparent;
+	}
 
-@layer utilities {
-	/* Glow pulse animations */
+	/* ── Atmosphere helpers ────────────────────────────────────────── */
+
+	/* Subtle CRT-style scan line over a panel — tile this background */
+	.scanlines {
+		position: relative;
+	}
+	.scanlines::after {
+		content: "";
+		position: absolute;
+		inset: 0;
+		pointer-events: none;
+		background-image: linear-gradient(
+			to bottom,
+			transparent 0,
+			transparent 2px,
+			rgba(255, 255, 255, 0.012) 2px,
+			rgba(255, 255, 255, 0.012) 3px
+		);
+		background-size: 100% 3px;
+		mix-blend-mode: overlay;
+	}
+
+	/* Vertical accent rule on the left edge of an active row */
+	.rule-accent {
+		box-shadow: inset 2px 0 0 #ccff00;
+	}
+
+	/* Minute grid texture — for empty states / decorative panels */
+	.grid-texture {
+		background-image: linear-gradient(to right, rgba(255, 255, 255, 0.015) 1px, transparent 1px),
+			linear-gradient(to bottom, rgba(255, 255, 255, 0.015) 1px, transparent 1px);
+		background-size: 24px 24px;
+	}
+
+	/* Glass — used for command palette and modal chrome */
+	.glass {
+		background: rgba(17, 18, 24, 0.86);
+		backdrop-filter: blur(16px) saturate(140%);
+		-webkit-backdrop-filter: blur(16px) saturate(140%);
+	}
+
+	/* ── Method-tag color helpers (one source of truth) ──────────── */
+	.method-get {
+		color: #84cdff;
+		background: rgba(132, 205, 255, 0.1);
+	}
+	.method-post {
+		color: #a8e6a3;
+		background: rgba(168, 230, 163, 0.1);
+	}
+	.method-put {
+		color: #ffc78a;
+		background: rgba(255, 199, 138, 0.1);
+	}
+	.method-patch {
+		color: #e8b6ff;
+		background: rgba(232, 182, 255, 0.1);
+	}
+	.method-delete {
+		color: #ff9a8a;
+		background: rgba(255, 154, 138, 0.12);
+	}
+	.method-default {
+		color: #9b9eaa;
+		background: rgba(155, 158, 170, 0.1);
+	}
+
+	/* ── Legacy animation aliases (retained so existing classNames
+	      in components keep working until each is rewritten) ─────── */
 	@keyframes pulse-glow-green {
 		0%,
 		100% {
-			box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.5);
+			box-shadow: 0 0 0 0 rgba(93, 211, 158, 0.4);
 		}
 		50% {
-			box-shadow: 0 0 8px 4px rgba(34, 197, 94, 0.25);
+			box-shadow: 0 0 8px 2px rgba(93, 211, 158, 0.18);
 		}
 	}
 	@keyframes pulse-glow-red {
 		0%,
 		100% {
-			box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.5);
+			box-shadow: 0 0 0 0 rgba(255, 122, 122, 0.4);
 		}
 		50% {
-			box-shadow: 0 0 8px 4px rgba(239, 68, 68, 0.25);
+			box-shadow: 0 0 8px 2px rgba(255, 122, 122, 0.18);
 		}
 	}
 	@keyframes pulse-glow-yellow {
 		0%,
 		100% {
-			box-shadow: 0 0 0 0 rgba(234, 179, 8, 0.5);
+			box-shadow: 0 0 0 0 rgba(244, 195, 97, 0.4);
 		}
 		50% {
-			box-shadow: 0 0 8px 4px rgba(234, 179, 8, 0.25);
+			box-shadow: 0 0 8px 2px rgba(244, 195, 97, 0.18);
 		}
 	}
 	.animate-glow-green {
-		animation: pulse-glow-green 2s ease-in-out infinite;
+		animation: pulse-glow-green 2.4s ease-in-out infinite;
 	}
 	.animate-glow-red {
-		animation: pulse-glow-red 2s ease-in-out infinite;
+		animation: pulse-glow-red 2.4s ease-in-out infinite;
 	}
 	.animate-glow-yellow {
-		animation: pulse-glow-yellow 2s ease-in-out infinite;
+		animation: pulse-glow-yellow 2.4s ease-in-out infinite;
 	}
 
-	/* Fade-in animations */
 	@keyframes fade-in-up {
 		from {
 			opacity: 0;
-			transform: translateY(8px);
+			transform: translateY(6px);
 		}
 		to {
 			opacity: 1;
@@ -73,6 +199,6 @@
 		}
 	}
 	.animate-fade-in-up {
-		animation: fade-in-up 0.4s ease-out both;
+		animation: fade-in-up 280ms cubic-bezier(0.16, 1, 0.3, 1) both;
 	}
 }

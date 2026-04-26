@@ -1,48 +1,95 @@
-import { useState } from "react";
+import {
+	Beaker,
+	Command as CommandIcon,
+	Copy,
+	Key,
+	Pencil,
+	Power,
+	RefreshCw,
+	Search,
+	Settings,
+	Terminal,
+} from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Logo } from "../components/Logo";
+import { CommandPalette, useCommandPaletteShortcut } from "../components/dashboard/CommandPalette";
+import type { CommandAction } from "../components/dashboard/CommandPalette";
+import { ConnectionBanner } from "../components/dashboard/ConnectionBanner";
+import { EmptyState } from "../components/dashboard/EmptyState";
+import { EventDetail } from "../components/dashboard/EventDetail";
+import { EventRow, EventRowHeader } from "../components/dashboard/EventRow";
+import { DEFAULT_FILTERS, FilterBar, applyFilters } from "../components/dashboard/FilterBar";
+import type { Filters } from "../components/dashboard/FilterBar";
+import { MockResponseSettings } from "../components/dashboard/MockResponseSettings";
+import { ReplayEditor } from "../components/dashboard/ReplayEditor";
+import { SecretsModal } from "../components/dashboard/SecretsModal";
+import { StatsPanel } from "../components/dashboard/StatsPanel";
 import { useBridge } from "../hooks/useBridge";
 import type { LiveEvent } from "../hooks/useBridge";
+
+/** Validate a port number input. */
+function validatePort(raw: string): { ok: true; port: number } | { ok: false; error: string } {
+	const trimmed = raw.trim();
+	if (!trimmed) return { ok: false, error: "Port is required" };
+	const n = Number(trimmed);
+	if (!Number.isInteger(n)) return { ok: false, error: "Port must be an integer" };
+	if (n < 1 || n > 65535) return { ok: false, error: "Port must be between 1 and 65535" };
+	return { ok: true, port: n };
+}
+
+/** Validate and normalize the allowed-paths textarea. */
+function validatePaths(raw: string): { ok: true; paths: string[] } | { ok: false; error: string } {
+	const lines = raw
+		.split("\n")
+		.map((p) => p.trim())
+		.filter(Boolean);
+	if (lines.length > 20) return { ok: false, error: "At most 20 paths allowed" };
+	for (const p of lines) {
+		if (!p.startsWith("/")) return { ok: false, error: `Path "${p}" must start with /` };
+		if (p.length > 256) return { ok: false, error: `Path too long: ${p.slice(0, 30)}…` };
+	}
+	return { ok: true, paths: lines };
+}
 
 function StatusIndicator({ status }: { status: string }) {
 	const colors: Record<string, { dot: string; bg: string; text: string; label: string }> = {
 		idle: {
-			dot: "bg-zinc-500",
-			bg: "bg-zinc-500/10 border-zinc-500/20",
-			text: "text-zinc-400",
+			dot: "bg-on-surface-faint",
+			bg: "bg-surface border-border",
+			text: "text-on-surface-variant",
 			label: "Idle",
 		},
 		connecting: {
-			dot: "bg-yellow-500",
-			bg: "bg-yellow-500/10 border-yellow-500/20",
-			text: "text-yellow-400",
-			label: "Connecting...",
+			dot: "bg-warning",
+			bg: "bg-warning/10 border-warning/25",
+			text: "text-warning",
+			label: "Connecting…",
 		},
 		connected: {
-			dot: "bg-emerald-500",
-			bg: "bg-emerald-500/10 border-emerald-500/20",
-			text: "text-emerald-400",
+			dot: "bg-success",
+			bg: "bg-success/10 border-success/25",
+			text: "text-success",
 			label: "Connected",
 		},
+		reconnecting: {
+			dot: "bg-warning",
+			bg: "bg-warning/10 border-warning/25",
+			text: "text-warning",
+			label: "Reconnecting",
+		},
 		error: {
-			dot: "bg-red-500",
-			bg: "bg-red-500/10 border-red-500/20",
-			text: "text-red-400",
+			dot: "bg-danger",
+			bg: "bg-danger/10 border-danger/25",
+			text: "text-danger",
 			label: "Error",
 		},
 	};
 	const c = colors[status] || colors.idle;
 
 	return (
-		<div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border ${c.bg}`}>
-			<span className="relative flex h-2 w-2">
-				{status === "connected" && (
-					<span
-						className={`animate-ping absolute inline-flex h-full w-full rounded-full ${c.dot} opacity-75`}
-					/>
-				)}
-				<span className={`relative inline-flex rounded-full h-2 w-2 ${c.dot}`} />
-			</span>
-			<span className={`text-[11px] font-bold ${c.text} font-body`}>{c.label}</span>
+		<div className={`flex items-center gap-2 px-3 py-1.5 rounded-md border ${c.bg}`}>
+			<span className={`w-2 h-2 rounded-full ${c.dot}`} />
+			<span className={`text-[11px] font-bold ${c.text}`}>{c.label}</span>
 		</div>
 	);
 }
@@ -50,6 +97,22 @@ function StatusIndicator({ status }: { status: string }) {
 function ConnectForm({ onConnect }: { onConnect: (port: number, paths: string[]) => void }) {
 	const [port, setPort] = useState("3000");
 	const [paths, setPaths] = useState("/webhook/stripe\n/webhook/github");
+	const [validationError, setValidationError] = useState<string | null>(null);
+
+	const handleSubmit = () => {
+		const portResult = validatePort(port);
+		if (!portResult.ok) {
+			setValidationError(portResult.error);
+			return;
+		}
+		const pathsResult = validatePaths(paths);
+		if (!pathsResult.ok) {
+			setValidationError(pathsResult.error);
+			return;
+		}
+		setValidationError(null);
+		onConnect(portResult.port, pathsResult.paths);
+	};
 
 	return (
 		<div className="flex-1 flex items-center justify-center p-8">
@@ -58,52 +121,63 @@ function ConnectForm({ onConnect }: { onConnect: (port: number, paths: string[])
 					<div className="flex justify-center mb-4">
 						<Logo size="lg" />
 					</div>
-					<p className="text-zinc-400 text-sm font-body">
+					<p className="text-on-surface-variant text-sm">
 						Enter your localhost port to start receiving webhooks.
 					</p>
 				</div>
 
 				<div className="space-y-5">
 					<div>
-						<label className="block text-[11px] font-black text-zinc-400 uppercase tracking-[0.2em] mb-2 font-label">
-							Local Port
+						<label
+							htmlFor="bh-port"
+							className="block text-[11px] font-bold text-on-surface-variant uppercase tracking-[0.2em] mb-2"
+						>
+							Local port
 						</label>
 						<input
+							id="bh-port"
 							type="number"
+							min={1}
+							max={65535}
 							value={port}
 							onChange={(e) => setPort(e.target.value)}
-							className="w-full bg-[#0c0c0f] border border-white/[0.08] rounded-xl px-4 py-3 font-mono text-sm text-white placeholder-zinc-600 focus:border-primary/40 focus:outline-none focus:ring-1 focus:ring-primary/20 transition-all"
+							className="w-full bg-surface border border-border rounded-xl px-4 py-3 font-mono text-sm text-on-surface placeholder-on-surface-faint focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/30 transition-all"
 							placeholder="3000"
 						/>
 					</div>
 
 					<div>
-						<label className="block text-[11px] font-black text-zinc-400 uppercase tracking-[0.2em] mb-2 font-label">
-							Allowed Paths (one per line)
+						<label
+							htmlFor="bh-paths"
+							className="block text-[11px] font-bold text-on-surface-variant uppercase tracking-[0.2em] mb-2"
+						>
+							Allowed paths (one per line, leave empty for all)
 						</label>
 						<textarea
+							id="bh-paths"
 							value={paths}
 							onChange={(e) => setPaths(e.target.value)}
 							rows={3}
-							className="w-full bg-[#0c0c0f] border border-white/[0.08] rounded-xl px-4 py-3 font-mono text-sm text-white placeholder-zinc-600 focus:border-primary/40 focus:outline-none focus:ring-1 focus:ring-primary/20 transition-all resize-none"
+							className="w-full bg-surface border border-border rounded-xl px-4 py-3 font-mono text-sm text-on-surface placeholder-on-surface-faint focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/30 transition-all resize-none"
 							placeholder="/webhook/stripe"
 						/>
 					</div>
 
+					{validationError && (
+						<div
+							role="alert"
+							className="text-xs font-mono text-danger bg-danger/5 border border-danger/15 rounded-md px-3 py-2"
+						>
+							{validationError}
+						</div>
+					)}
+
 					<button
 						type="button"
-						onClick={() =>
-							onConnect(
-								Number(port),
-								paths
-									.split("\n")
-									.map((p) => p.trim())
-									.filter(Boolean),
-							)
-						}
-						className="w-full bg-primary text-white font-black py-3.5 rounded-xl hover:scale-[1.02] active:scale-[0.98] transition-all shadow-[0_0_30px_rgba(144,147,255,0.2)] font-headline text-sm"
+						onClick={handleSubmit}
+						className="w-full bg-primary text-background font-bold py-3.5 rounded-xl hover:bg-primary-dim transition-colors text-sm"
 					>
-						Start Bridge
+						Start bridge
 					</button>
 				</div>
 			</div>
@@ -111,272 +185,407 @@ function ConnectForm({ onConnect }: { onConnect: (port: number, paths: string[])
 	);
 }
 
-function CopyButton({ text }: { text: string }) {
+function CopyChip({ text, label }: { text: string; label?: string }) {
 	const [copied, setCopied] = useState(false);
 
-	const handleCopy = () => {
-		navigator.clipboard.writeText(text).then(() => {
-			setCopied(true);
-			setTimeout(() => setCopied(false), 2000);
-		});
-	};
+	useEffect(() => {
+		if (!copied) return;
+		const t = setTimeout(() => setCopied(false), 2000);
+		return () => clearTimeout(t);
+	}, [copied]);
 
 	return (
 		<button
 			type="button"
-			onClick={handleCopy}
-			className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all duration-300 font-label ${
+			onClick={() =>
+				navigator.clipboard
+					.writeText(text)
+					.then(() => setCopied(true))
+					.catch(() => {})
+			}
+			className={`w-full px-3 py-2 rounded-md text-[10px] font-bold uppercase tracking-wider transition-colors ${
 				copied
-					? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/25"
-					: "bg-primary/10 text-primary border border-primary/20 hover:bg-primary/20"
+					? "bg-success/15 text-success border border-success/25"
+					: "bg-primary-soft text-primary border border-primary/30 hover:bg-primary/20"
 			}`}
 		>
-			{copied ? "Copied!" : "Copy"}
+			{copied ? "Copied!" : (label ?? "Copy")}
 		</button>
-	);
-}
-
-function EventRow({ event }: { event: LiveEvent }) {
-	const [expanded, setExpanded] = useState(false);
-
-	const statusColor = event.error
-		? "text-red-400"
-		: (event.responseStatus ?? 0) >= 500
-			? "text-red-400"
-			: (event.responseStatus ?? 0) >= 300
-				? "text-yellow-400"
-				: event.responseStatus
-					? "text-emerald-400"
-					: "text-zinc-600";
-
-	const dotColor = event.error
-		? "bg-red-500"
-		: (event.responseStatus ?? 0) >= 500
-			? "bg-red-500"
-			: event.responseStatus
-				? "bg-emerald-500"
-				: "bg-zinc-600 animate-pulse";
-
-	return (
-		<div className="border-b border-white/[0.03]">
-			<div
-				className="grid grid-cols-[32px_56px_1fr_1fr_56px_56px] gap-2 items-center px-5 py-3 hover:bg-white/[0.02] transition-colors cursor-pointer"
-				onClick={() => setExpanded(!expanded)}
-				onKeyDown={(e) => e.key === "Enter" && setExpanded(!expanded)}
-			>
-				<div className="flex justify-center">
-					<span className={`w-2 h-2 rounded-full ${dotColor} shadow-[0_0_6px_currentColor]`} />
-				</div>
-				<span className="font-mono text-[10px] font-black text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 rounded px-1.5 py-0.5 text-center">
-					{event.method}
-				</span>
-				<span className="font-mono text-[12px] text-zinc-300 truncate">{event.path}</span>
-				<span className="font-mono text-[11px] text-zinc-500 truncate">
-					{new Date(event.receivedAt).toLocaleTimeString()}
-				</span>
-				<span className={`font-mono text-[12px] font-bold text-right ${statusColor}`}>
-					{event.error ? "ERR" : event.responseStatus || "..."}
-				</span>
-				<span className="font-mono text-[11px] text-zinc-600 text-right">
-					{event.latencyMs ? `${event.latencyMs}ms` : "—"}
-				</span>
-			</div>
-
-			{expanded && (
-				<div className="px-5 pb-4 grid grid-cols-2 gap-4">
-					<div>
-						<div className="text-[9px] font-black text-zinc-500 uppercase tracking-[0.2em] mb-1.5 font-label">
-							Request Headers
-						</div>
-						<pre className="bg-[#0a0a0c] rounded-lg p-3 font-mono text-[10px] text-zinc-400 overflow-x-auto max-h-40 overflow-y-auto">
-							{JSON.stringify(event.requestHeaders, null, 2)}
-						</pre>
-					</div>
-					<div>
-						<div className="text-[9px] font-black text-zinc-500 uppercase tracking-[0.2em] mb-1.5 font-label">
-							Request Body
-						</div>
-						<pre className="bg-[#0a0a0c] rounded-lg p-3 font-mono text-[10px] text-zinc-400 overflow-x-auto max-h-40 overflow-y-auto">
-							{event.requestBody
-								? (() => {
-										try {
-											return JSON.stringify(JSON.parse(event.requestBody), null, 2);
-										} catch {
-											return event.requestBody;
-										}
-									})()
-								: "—"}
-						</pre>
-					</div>
-					{event.responseBody && (
-						<div className="col-span-2">
-							<div className="text-[9px] font-black text-zinc-500 uppercase tracking-[0.2em] mb-1.5 font-label">
-								Response Body
-							</div>
-							<pre className="bg-[#0a0a0c] rounded-lg p-3 font-mono text-[10px] text-zinc-400 overflow-x-auto max-h-40 overflow-y-auto">
-								{(() => {
-									try {
-										return JSON.stringify(JSON.parse(event.responseBody), null, 2);
-									} catch {
-										return event.responseBody;
-									}
-								})()}
-							</pre>
-						</div>
-					)}
-					{event.error && (
-						<div className="col-span-2">
-							<div className="text-[9px] font-black text-red-500 uppercase tracking-[0.2em] mb-1.5 font-label">
-								Error
-							</div>
-							<pre className="bg-red-500/5 border border-red-500/10 rounded-lg p-3 font-mono text-[10px] text-red-400">
-								{event.error}
-							</pre>
-						</div>
-					)}
-				</div>
-			)}
-		</div>
 	);
 }
 
 export function Dashboard() {
 	const bridge = useBridge();
 
+	const [expanded, setExpanded] = useState<string | null>(null);
+	const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
+	const [replayTarget, setReplayTarget] = useState<LiveEvent | null>(null);
+	const [mockOpen, setMockOpen] = useState(false);
+	const [secretsOpen, setSecretsOpen] = useState(false);
+	const [secretsHighlight, setSecretsHighlight] = useState<string | null>(null);
+	const [paletteOpen, setPaletteOpen] = useState(false);
+	const queryRef = useRef<HTMLInputElement>(null);
+
+	useCommandPaletteShortcut(() => setPaletteOpen((v) => !v));
+
+	// ⌘/ focuses the filter input
+	useEffect(() => {
+		const onKey = (e: KeyboardEvent) => {
+			if ((e.metaKey || e.ctrlKey) && e.key === "/") {
+				e.preventDefault();
+				queryRef.current?.focus();
+			}
+		};
+		window.addEventListener("keydown", onKey);
+		return () => window.removeEventListener("keydown", onKey);
+	}, []);
+
+	const filtered = useMemo(() => applyFilters(bridge.events, filters), [bridge.events, filters]);
+
 	const successCount = bridge.events.filter(
-		(e) => e.responseStatus && e.responseStatus < 400,
+		(e) => e.responseStatus !== null && e.responseStatus < 400,
 	).length;
 	const errorCount = bridge.events.filter(
-		(e) => e.error || (e.responseStatus && e.responseStatus >= 400),
+		(e) => e.error || (e.responseStatus !== null && e.responseStatus >= 400),
 	).length;
 
+	/** Fire a single test request to the active webhook URL. */
+	const fireTest = useCallback(async () => {
+		if (!bridge.webhookUrl) return;
+		try {
+			await fetch(bridge.webhookUrl, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					test: true,
+					sentBy: "BridgeHook",
+					at: new Date().toISOString(),
+				}),
+			});
+		} catch (err) {
+			console.warn("Test request failed:", err);
+		}
+	}, [bridge.webhookUrl]);
+
+	const handleReplay = useCallback(
+		async (event: LiveEvent) => {
+			await bridge.replay(event);
+		},
+		[bridge.replay],
+	);
+
+	const handleConfigureSecret = useCallback((providerId: string) => {
+		setSecretsHighlight(providerId);
+		setSecretsOpen(true);
+	}, []);
+
+	const lastEvent = bridge.events[0];
+
+	const actions: CommandAction[] = useMemo(
+		() => [
+			{
+				id: "replay-last",
+				label: "Replay last event",
+				hint: lastEvent
+					? `${lastEvent.method} ${lastEvent.path.replace(/^\/hook\/[a-z0-9]+/, "") || "/"}`
+					: undefined,
+				Icon: RefreshCw,
+				keywords: ["repeat", "fire"],
+				disabled: !lastEvent,
+				run: () => lastEvent && bridge.replay(lastEvent),
+			},
+			{
+				id: "edit-replay-last",
+				label: "Edit & replay last event",
+				Icon: Pencil,
+				keywords: ["modify", "change"],
+				disabled: !lastEvent,
+				run: () => lastEvent && setReplayTarget(lastEvent),
+			},
+			{
+				id: "copy-url",
+				label: "Copy webhook URL",
+				Icon: Copy,
+				disabled: !bridge.webhookUrl,
+				run: () => bridge.webhookUrl && navigator.clipboard.writeText(bridge.webhookUrl),
+			},
+			{
+				id: "fire-test",
+				label: "Fire a test request",
+				Icon: Terminal,
+				keywords: ["sample", "ping", "smoke"],
+				disabled: !bridge.webhookUrl,
+				run: fireTest,
+			},
+			{
+				id: "focus-search",
+				label: "Filter events",
+				Icon: Search,
+				shortcut: "⌘/",
+				run: () => queryRef.current?.focus(),
+			},
+			{
+				id: "mock",
+				label: bridge.mock.enabled ? "Disable mock mode" : "Mock response settings",
+				Icon: Beaker,
+				keywords: ["canned", "fake"],
+				run: () => setMockOpen(true),
+			},
+			{
+				id: "secrets",
+				label: "Manage signing secrets",
+				Icon: Key,
+				keywords: ["stripe", "github", "hmac"],
+				run: () => {
+					setSecretsHighlight(null);
+					setSecretsOpen(true);
+				},
+			},
+			{
+				id: "disconnect",
+				label: "Disconnect bridge",
+				Icon: Power,
+				disabled: bridge.status === "idle",
+				run: bridge.disconnect,
+			},
+		],
+		[bridge, lastEvent, fireTest],
+	);
+
+	const showConnectForm = bridge.status === "idle" || bridge.status === "error";
+
 	return (
-		<div className="h-screen flex flex-col bg-background text-white">
-			{/* Top bar */}
-			<div className="flex items-center justify-between px-5 py-3 border-b border-white/[0.06] bg-[#08080a]">
+		<div className="h-screen flex flex-col bg-background text-on-surface">
+			{/* ── Top bar ─────────────────────────────────────────── */}
+			<div className="flex items-center justify-between px-5 py-3 border-b border-border-subtle bg-surface-muted">
 				<Logo size="sm" />
-				<StatusIndicator status={bridge.status} />
-				{bridge.status === "connected" && (
-					<button
-						type="button"
-						onClick={bridge.disconnect}
-						className="text-[11px] font-bold text-zinc-500 hover:text-red-400 transition-colors font-body"
-					>
-						Disconnect
-					</button>
-				)}
+				<div className="flex items-center gap-2">
+					<StatusIndicator status={bridge.status} />
+					{!showConnectForm && (
+						<>
+							<button
+								type="button"
+								onClick={() => setPaletteOpen(true)}
+								className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-surface border border-border rounded-md text-[11px] text-on-surface-variant hover:text-on-surface transition-colors"
+								aria-label="Open command palette"
+							>
+								<CommandIcon size={12} strokeWidth={2} />
+								<span>K</span>
+							</button>
+							<button
+								type="button"
+								onClick={() => setMockOpen(true)}
+								className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[11px] font-bold uppercase tracking-wider transition-colors ${
+									bridge.mock.enabled
+										? "bg-warning/15 text-warning border border-warning/25"
+										: "bg-surface border border-border text-on-surface-variant hover:text-on-surface"
+								}`}
+								aria-label="Mock response settings"
+							>
+								<Beaker size={12} strokeWidth={2} />
+								{bridge.mock.enabled ? "Mock on" : "Mock"}
+							</button>
+							<button
+								type="button"
+								onClick={() => {
+									setSecretsHighlight(null);
+									setSecretsOpen(true);
+								}}
+								className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-surface border border-border rounded-md text-[11px] text-on-surface-variant hover:text-on-surface transition-colors"
+								aria-label="Signing secrets"
+							>
+								<Key size={12} strokeWidth={2} />
+								<span className="hidden md:inline">Secrets</span>
+							</button>
+							<button
+								type="button"
+								onClick={bridge.disconnect}
+								className="text-[11px] font-bold text-on-surface-muted hover:text-danger transition-colors px-2 py-1"
+							>
+								Disconnect
+							</button>
+						</>
+					)}
+				</div>
 			</div>
 
-			{bridge.status === "idle" || bridge.status === "error" ? (
+			{/* ── Body ────────────────────────────────────────────── */}
+			{showConnectForm ? (
 				<>
 					<ConnectForm onConnect={bridge.connect} />
 					{bridge.error && (
-						<div className="px-5 py-3 bg-red-500/5 border-t border-red-500/10 text-red-400 text-xs font-mono">
+						<div className="px-5 py-3 bg-danger/5 border-t border-danger/15 text-danger text-xs font-mono">
 							{bridge.error}
 						</div>
 					)}
 				</>
 			) : (
 				<div className="flex flex-1 overflow-hidden">
-					{/* Sidebar */}
-					<div className="w-[260px] border-r border-white/[0.05] flex flex-col bg-[#09090b] shrink-0">
+					{/* ── Sidebar ────────────────────────────────── */}
+					<aside className="w-[260px] border-r border-border-subtle flex flex-col bg-surface-muted shrink-0">
 						<div className="p-5 space-y-4 flex-1 overflow-y-auto">
-							{/* Channel */}
-							<div>
-								<div className="text-[9px] font-black text-zinc-500 uppercase tracking-[0.2em] mb-2 font-label">
-									Channel
+							<SidebarBlock label="Channel">
+								<div className="font-mono text-xs text-on-surface bg-surface border border-border rounded-md px-3 py-2">
+									{bridge.channelId ?? "—"}
 								</div>
-								<div className="font-mono text-xs text-zinc-200 bg-white/[0.03] border border-white/[0.06] rounded-lg px-3 py-2">
-									{bridge.channelId}
-								</div>
-							</div>
+							</SidebarBlock>
 
-							{/* Port */}
-							<div>
-								<div className="text-[9px] font-black text-zinc-500 uppercase tracking-[0.2em] mb-2 font-label">
-									Forwarding to
-								</div>
+							<SidebarBlock label="Forwarding to">
 								<div className="flex items-center gap-2">
-									<span className="w-2 h-2 rounded-full bg-emerald-500" />
-									<span className="font-mono text-xs text-emerald-400">
-										localhost:{bridge.port}
+									<span className="w-2 h-2 rounded-full bg-success" />
+									<span className="font-mono text-xs text-success">
+										{bridge.mock.enabled ? "MOCK MODE" : `localhost:${bridge.port}`}
 									</span>
 								</div>
-							</div>
+							</SidebarBlock>
 
-							{/* Webhook URL */}
-							<div>
-								<div className="text-[9px] font-black text-zinc-500 uppercase tracking-[0.2em] mb-2 font-label">
-									Webhook URL
-								</div>
-								<div className="bg-white/[0.03] border border-white/[0.06] rounded-lg p-3 mb-2">
+							<SidebarBlock label="Webhook URL">
+								<div className="bg-surface border border-border rounded-md p-3 mb-2">
 									<div className="font-mono text-[10px] text-primary break-all leading-relaxed">
-										{bridge.webhookUrl}
+										{bridge.webhookUrl ?? "—"}
 									</div>
 								</div>
-								{bridge.webhookUrl && <CopyButton text={bridge.webhookUrl} />}
-							</div>
-						</div>
+								{bridge.webhookUrl && <CopyChip text={bridge.webhookUrl} label="Copy URL" />}
+							</SidebarBlock>
 
-						{/* Stats footer */}
-						<div className="px-5 py-3 border-t border-white/[0.05] flex items-center gap-4 text-[10px] font-body">
-							<span className="text-zinc-500">
-								<span className="text-emerald-400 font-bold">{successCount}</span> ok
-							</span>
-							<span className="text-zinc-500">
-								<span className="text-red-400 font-bold">{errorCount}</span> err
-							</span>
-							<span className="text-zinc-500">
-								<span className="text-zinc-300 font-bold">{bridge.events.length}</span> total
-							</span>
-						</div>
-					</div>
-
-					{/* Event feed */}
-					<div className="flex-1 flex flex-col">
-						{/* Toolbar */}
-						<div className="flex items-center justify-between px-5 py-3 border-b border-white/[0.05]">
-							<div className="flex items-center gap-3">
-								<span className="text-[11px] font-black text-zinc-300 uppercase tracking-[0.15em] font-label">
-									Live Events
-								</span>
-								<span className="relative flex h-2 w-2">
-									<span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-60" />
-									<span className="relative inline-flex rounded-full h-2 w-2 bg-primary" />
-								</span>
-							</div>
-							<span className="text-[10px] text-zinc-600 font-body">
-								{bridge.events.length} events
-							</span>
-						</div>
-
-						{/* Column headers */}
-						<div className="grid grid-cols-[32px_56px_1fr_1fr_56px_56px] gap-2 px-5 py-2 border-b border-white/[0.04] bg-white/[0.01] text-[9px] font-black text-zinc-600 uppercase tracking-[0.2em] font-label">
-							<span />
-							<span>Method</span>
-							<span>Path</span>
-							<span>Time</span>
-							<span className="text-right">Status</span>
-							<span className="text-right">Latency</span>
-						</div>
-
-						{/* Events */}
-						<div className="flex-1 overflow-y-auto">
-							{bridge.events.length === 0 ? (
-								<div className="flex-1 flex items-center justify-center h-full text-center p-8">
-									<div>
-										<div className="text-zinc-600 text-3xl mb-3">&#x1F4E1;</div>
-										<p className="text-zinc-500 text-sm font-body mb-1">Waiting for webhooks...</p>
-										<p className="text-zinc-600 text-xs font-mono">POST to {bridge.webhookUrl}</p>
+							{bridge.allowedPaths.length > 0 && (
+								<SidebarBlock label="Path allowlist">
+									<div className="space-y-1">
+										{bridge.allowedPaths.map((p) => (
+											<div
+												key={p}
+												className="font-mono text-[11px] text-on-surface-variant flex items-center gap-1.5"
+											>
+												<span className="text-success">✓</span>
+												{p}
+											</div>
+										))}
 									</div>
-								</div>
-							) : (
-								bridge.events.map((event) => <EventRow key={event.id} event={event} />)
+								</SidebarBlock>
 							)}
+
+							<button
+								type="button"
+								onClick={fireTest}
+								disabled={!bridge.webhookUrl}
+								className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-surface border border-border rounded-md text-[11px] font-bold text-on-surface hover:border-border-strong transition-colors disabled:opacity-50"
+							>
+								<Terminal size={12} strokeWidth={2} />
+								Fire test request
+							</button>
 						</div>
-					</div>
+
+						<div className="px-5 py-3 border-t border-border-subtle flex items-center justify-between gap-3 text-[10px]">
+							<div className="flex items-center gap-3">
+								<span className="text-on-surface-muted">
+									<span className="text-success font-bold">{successCount}</span> ok
+								</span>
+								<span className="text-on-surface-muted">
+									<span className="text-danger font-bold">{errorCount}</span> err
+								</span>
+								<span className="text-on-surface-muted">
+									<span className="text-on-surface-variant font-bold">{bridge.events.length}</span>{" "}
+									total
+								</span>
+							</div>
+							<button
+								type="button"
+								onClick={() => setMockOpen(true)}
+								aria-label="Settings"
+								className="text-on-surface-muted hover:text-on-surface transition-colors"
+							>
+								<Settings size={12} strokeWidth={2} />
+							</button>
+						</div>
+					</aside>
+
+					{/* ── Main panel ─────────────────────────────── */}
+					<main className="flex-1 flex flex-col overflow-hidden">
+						<ConnectionBanner
+							status={bridge.status}
+							error={bridge.error}
+							pollFailures={bridge.pollFailures}
+						/>
+
+						{bridge.events.length === 0 ? (
+							<EmptyState webhookUrl={bridge.webhookUrl} onFireTest={fireTest} />
+						) : (
+							<>
+								<StatsPanel events={bridge.events} />
+								<FilterBar
+									filters={filters}
+									onChange={setFilters}
+									totalCount={bridge.events.length}
+									matchedCount={filtered.length}
+									queryInputRef={queryRef}
+								/>
+								<EventRowHeader />
+								<div className="flex-1 overflow-y-auto">
+									{filtered.length === 0 ? (
+										<div className="flex items-center justify-center py-16 text-[13px] text-on-surface-muted">
+											No events match the current filters.
+										</div>
+									) : (
+										filtered.map((event) => (
+											<div key={event.id} className="border-b border-border-subtle last:border-0">
+												<EventRow
+													event={event}
+													expanded={expanded === event.id}
+													onToggle={() => setExpanded((id) => (id === event.id ? null : event.id))}
+												/>
+												{expanded === event.id && (
+													<EventDetail
+														event={event}
+														secrets={bridge.secrets}
+														onReplay={() => handleReplay(event)}
+														onEdit={() => setReplayTarget(event)}
+														onConfigureSecret={handleConfigureSecret}
+													/>
+												)}
+											</div>
+										))
+									)}
+								</div>
+							</>
+						)}
+					</main>
 				</div>
 			)}
+
+			{/* ── Modals & overlays ───────────────────────────────── */}
+			<ReplayEditor
+				event={replayTarget}
+				onClose={() => setReplayTarget(null)}
+				onSubmit={async (edits) => {
+					if (!replayTarget) return;
+					await bridge.replayWithEdits(replayTarget, edits);
+				}}
+			/>
+			<MockResponseSettings
+				mock={bridge.mock}
+				onChange={bridge.setMock}
+				open={mockOpen}
+				onClose={() => setMockOpen(false)}
+			/>
+			<SecretsModal
+				open={secretsOpen}
+				highlight={secretsHighlight}
+				secrets={bridge.secrets}
+				onChange={bridge.setSecret}
+				onClose={() => setSecretsOpen(false)}
+			/>
+			<CommandPalette actions={actions} open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+		</div>
+	);
+}
+
+function SidebarBlock({ label, children }: { label: string; children: React.ReactNode }) {
+	return (
+		<div>
+			<div className="text-[9px] font-bold text-on-surface-muted uppercase tracking-[0.25em] mb-2">
+				{label}
+			</div>
+			{children}
 		</div>
 	);
 }

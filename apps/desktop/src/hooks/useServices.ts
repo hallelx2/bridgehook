@@ -10,6 +10,25 @@ export interface Service {
 	secret: string;
 	active: boolean;
 	created_at: string;
+	// Config — all optional (backfilled by migration to NULL / defaults)
+	path_rewrite: string | null;
+	injected_headers: string | null;
+	timeout_ms: number | null;
+	retry_count: number;
+	retry_delay_ms: number;
+	environments: string | null;
+	active_environment: string | null;
+	signing_provider: string | null;
+	signing_secret: string | null;
+	mock_response: string | null;
+	notify_on_event: boolean;
+}
+
+export interface PortProbe {
+	port: number;
+	alive: boolean;
+	status: number;
+	server: string | null;
 }
 
 export function useServices() {
@@ -29,11 +48,7 @@ export function useServices() {
 
 	const addService = useCallback(
 		async (name: string, port: number, path: string) => {
-			const service = await invoke<Service>("add_service", {
-				name,
-				port,
-				path,
-			});
+			const service = await invoke<Service>("add_service", { name, port, path });
 			await refresh();
 			return service;
 		},
@@ -50,26 +65,24 @@ export function useServices() {
 
 	const toggleService = useCallback(
 		async (serviceId: string) => {
-			const nowActive = await invoke<boolean>("toggle_service", {
-				serviceId,
-			});
+			const nowActive = await invoke<boolean>("toggle_service", { serviceId });
 			await refresh();
 			return nowActive;
 		},
 		[refresh],
 	);
 
-	useEffect(() => {
-		refresh();
-	}, [refresh]);
+	const updateService = useCallback(
+		async (service: Service) => {
+			const updated = await invoke<Service>("update_service", { service });
+			await refresh();
+			return updated;
+		},
+		[refresh],
+	);
 
-	const scanPorts = useCallback(async () => {
-		return invoke<PortProbe[]>("scan_ports");
-	}, []);
-
-	const autoDetect = useCallback(async () => {
-		return invoke<PortProbe[]>("auto_detect");
-	}, []);
+	const scanPorts = useCallback(async () => invoke<PortProbe[]>("scan_ports"), []);
+	const autoDetect = useCallback(async () => invoke<PortProbe[]>("auto_detect"), []);
 
 	const importFromExtension = useCallback(
 		async (webhookUrl: string, name: string, port: number, path: string) => {
@@ -85,22 +98,20 @@ export function useServices() {
 		[refresh],
 	);
 
+	useEffect(() => {
+		refresh();
+	}, [refresh]);
+
 	return {
 		services,
 		loading,
 		addService,
 		removeService,
 		toggleService,
+		updateService,
 		scanPorts,
 		autoDetect,
 		importFromExtension,
 		refresh,
 	};
-}
-
-export interface PortProbe {
-	port: number;
-	alive: boolean;
-	status: number;
-	server: string | null;
 }
