@@ -22,3 +22,25 @@ crons = ["0 * * * *"]
 [[kv_namespaces]]
 binding = "RATE_LIMIT"
 id = "647c7df6a0e64bf3882738057ad42f38"
+
+# ── Auth / billing / mailer config ────────────────────────────────────────
+# All optional. When BETTER_AUTH_SECRET is unset the relay runs in self-host
+# mode: /auth/** returns 404, channel creates resolve to the implicit
+# SELF_HOST_USER_ID user (or auto-created self-host@local), no quotas, no
+# Stripe paywall. Set the secrets via `wrangler secret put`.
+#
+# Required to enable hosted-mode auth:
+#   BETTER_AUTH_SECRET   — random 32+ byte secret (cookie signing, CSRF)
+#   BETTER_AUTH_URL      — e.g. https://relay.bridgehook.dev
+#
+# Optional:
+#   AUTH_COOKIE_DOMAIN   — e.g. ".bridgehook.dev" for cross-subdomain cookies
+#   AUTH_TRUSTED_ORIGINS — comma-separated allowlist for Better-Auth CSRF
+#   RESEND_API_KEY       — magic-link delivery (falls back to console mailer)
+#   MAIL_FROM            — sender address ("BridgeHook <noreply@bridgehook.dev>")
+#   SELF_HOST_USER_ID    — explicit single-user id for self-hosted instances
+#   STRIPE_SECRET_KEY    — billing (wired in later commits)
+#   STRIPE_WEBHOOK_SECRET — Stripe webhook signature verification
+#   STRIPE_PRICE_ID      — the $2/month price
+#
+# Non-secret defaults can also live under [vars] block if needed.

@@ -5,6 +5,7 @@ import { desc, eq, lt } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/neon-http";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { createAuth } from "./auth.js";
 
 export { ChannelDO } from "./channel-do.js";
 
@@ -13,6 +14,15 @@ export interface Env {
 	CHANNEL: DurableObjectNamespace;
 	/** Optional: KV namespace for rate-limit counters. Falls back to no-op if absent. */
 	RATE_LIMIT?: KVNamespace;
+	/** Auth — when unset, relay runs in self-host mode (no auth, no /auth/** routes). */
+	BETTER_AUTH_SECRET?: string;
+	BETTER_AUTH_URL?: string;
+	AUTH_COOKIE_DOMAIN?: string;
+	AUTH_TRUSTED_ORIGINS?: string;
+	RESEND_API_KEY?: string;
+	MAIL_FROM?: string;
+	/** Self-host: auto-attach all channels to this user id (or auto-created self-host user). */
+	SELF_HOST_USER_ID?: string;
 }
 
 // ── Limits ─────────────────────────────────────────────────────────────────
@@ -270,6 +280,12 @@ async function verifyBearer(
 type AppEnv = { Bindings: Env };
 const app = new Hono<AppEnv>();
 
+/**
+ * CORS with credentials. When the request carries an Origin header, echo it
+ * back specifically (NOT `*`) and set Allow-Credentials so the browser sends
+ * the Better-Auth session cookie. This is required for cross-subdomain
+ * relay/<→/app calls; same-origin still works.
+ */
 app.use(
 	"*",
 	cors({
@@ -277,13 +293,23 @@ app.use(
 		allowMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
 		allowHeaders: ["Content-Type", "Authorization", "X-BH-Timestamp", "X-BH-Signature"],
 		maxAge: 86400,
-		credentials: false,
+		credentials: true,
 	}),
 );
 
 app.onError((err, c) => {
 	console.error("Relay error:", err);
 	return c.json({ error: "Internal Server Error" }, 500);
+});
+
+// ── Better-Auth mount ─────────────────────────────────────────────────────
+// Mounted only when BETTER_AUTH_SECRET is set. Self-hosters who haven't
+// configured auth get 404s on /auth/** routes — the web client probes
+// /api/config first to know whether to render auth UI.
+app.all("/auth/*", async (c) => {
+	const auth = createAuth(c.env);
+	if (!auth) return c.json({ error: "Auth not configured" }, 404);
+	return auth.handler(c.req.raw);
 });
 
 // ── Health ──
