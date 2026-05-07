@@ -1,3 +1,6 @@
+import { TRIAL_DAYS } from "@bridgehook/shared";
+import { account, session, user, verification } from "@bridgehook/shared/db/schema";
+import { neon } from "@neondatabase/serverless";
 /**
  * Better-Auth factory.
  *
@@ -14,11 +17,8 @@ import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { magicLink } from "better-auth/plugins";
 import { drizzle } from "drizzle-orm/neon-http";
-import { neon } from "@neondatabase/serverless";
-import { account, session, user, verification } from "@bridgehook/shared/db/schema";
-import { addDays } from "./time.js";
 import { pickMailer } from "./email.js";
-import { TRIAL_DAYS } from "@bridgehook/shared";
+import { addDays } from "./time.js";
 
 export interface AuthEnv {
 	DATABASE_URL: string;

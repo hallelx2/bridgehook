@@ -51,10 +51,12 @@ export class ResendMailer implements BridgeMailer {
  * they can paste the link from logs into the browser themselves.
  */
 export class ConsoleMailer implements BridgeMailer {
-	async sendMagicLink({ to, url, expiresInMinutes }: { to: string; url: string; expiresInMinutes: number }): Promise<void> {
-		console.log(
-			`[mailer] magic-link for ${to} (expires in ${expiresInMinutes}m):\n  ${url}`,
-		);
+	async sendMagicLink({
+		to,
+		url,
+		expiresInMinutes,
+	}: { to: string; url: string; expiresInMinutes: number }): Promise<void> {
+		console.log(`[mailer] magic-link for ${to} (expires in ${expiresInMinutes}m):\n  ${url}`);
 	}
 }
 

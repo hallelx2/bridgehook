@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import {
 	boolean,
 	check,
@@ -9,7 +10,6 @@ import {
 	uniqueIndex,
 	varchar,
 } from "drizzle-orm/pg-core";
-import { sql } from "drizzle-orm";
 import { user } from "./auth-schema.js";
 
 export * from "./auth-schema.js";

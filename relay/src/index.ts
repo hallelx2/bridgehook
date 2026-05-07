@@ -10,7 +10,8 @@ import { desc, eq, lt } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/neon-http";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { createAuth } from "./auth.js";
+import { createAuth, getSessionUser } from "./auth.js";
+import { getOrCreateSelfHostUser, resolveCaller, touchDevice } from "./identity.js";
 
 export { ChannelDO } from "./channel-do.js";
 
@@ -338,12 +339,41 @@ app.get("/api/config", (c) => {
 });
 
 // ── Create channel ──
+// In hosted mode (BETTER_AUTH_SECRET set), requires either a Better-Auth
+// session cookie OR a device-token Bearer header. Anonymous creates return
+// 401. The legacy bearer (secretHash) scheme is rejected at this endpoint;
+// existing channels with secretHash continue to verify on per-channel ops.
+//
+// In self-host mode (BETTER_AUTH_SECRET unset), all creates resolve to the
+// implicit SELF_HOST_USER_ID user (or auto-created self-host@local).
 app.post("/api/channels", async (c) => {
 	const env = c.env;
 	const db = getDb(env);
+	const auth = createAuth(env);
 
 	if (!(await checkRateLimit(env, c.req.raw, "create"))) {
 		return c.json({ error: "Rate limit exceeded" }, 429);
+	}
+
+	// Resolve caller identity. In self-host mode, always succeeds with the
+	// implicit user. In hosted mode, returns 401 when no auth is provided.
+	let userId: string;
+	let deviceId: string | null = null;
+	if (auth) {
+		const caller = await resolveCaller(auth, db, c.req.raw);
+		if (!caller) {
+			return c.json(
+				{
+					error: "Authentication required. Sign in with the web app or pair a device first.",
+				},
+				401,
+			);
+		}
+		userId = caller.userId;
+		deviceId = caller.deviceId;
+		if (deviceId) await touchDevice(db, deviceId);
+	} else {
+		userId = await getOrCreateSelfHostUser(db, env);
 	}
 
 	const body = await safeReadJson<{
@@ -351,37 +381,41 @@ app.post("/api/channels", async (c) => {
 		secretHash?: unknown;
 		port?: unknown;
 		allowedPaths?: unknown;
+		label?: unknown;
 	}>(c.req.raw);
 
 	if (!body) return c.json({ error: "Invalid JSON body" }, 400);
 
-	let publicKey: string | null = null;
-	let secretHash: string | null = null;
-
-	if (typeof body.publicKey === "string" && body.publicKey.length > 0) {
-		if (!isHex(body.publicKey, PUBLIC_KEY_HEX_LEN)) {
-			return c.json({ error: "publicKey must be a 130-char hex string" }, 400);
-		}
-		try {
-			await crypto.subtle.importKey(
-				"raw",
-				fromHex(body.publicKey),
-				{ name: "ECDSA", namedCurve: "P-256" },
-				false,
-				["verify"],
-			);
-		} catch {
-			return c.json({ error: "publicKey is not a valid ECDSA P-256 point" }, 400);
-		}
-		publicKey = body.publicKey;
-	} else if (typeof body.secretHash === "string" && body.secretHash.length > 0) {
-		if (!isHex(body.secretHash, SECRET_HASH_HEX_LEN)) {
-			return c.json({ error: "secretHash must be 64-char hex (SHA-256)" }, 400);
-		}
-		secretHash = body.secretHash;
-	} else {
-		return c.json({ error: "Provide one of publicKey (recommended) or secretHash" }, 400);
+	// Reject the legacy bearer scheme on new creates. Per-channel verification
+	// still accepts secretHash for existing rows; a later commit drops the column.
+	if (typeof body.secretHash === "string" && body.secretHash.length > 0) {
+		return c.json(
+			{
+				error:
+					"The secretHash (legacy bearer) scheme is no longer accepted for new channels. Send publicKey (ECDSA P-256, 130 hex chars) instead.",
+			},
+			400,
+		);
 	}
+
+	if (typeof body.publicKey !== "string" || body.publicKey.length === 0) {
+		return c.json({ error: "publicKey is required (130-char ECDSA P-256 hex)" }, 400);
+	}
+	if (!isHex(body.publicKey, PUBLIC_KEY_HEX_LEN)) {
+		return c.json({ error: "publicKey must be a 130-char hex string" }, 400);
+	}
+	try {
+		await crypto.subtle.importKey(
+			"raw",
+			fromHex(body.publicKey),
+			{ name: "ECDSA", namedCurve: "P-256" },
+			false,
+			["verify"],
+		);
+	} catch {
+		return c.json({ error: "publicKey is not a valid ECDSA P-256 point" }, 400);
+	}
+	const publicKey = body.publicKey;
 
 	if (
 		typeof body.port !== "number" ||
@@ -394,23 +428,29 @@ app.post("/api/channels", async (c) => {
 
 	const allowedPaths = validateAllowedPaths(body.allowedPaths ?? []);
 	if (allowedPaths === null) {
-		return c.json(
-			{ error: "allowedPaths must be an array of path strings starting with /" },
-			400,
-		);
+		return c.json({ error: "allowedPaths must be an array of path strings starting with /" }, 400);
 	}
 
+	const label =
+		typeof body.label === "string" && body.label.trim().length > 0
+			? body.label.trim().slice(0, 64)
+			: null;
+
 	const channelId = crypto.randomUUID().replace(/-/g, "").slice(0, CHANNEL_ID_LEN);
-	const expiresAt = new Date(Date.now() + CHANNEL_EXPIRY_HOURS * 60 * 60 * 1000);
+	// Owned channels are perpetual; events are aged out by retention cron, not channel.
+	const expiresAt: Date | null = null;
 
 	const [channel] = await db
 		.insert(channels)
 		.values({
 			id: channelId,
 			publicKey,
-			secretHash,
+			secretHash: null,
 			port: body.port,
 			allowedPaths: JSON.stringify(allowedPaths),
+			userId,
+			deviceId,
+			label,
 			expiresAt,
 		})
 		.returning();
@@ -420,9 +460,12 @@ app.post("/api/channels", async (c) => {
 		{
 			channelId: channel.id,
 			port: channel.port,
+			label: channel.label,
+			userId: channel.userId,
+			deviceId: channel.deviceId,
 			expiresAt: channel.expiresAt?.toISOString() ?? null,
 			webhookUrl: `${url.origin}/hook/${channel.id}`,
-			authScheme: publicKey ? "ecdsa" : "bearer",
+			authScheme: "ecdsa",
 		},
 		201,
 	);
@@ -436,11 +479,7 @@ app.get("/api/channels/:channelId", async (c) => {
 	}
 	const db = getDb(c.env);
 
-	const [channel] = await db
-		.select()
-		.from(channels)
-		.where(eq(channels.id, channelId))
-		.limit(1);
+	const [channel] = await db.select().from(channels).where(eq(channels.id, channelId)).limit(1);
 
 	if (!channel) return c.json({ error: "Channel not found" }, 404);
 
@@ -456,7 +495,10 @@ app.get("/api/channels/:channelId", async (c) => {
 	});
 });
 
-// ── Channel delete (auth) ──
+// ── Channel delete (ECDSA OR session+owner) ──
+// Plugs the recovery hole: a signed-in user can nuke a channel they own
+// even if the channel's IDB private key is gone (different browser profile,
+// IDB cleared, etc.).
 app.delete("/api/channels/:channelId", async (c) => {
 	const channelId = c.req.param("channelId");
 	if (!/^[a-z0-9]{1,24}$/.test(channelId)) {
@@ -464,13 +506,20 @@ app.delete("/api/channels/:channelId", async (c) => {
 	}
 	const db = getDb(c.env);
 
-	const [channel] = await db
-		.select()
-		.from(channels)
-		.where(eq(channels.id, channelId))
-		.limit(1);
+	const [channel] = await db.select().from(channels).where(eq(channels.id, channelId)).limit(1);
 	if (!channel) return c.json({ error: "Channel not found" }, 404);
 
+	// Allow session-authenticated owner to delete without ECDSA (recovery path).
+	const auth = createAuth(c.env);
+	if (auth && channel.userId) {
+		const sessionUser = await getSessionUser(auth, c.req.raw);
+		if (sessionUser && sessionUser.id === channel.userId) {
+			await db.delete(channels).where(eq(channels.id, channelId));
+			return c.json({ deleted: true, via: "session" });
+		}
+	}
+
+	// Otherwise require ECDSA (or legacy bearer for old channels).
 	const cred = pickCredential(channel);
 	if (!cred) return c.json({ error: "Channel misconfigured" }, 500);
 
@@ -489,11 +538,7 @@ app.get("/api/channels/:channelId/events", async (c) => {
 	}
 	const db = getDb(c.env);
 
-	const [channel] = await db
-		.select()
-		.from(channels)
-		.where(eq(channels.id, channelId))
-		.limit(1);
+	const [channel] = await db.select().from(channels).where(eq(channels.id, channelId)).limit(1);
 	if (!channel) return c.json({ error: "Channel not found" }, 404);
 
 	const cred = pickCredential(channel);
@@ -526,11 +571,7 @@ app.on(["POST", "PUT", "PATCH"], "/hook/:channelId", async (c) => {
 		return c.json({ error: "Body too large" }, 413);
 	}
 
-	const [channel] = await db
-		.select()
-		.from(channels)
-		.where(eq(channels.id, channelId))
-		.limit(1);
+	const [channel] = await db.select().from(channels).where(eq(channels.id, channelId)).limit(1);
 	if (!channel) return c.json({ error: "Channel not found" }, 404);
 
 	const url = new URL(c.req.url);
@@ -594,11 +635,7 @@ app.post("/hook/:channelId/response", async (c) => {
 	}
 	const db = getDb(c.env);
 
-	const [channel] = await db
-		.select()
-		.from(channels)
-		.where(eq(channels.id, channelId))
-		.limit(1);
+	const [channel] = await db.select().from(channels).where(eq(channels.id, channelId)).limit(1);
 	if (!channel) return c.json({ error: "Channel not found" }, 404);
 
 	const cred = pickCredential(channel);
