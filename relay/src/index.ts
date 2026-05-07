@@ -734,27 +734,8 @@ export default {
 	},
 } satisfies ExportedHandler<Env>;
 
-// Re-exports kept for tests / future modules
-export {
-	getDb,
-	pickCredential,
-	verifyAndReadBody,
-	checkRateLimit,
-	isHex,
-	fromHex,
-	sha256Hex,
-	constantTimeEqual,
-	extractBearer,
-	validateAllowedPaths,
-	isPathAllowed,
-	parseLimit,
-	safeJsonParse,
-	getChannelDO,
-	PUBLIC_KEY_HEX_LEN,
-	SECRET_HASH_HEX_LEN,
-	SIGNATURE_HEX_LEN,
-	SIGNATURE_MAX_SKEW_MS,
-	CHANNEL_ID_LEN,
-	EVENT_ID_LEN,
-	MAX_HEADERS_BYTES,
-};
+// NOTE: do not add named exports here. Cloudflare Workers treats every
+// named export from the entry module as a binding and rejects values that
+// aren't functions / Durable Object classes. If helpers need to be reused
+// across modules, move them into a sibling file (e.g. ./lib.ts) and import
+// from there.
