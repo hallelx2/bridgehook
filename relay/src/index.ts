@@ -339,14 +339,18 @@ app.route(
 	}),
 );
 
-// ── /api/me/* (account read endpoints + channel management) ──────────────
+// ── /api/me/* (account read endpoints + channel management + replay) ────
 app.route(
 	"/api/me",
 	buildMeRoutes((c) => {
 		const env = (c as { env: Env }).env;
 		const auth = createAuth(env);
 		if (!auth) return null;
-		return { auth, db: getDb(env) };
+		return {
+			auth,
+			db: getDb(env),
+			notifier: { getChannelDO: (channelId: string) => getChannelDO(env, channelId) },
+		};
 	}),
 );
 

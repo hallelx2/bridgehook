@@ -34,11 +34,25 @@ const PUBLIC_KEY_HEX_LEN = 130;
 const HEX_RE = /^[0-9a-f]+$/i;
 const MAX_FEED_LIMIT = 100;
 const DEFAULT_FEED_LIMIT = 50;
+const EVENT_ID_LEN = 16;
+const MAX_REPLAY_BODY_BYTES = 1_048_576; // 1 MB
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Channel DO accessor — same shape as in index.ts. Replay needs to notify
+ * the DO so any SSE subscriber wakes immediately rather than waiting for
+ * the next 2-second poll cycle.
+ */
+export interface ChannelNotifier {
+	getChannelDO(channelId: string): {
+		fetch(req: Request): Promise<Response>;
+	};
+}
 
 export interface MeEnv {
 	auth: Auth;
 	db: DB;
+	notifier: ChannelNotifier;
 }
 
 export function buildMeRoutes(getDeps: (c: { env: unknown }) => MeEnv | null) {
@@ -401,6 +415,215 @@ export function buildMeRoutes(getDeps: (c: { env: unknown }) => MeEnv | null) {
 		});
 	});
 
+	// ── GET /api/me/events/:id ─────────────────────────────────────────────
+	// Single event detail: full headers/body for both request and response,
+	// plus `replays` (children that point at this id) and `original` (the
+	// parent if this is itself a replay). One level of chain depth — UI
+	// renders the recursion by drilling into a child via its own URL.
+	app.get("/events/:eventId", async (c) => {
+		const deps = getDeps(c);
+		if (!deps) return c.json({ error: "Auth not configured" }, 404);
+
+		const sessionUser = await getSessionUser(deps.auth, c.req.raw);
+		if (!sessionUser) return c.json({ error: "Not signed in" }, 401);
+
+		const eventId = c.req.param("eventId");
+		if (!/^[a-z0-9]{1,32}$/.test(eventId)) {
+			return c.json({ error: "Event not found" }, 404);
+		}
+
+		const evt = await loadOwnedEvent(deps.db, sessionUser.id, eventId);
+		if (!evt) return c.json({ error: "Event not found" }, 404);
+
+		// Children: events whose replay_of points at this one.
+		const children = await deps.db
+			.select({
+				id: events.id,
+				method: events.method,
+				path: events.path,
+				responseStatus: events.responseStatus,
+				latencyMs: events.latencyMs,
+				kind: events.kind,
+				deviceId: events.deviceId,
+				replayedByUserId: events.replayedByUserId,
+				receivedAt: events.receivedAt,
+				error: events.error,
+			})
+			.from(events)
+			.where(eq(events.replayOf, eventId))
+			.orderBy(desc(events.receivedAt));
+
+		// Original (if this is a replay): the source it points at.
+		let original: { id: string; receivedAt: string; method: string; path: string } | null = null;
+		if (evt.replayOf) {
+			const [src] = await deps.db
+				.select({
+					id: events.id,
+					method: events.method,
+					path: events.path,
+					receivedAt: events.receivedAt,
+				})
+				.from(events)
+				.where(eq(events.id, evt.replayOf))
+				.limit(1);
+			if (src) {
+				original = {
+					id: src.id,
+					method: src.method,
+					path: src.path,
+					receivedAt: src.receivedAt.toISOString(),
+				};
+			}
+		}
+
+		return c.json({
+			event: serializeEventDetail(evt),
+			replays: children.map((r) => ({
+				id: r.id,
+				method: r.method,
+				path: r.path,
+				responseStatus: r.responseStatus,
+				latencyMs: r.latencyMs,
+				kind: r.kind,
+				deviceId: r.deviceId,
+				replayedByUserId: r.replayedByUserId,
+				receivedAt: r.receivedAt.toISOString(),
+				error: r.error,
+			})),
+			original,
+		});
+	});
+
+	// ── POST /api/me/events/:id/replay ─────────────────────────────────────
+	// Queue a synthetic replay event. Inserts a new pending row on the same
+	// channel; the executor picks it up on its next poll, forwards to
+	// localhost, and reports back via POST /hook/:id/response.
+	app.post("/events/:eventId/replay", async (c) => {
+		const deps = getDeps(c);
+		if (!deps) return c.json({ error: "Auth not configured" }, 404);
+
+		const sessionUser = await getSessionUser(deps.auth, c.req.raw);
+		if (!sessionUser) return c.json({ error: "Not signed in" }, 401);
+
+		const eventId = c.req.param("eventId");
+		if (!/^[a-z0-9]{1,32}$/.test(eventId)) {
+			return c.json({ error: "Event not found" }, 404);
+		}
+
+		const source = await loadOwnedEvent(deps.db, sessionUser.id, eventId);
+		if (!source) return c.json({ error: "Event not found" }, 404);
+
+		const body = await c.req.json().catch(() => ({}));
+		const edits = (body ?? {}) as { body?: unknown; headers?: unknown };
+
+		// Body: optional override; otherwise reuse the source's body.
+		let nextBody: string | null;
+		if (edits.body === undefined || edits.body === null) {
+			nextBody = source.requestBody;
+		} else if (typeof edits.body === "string") {
+			if (edits.body.length > MAX_REPLAY_BODY_BYTES) {
+				return c.json({ error: "Body too large" }, 413);
+			}
+			nextBody = edits.body;
+		} else {
+			return c.json({ error: "body must be a string or null" }, 400);
+		}
+
+		// Headers: optional override; sanitize to a flat string→string map.
+		let nextHeaders: Record<string, string>;
+		if (edits.headers === undefined || edits.headers === null) {
+			nextHeaders = safeJsonObject(source.requestHeaders);
+		} else if (
+			edits.headers &&
+			typeof edits.headers === "object" &&
+			!Array.isArray(edits.headers)
+		) {
+			nextHeaders = {};
+			for (const [k, v] of Object.entries(edits.headers as Record<string, unknown>)) {
+				if (typeof k === "string" && typeof v === "string") {
+					nextHeaders[k] = v;
+				}
+			}
+		} else {
+			return c.json({ error: "headers must be an object or null" }, 400);
+		}
+
+		const replayId = freshEventId();
+		const [inserted] = await deps.db
+			.insert(events)
+			.values({
+				id: replayId,
+				channelId: source.channelId,
+				method: source.method,
+				path: source.path,
+				requestHeaders: JSON.stringify(nextHeaders),
+				requestBody: nextBody,
+				kind: "replay",
+				replayOf: source.id,
+				replayedByUserId: sessionUser.id,
+			})
+			.returning();
+		if (!inserted) {
+			return c.json({ error: "Could not queue replay" }, 500);
+		}
+
+		// Wake any SSE subscribers immediately. Best-effort — extension still
+		// catches it on its next 2s poll if the DO notify fails.
+		const ssePayload = JSON.stringify({
+			type: "webhook",
+			id: inserted.id,
+			channelId: source.channelId,
+			method: inserted.method,
+			path: inserted.path,
+			headers: nextHeaders,
+			body: nextBody ?? "",
+			receivedAt: inserted.receivedAt.toISOString(),
+			kind: "replay",
+			replayOf: source.id,
+		});
+		const stub = deps.notifier.getChannelDO(source.channelId);
+		stub
+			.fetch(new Request("https://do/notify", { method: "POST", body: ssePayload }))
+			.catch((err) => console.error("DO notify failed:", err));
+
+		return c.json({
+			replayId: inserted.id,
+			channelId: inserted.channelId,
+			receivedAt: inserted.receivedAt.toISOString(),
+		});
+	});
+
+	// ── DELETE /api/me/events/:id ──────────────────────────────────────────
+	// Cancel a queued replay. Only allowed for kind='replay' rows that have
+	// not yet been answered by an executor (responseStatus IS NULL).
+	app.delete("/events/:eventId", async (c) => {
+		const deps = getDeps(c);
+		if (!deps) return c.json({ error: "Auth not configured" }, 404);
+
+		const sessionUser = await getSessionUser(deps.auth, c.req.raw);
+		if (!sessionUser) return c.json({ error: "Not signed in" }, 401);
+
+		const eventId = c.req.param("eventId");
+		if (!/^[a-z0-9]{1,32}$/.test(eventId)) {
+			return c.json({ error: "Event not found" }, 404);
+		}
+
+		const evt = await loadOwnedEvent(deps.db, sessionUser.id, eventId);
+		if (!evt) return c.json({ error: "Event not found" }, 404);
+		if (evt.kind !== "replay") {
+			return c.json(
+				{ error: "Only replay events can be cancelled. Live events are immutable." },
+				400,
+			);
+		}
+		if (evt.responseStatus !== null) {
+			return c.json({ error: "Replay has already completed" }, 409);
+		}
+
+		await deps.db.delete(events).where(eq(events.id, eventId));
+		return c.json({ deleted: true });
+	});
+
 	return app;
 }
 
@@ -510,4 +733,75 @@ function hexToBytes(hex: string): Uint8Array<ArrayBuffer> {
 		out[i] = Number.parseInt(hex.substr(i * 2, 2), 16);
 	}
 	return out;
+}
+
+function safeJsonObject(raw: string | null): Record<string, string> {
+	if (!raw) return {};
+	try {
+		const v = JSON.parse(raw);
+		if (!v || typeof v !== "object" || Array.isArray(v)) return {};
+		const out: Record<string, string> = {};
+		for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+			if (typeof val === "string") out[k] = val;
+		}
+		return out;
+	} catch {
+		return {};
+	}
+}
+
+function freshEventId(): string {
+	return crypto.randomUUID().replace(/-/g, "").slice(0, EVENT_ID_LEN);
+}
+
+/**
+ * Ownership-gated event load. Joins channels to verify the user owns the
+ * event's channel; returns null otherwise.
+ */
+async function loadOwnedEvent(db: DB, userId: string, eventId: string) {
+	const [row] = await db
+		.select({
+			id: events.id,
+			channelId: events.channelId,
+			method: events.method,
+			path: events.path,
+			requestHeaders: events.requestHeaders,
+			requestBody: events.requestBody,
+			responseStatus: events.responseStatus,
+			responseHeaders: events.responseHeaders,
+			responseBody: events.responseBody,
+			latencyMs: events.latencyMs,
+			error: events.error,
+			receivedAt: events.receivedAt,
+			kind: events.kind,
+			replayOf: events.replayOf,
+			replayedByUserId: events.replayedByUserId,
+			deviceId: events.deviceId,
+		})
+		.from(events)
+		.innerJoin(channels, eq(events.channelId, channels.id))
+		.where(and(eq(events.id, eventId), eq(channels.userId, userId)))
+		.limit(1);
+	return row ?? null;
+}
+
+function serializeEventDetail(r: NonNullable<Awaited<ReturnType<typeof loadOwnedEvent>>>) {
+	return {
+		id: r.id,
+		channelId: r.channelId,
+		method: r.method,
+		path: r.path,
+		requestHeaders: safeJsonObject(r.requestHeaders),
+		requestBody: r.requestBody,
+		responseStatus: r.responseStatus,
+		responseHeaders: r.responseHeaders ? safeJsonObject(r.responseHeaders) : null,
+		responseBody: r.responseBody,
+		latencyMs: r.latencyMs,
+		error: r.error,
+		receivedAt: r.receivedAt.toISOString(),
+		kind: r.kind,
+		replayOf: r.replayOf,
+		replayedByUserId: r.replayedByUserId,
+		deviceId: r.deviceId,
+	};
 }
