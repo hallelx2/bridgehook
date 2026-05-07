@@ -3,6 +3,8 @@ import { events, channels } from "@bridgehook/shared/db/schema";
 import { neon } from "@neondatabase/serverless";
 import { desc, eq, lt } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/neon-http";
+import { Hono } from "hono";
+import { cors } from "hono/cors";
 
 export { ChannelDO } from "./channel-do.js";
 
@@ -31,7 +33,7 @@ const SIGNATURE_MAX_SKEW_MS = 60_000;
 
 // ── Rate limit ────────────────────────────────────────────────────────────
 const RATE_LIMIT_WINDOW_SEC = 60;
-const RATE_LIMIT_MAX_PER_IP = 10; // channels per minute per IP
+const RATE_LIMIT_MAX_PER_IP = 10;
 
 // ── Cached DB connection ──────────────────────────────────────────────────
 type DB = ReturnType<typeof drizzle>;
@@ -44,26 +46,6 @@ function getDb(env: Env): DB {
 	cachedDb = drizzle(sql);
 	cachedDbUrl = env.DATABASE_URL;
 	return cachedDb;
-}
-
-// ── CORS ──────────────────────────────────────────────────────────────────
-function corsHeaders(origin?: string): Record<string, string> {
-	return {
-		"Access-Control-Allow-Origin": origin || "*",
-		"Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
-		"Access-Control-Allow-Headers": "Content-Type, Authorization, X-BH-Timestamp, X-BH-Signature",
-		"Access-Control-Max-Age": "86400",
-	};
-}
-
-function json(data: unknown, status = 200, origin?: string): Response {
-	return new Response(JSON.stringify(data), {
-		status,
-		headers: {
-			"Content-Type": "application/json",
-			...corsHeaders(origin),
-		},
-	});
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────
@@ -111,7 +93,6 @@ function isHex(s: string, len?: number): boolean {
 	return /^[0-9a-f]+$/i.test(s);
 }
 
-/** Constant-time string compare. Both must be the same length. */
 function constantTimeEqual(a: string, b: string): boolean {
 	if (a.length !== b.length) return false;
 	let mismatch = 0;
@@ -160,13 +141,8 @@ function parseLimit(raw: string | null): number {
 }
 
 // ── Rate limiting (KV-backed) ─────────────────────────────────────────────
-/**
- * Per-IP token bucket on Cloudflare KV. Returns true if the request should be
- * allowed, false if rate-limited. If KV is unavailable (no binding), always
- * allows — rate limiting is best-effort, not a security boundary on its own.
- */
 async function checkRateLimit(env: Env, request: Request, key: string): Promise<boolean> {
-	if (!env.RATE_LIMIT) return true; // KV not configured — soft-fail
+	if (!env.RATE_LIMIT) return true;
 	const ip =
 		request.headers.get("CF-Connecting-IP") ||
 		request.headers.get("X-Forwarded-For")?.split(",")[0]?.trim() ||
@@ -177,14 +153,13 @@ async function checkRateLimit(env: Env, request: Request, key: string): Promise<
 		const current = await env.RATE_LIMIT.get(bucket);
 		const count = current ? Number.parseInt(current, 10) : 0;
 		if (count >= RATE_LIMIT_MAX_PER_IP) return false;
-		// KV writes have ~60s consistency lag, but for "max N per minute" that's fine.
 		await env.RATE_LIMIT.put(bucket, String(count + 1), {
 			expirationTtl: RATE_LIMIT_WINDOW_SEC,
 		});
 		return true;
 	} catch (err) {
 		console.error("Rate limit KV error:", err);
-		return true; // soft-fail
+		return true;
 	}
 }
 
@@ -202,46 +177,40 @@ function pickCredential(channel: {
 	return null;
 }
 
-/**
- * Verify a request and return the body string (already consumed). Caller can
- * then parse JSON if needed without re-reading.
- */
 async function verifyAndReadBody(
 	request: Request,
 	cred: AuthCredential,
-	origin: string | undefined,
-): Promise<{ ok: true; body: string } | { ok: false; response: Response }> {
+): Promise<{ ok: true; body: string } | { ok: false; status: number; error: string }> {
 	if (cred.type === "ecdsa") {
-		return verifyEcdsa(request, cred.publicKeyHex, origin);
+		return verifyEcdsa(request, cred.publicKeyHex);
 	}
-	return verifyBearer(request, cred.secretHash, origin);
+	return verifyBearer(request, cred.secretHash);
 }
 
 async function verifyEcdsa(
 	request: Request,
 	publicKeyHex: string,
-	origin: string | undefined,
-): Promise<{ ok: true; body: string } | { ok: false; response: Response }> {
+): Promise<{ ok: true; body: string } | { ok: false; status: number; error: string }> {
 	const timestamp = request.headers.get("X-BH-Timestamp");
 	const signatureHex = request.headers.get("X-BH-Signature");
 
 	if (!timestamp || !signatureHex) {
-		return { ok: false, response: json({ error: "Missing signature" }, 401, origin) };
+		return { ok: false, status: 401, error: "Missing signature" };
 	}
 	if (!isHex(signatureHex, SIGNATURE_HEX_LEN)) {
-		return { ok: false, response: json({ error: "Invalid signature format" }, 401, origin) };
+		return { ok: false, status: 401, error: "Invalid signature format" };
 	}
 
 	const ts = Number(timestamp);
 	if (!Number.isFinite(ts)) {
-		return { ok: false, response: json({ error: "Invalid timestamp" }, 401, origin) };
+		return { ok: false, status: 401, error: "Invalid timestamp" };
 	}
 	if (Math.abs(Date.now() - ts) > SIGNATURE_MAX_SKEW_MS) {
-		return { ok: false, response: json({ error: "Timestamp outside window" }, 401, origin) };
+		return { ok: false, status: 401, error: "Timestamp outside window" };
 	}
 
 	if (!isHex(publicKeyHex, PUBLIC_KEY_HEX_LEN)) {
-		return { ok: false, response: json({ error: "Channel misconfigured" }, 500, origin) };
+		return { ok: false, status: 500, error: "Channel misconfigured" };
 	}
 
 	const body = await request.text();
@@ -256,7 +225,7 @@ async function verifyEcdsa(
 			["verify"],
 		);
 	} catch {
-		return { ok: false, response: json({ error: "Channel misconfigured" }, 500, origin) };
+		return { ok: false, status: 500, error: "Channel misconfigured" };
 	}
 
 	const url = new URL(request.url);
@@ -275,7 +244,7 @@ async function verifyEcdsa(
 	}
 
 	if (!verified) {
-		return { ok: false, response: json({ error: "Invalid signature" }, 401, origin) };
+		return { ok: false, status: 401, error: "Invalid signature" };
 	}
 
 	return { ok: true, body };
@@ -284,27 +253,382 @@ async function verifyEcdsa(
 async function verifyBearer(
 	request: Request,
 	storedHash: string,
-	origin: string | undefined,
-): Promise<{ ok: true; body: string } | { ok: false; response: Response }> {
+): Promise<{ ok: true; body: string } | { ok: false; status: number; error: string }> {
 	const provided = extractBearer(request);
 	if (!provided) {
-		return { ok: false, response: json({ error: "Missing bearer token" }, 401, origin) };
+		return { ok: false, status: 401, error: "Missing bearer token" };
 	}
 	const providedHash = await sha256Hex(provided);
 	if (!constantTimeEqual(providedHash, storedHash)) {
-		return { ok: false, response: json({ error: "Invalid bearer token" }, 401, origin) };
+		return { ok: false, status: 401, error: "Invalid bearer token" };
 	}
 	const body = await request.text();
 	return { ok: true, body };
 }
 
-// ── Route regexes ─────────────────────────────────────────────────────────
-const RE_CHANNEL = /^\/api\/channels\/([a-z0-9]{1,24})$/;
-const RE_CHANNEL_EVENTS = /^\/api\/channels\/([a-z0-9]{1,24})\/events$/;
-const RE_HOOK_RESPONSE = /^\/hook\/([a-z0-9]{1,24})\/response$/;
-const RE_HOOK_RECEIVE = /^\/hook\/([a-z0-9]{1,24})$/;
+// ── Hono app ──────────────────────────────────────────────────────────────
+type AppEnv = { Bindings: Env };
+const app = new Hono<AppEnv>();
 
+app.use(
+	"*",
+	cors({
+		origin: (origin) => origin ?? "*",
+		allowMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+		allowHeaders: ["Content-Type", "Authorization", "X-BH-Timestamp", "X-BH-Signature"],
+		maxAge: 86400,
+		credentials: false,
+	}),
+);
+
+app.onError((err, c) => {
+	console.error("Relay error:", err);
+	return c.json({ error: "Internal Server Error" }, 500);
+});
+
+// ── Health ──
+app.get("/health", (c) => c.json({ status: "ok" }));
+
+// ── Create channel ──
+app.post("/api/channels", async (c) => {
+	const env = c.env;
+	const db = getDb(env);
+
+	if (!(await checkRateLimit(env, c.req.raw, "create"))) {
+		return c.json({ error: "Rate limit exceeded" }, 429);
+	}
+
+	const body = await safeReadJson<{
+		publicKey?: unknown;
+		secretHash?: unknown;
+		port?: unknown;
+		allowedPaths?: unknown;
+	}>(c.req.raw);
+
+	if (!body) return c.json({ error: "Invalid JSON body" }, 400);
+
+	let publicKey: string | null = null;
+	let secretHash: string | null = null;
+
+	if (typeof body.publicKey === "string" && body.publicKey.length > 0) {
+		if (!isHex(body.publicKey, PUBLIC_KEY_HEX_LEN)) {
+			return c.json({ error: "publicKey must be a 130-char hex string" }, 400);
+		}
+		try {
+			await crypto.subtle.importKey(
+				"raw",
+				fromHex(body.publicKey),
+				{ name: "ECDSA", namedCurve: "P-256" },
+				false,
+				["verify"],
+			);
+		} catch {
+			return c.json({ error: "publicKey is not a valid ECDSA P-256 point" }, 400);
+		}
+		publicKey = body.publicKey;
+	} else if (typeof body.secretHash === "string" && body.secretHash.length > 0) {
+		if (!isHex(body.secretHash, SECRET_HASH_HEX_LEN)) {
+			return c.json({ error: "secretHash must be 64-char hex (SHA-256)" }, 400);
+		}
+		secretHash = body.secretHash;
+	} else {
+		return c.json({ error: "Provide one of publicKey (recommended) or secretHash" }, 400);
+	}
+
+	if (
+		typeof body.port !== "number" ||
+		!Number.isInteger(body.port) ||
+		body.port < 1 ||
+		body.port > 65535
+	) {
+		return c.json({ error: "port must be an integer 1-65535" }, 400);
+	}
+
+	const allowedPaths = validateAllowedPaths(body.allowedPaths ?? []);
+	if (allowedPaths === null) {
+		return c.json(
+			{ error: "allowedPaths must be an array of path strings starting with /" },
+			400,
+		);
+	}
+
+	const channelId = crypto.randomUUID().replace(/-/g, "").slice(0, CHANNEL_ID_LEN);
+	const expiresAt = new Date(Date.now() + CHANNEL_EXPIRY_HOURS * 60 * 60 * 1000);
+
+	const [channel] = await db
+		.insert(channels)
+		.values({
+			id: channelId,
+			publicKey,
+			secretHash,
+			port: body.port,
+			allowedPaths: JSON.stringify(allowedPaths),
+			expiresAt,
+		})
+		.returning();
+
+	const url = new URL(c.req.url);
+	return c.json(
+		{
+			channelId: channel.id,
+			port: channel.port,
+			expiresAt: channel.expiresAt.toISOString(),
+			webhookUrl: `${url.origin}/hook/${channel.id}`,
+			authScheme: publicKey ? "ecdsa" : "bearer",
+		},
+		201,
+	);
+});
+
+// ── Channel info (public) ──
+app.get("/api/channels/:channelId", async (c) => {
+	const channelId = c.req.param("channelId");
+	if (!/^[a-z0-9]{1,24}$/.test(channelId)) {
+		return c.json({ error: "Channel not found" }, 404);
+	}
+	const db = getDb(c.env);
+
+	const [channel] = await db
+		.select()
+		.from(channels)
+		.where(eq(channels.id, channelId))
+		.limit(1);
+
+	if (!channel) return c.json({ error: "Channel not found" }, 404);
+
+	const url = new URL(c.req.url);
+	return c.json({
+		id: channel.id,
+		port: channel.port,
+		allowedPaths: safeJsonParse<string[]>(channel.allowedPaths, []),
+		createdAt: channel.createdAt.toISOString(),
+		expiresAt: channel.expiresAt.toISOString(),
+		webhookUrl: `${url.origin}/hook/${channel.id}`,
+		authScheme: channel.publicKey ? "ecdsa" : "bearer",
+	});
+});
+
+// ── Channel delete (auth) ──
+app.delete("/api/channels/:channelId", async (c) => {
+	const channelId = c.req.param("channelId");
+	if (!/^[a-z0-9]{1,24}$/.test(channelId)) {
+		return c.json({ error: "Channel not found" }, 404);
+	}
+	const db = getDb(c.env);
+
+	const [channel] = await db
+		.select()
+		.from(channels)
+		.where(eq(channels.id, channelId))
+		.limit(1);
+	if (!channel) return c.json({ error: "Channel not found" }, 404);
+
+	const cred = pickCredential(channel);
+	if (!cred) return c.json({ error: "Channel misconfigured" }, 500);
+
+	const verified = await verifyAndReadBody(c.req.raw, cred);
+	if (!verified.ok) return c.json({ error: verified.error }, verified.status as 401 | 500);
+
+	await db.delete(channels).where(eq(channels.id, channelId));
+	return c.json({ deleted: true });
+});
+
+// ── List events (auth) ──
+app.get("/api/channels/:channelId/events", async (c) => {
+	const channelId = c.req.param("channelId");
+	if (!/^[a-z0-9]{1,24}$/.test(channelId)) {
+		return c.json({ error: "Channel not found" }, 404);
+	}
+	const db = getDb(c.env);
+
+	const [channel] = await db
+		.select()
+		.from(channels)
+		.where(eq(channels.id, channelId))
+		.limit(1);
+	if (!channel) return c.json({ error: "Channel not found" }, 404);
+
+	const cred = pickCredential(channel);
+	if (!cred) return c.json({ error: "Channel misconfigured" }, 500);
+
+	const verified = await verifyAndReadBody(c.req.raw, cred);
+	if (!verified.ok) return c.json({ error: verified.error }, verified.status as 401 | 500);
+
+	const limit = parseLimit(c.req.query("limit") ?? null);
+	const rows = await db
+		.select()
+		.from(events)
+		.where(eq(events.channelId, channelId))
+		.orderBy(desc(events.receivedAt))
+		.limit(limit);
+
+	return c.json(rows);
+});
+
+// ── Receive webhook (public) ──
+app.on(["POST", "PUT", "PATCH"], "/hook/:channelId", async (c) => {
+	const channelId = c.req.param("channelId");
+	if (!/^[a-z0-9]{1,24}$/.test(channelId)) {
+		return c.json({ error: "Channel not found" }, 404);
+	}
+	const db = getDb(c.env);
+
+	const claimed = Number(c.req.header("content-length") || "0");
+	if (claimed > MAX_BODY_SIZE_BYTES) {
+		return c.json({ error: "Body too large" }, 413);
+	}
+
+	const [channel] = await db
+		.select()
+		.from(channels)
+		.where(eq(channels.id, channelId))
+		.limit(1);
+	if (!channel) return c.json({ error: "Channel not found" }, 404);
+
+	const url = new URL(c.req.url);
+	const allowedPaths = safeJsonParse<string[]>(channel.allowedPaths, []);
+	if (!isPathAllowed(url.pathname, allowedPaths)) {
+		return c.json({ error: "Path not allowed for this channel" }, 403);
+	}
+
+	const headers: Record<string, string> = {};
+	let headersBytes = 0;
+	c.req.raw.headers.forEach((value, key) => {
+		headersBytes += key.length + value.length + 4;
+		headers[key] = value;
+	});
+	if (headersBytes > MAX_HEADERS_BYTES) {
+		return c.json({ error: "Headers too large" }, 431);
+	}
+
+	const body = await c.req.raw.text();
+	if (body.length > MAX_BODY_SIZE_BYTES) {
+		return c.json({ error: "Body too large" }, 413);
+	}
+
+	const eventId = crypto.randomUUID().replace(/-/g, "").slice(0, EVENT_ID_LEN);
+	const [evt] = await db
+		.insert(events)
+		.values({
+			id: eventId,
+			channelId,
+			method: c.req.method,
+			path: url.pathname,
+			requestHeaders: JSON.stringify(headers),
+			requestBody: body || null,
+		})
+		.returning();
+
+	const ssePayload = JSON.stringify({
+		type: "webhook",
+		id: evt.id,
+		channelId,
+		method: evt.method,
+		path: evt.path,
+		headers,
+		body,
+		receivedAt: evt.receivedAt.toISOString(),
+	});
+
+	const stub = getChannelDO(c.env, channelId);
+	stub
+		.fetch(new Request("https://do/notify", { method: "POST", body: ssePayload }))
+		.catch((err) => console.error("DO notify failed:", err));
+
+	return c.json({ received: true, eventId: evt.id, channelId }, 202);
+});
+
+// ── Receive response from client (auth) ──
+app.post("/hook/:channelId/response", async (c) => {
+	const channelId = c.req.param("channelId");
+	if (!/^[a-z0-9]{1,24}$/.test(channelId)) {
+		return c.json({ error: "Channel not found" }, 404);
+	}
+	const db = getDb(c.env);
+
+	const [channel] = await db
+		.select()
+		.from(channels)
+		.where(eq(channels.id, channelId))
+		.limit(1);
+	if (!channel) return c.json({ error: "Channel not found" }, 404);
+
+	const cred = pickCredential(channel);
+	if (!cred) return c.json({ error: "Channel misconfigured" }, 500);
+
+	const verified = await verifyAndReadBody(c.req.raw, cred);
+	if (!verified.ok) return c.json({ error: verified.error }, verified.status as 401 | 500);
+
+	let raw: unknown;
+	try {
+		raw = JSON.parse(verified.body);
+	} catch {
+		return c.json({ error: "Invalid JSON body" }, 400);
+	}
+	if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+		return c.json({ error: "Invalid JSON body" }, 400);
+	}
+	const parsed = raw as {
+		eventId?: unknown;
+		status?: unknown;
+		headers?: unknown;
+		body?: unknown;
+		latencyMs?: unknown;
+	};
+
+	if (typeof parsed.eventId !== "string" || !/^[a-z0-9]{1,32}$/.test(parsed.eventId)) {
+		return c.json({ error: "Invalid eventId" }, 400);
+	}
+	if (
+		typeof parsed.status !== "number" ||
+		!Number.isInteger(parsed.status) ||
+		parsed.status < 0 ||
+		parsed.status >= 1000
+	) {
+		return c.json({ error: "Invalid status" }, 400);
+	}
+
+	const respHeaders =
+		parsed.headers && typeof parsed.headers === "object" && !Array.isArray(parsed.headers)
+			? (parsed.headers as Record<string, string>)
+			: {};
+	const respBody = typeof parsed.body === "string" ? parsed.body : "";
+	const latencyMs =
+		typeof parsed.latencyMs === "number" && Number.isFinite(parsed.latencyMs)
+			? Math.max(0, Math.round(parsed.latencyMs))
+			: 0;
+
+	await db
+		.update(events)
+		.set({
+			responseStatus: parsed.status,
+			responseHeaders: JSON.stringify(respHeaders),
+			responseBody: respBody,
+			latencyMs,
+		})
+		.where(eq(events.id, parsed.eventId));
+
+	const responsePayload = JSON.stringify({
+		type: "response",
+		eventId: parsed.eventId,
+		status: parsed.status,
+		latencyMs,
+	});
+
+	const stub = getChannelDO(c.env, channelId);
+	stub
+		.fetch(new Request("https://do/notify", { method: "POST", body: responsePayload }))
+		.catch((err) => console.error("DO notify failed:", err));
+
+	return c.json({ ok: true });
+});
+
+// ── Catch-all 404 ──
+app.notFound((c) => c.json({ error: "Not Found" }, 404));
+
+// ── Worker export ──
 export default {
+	fetch: app.fetch,
 	/**
 	 * Scheduled handler — wired to `crons` in wrangler.toml.
 	 * Deletes expired channels (and cascades their events) hourly.
@@ -312,9 +636,10 @@ export default {
 	async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
 		try {
 			const db = getDb(env);
-			const result = await db.delete(channels).where(lt(channels.expiresAt, new Date())).returning({
-				id: channels.id,
-			});
+			const result = await db
+				.delete(channels)
+				.where(lt(channels.expiresAt, new Date()))
+				.returning({ id: channels.id });
 			if (result.length > 0) {
 				console.log(`Cron cleanup: deleted ${result.length} expired channels`);
 			}
@@ -322,353 +647,29 @@ export default {
 			console.error("Cron cleanup failed:", err);
 		}
 	},
-
-	async fetch(request: Request, env: Env): Promise<Response> {
-		const url = new URL(request.url);
-		const path = url.pathname;
-		const origin = request.headers.get("Origin") || undefined;
-
-		if (request.method === "OPTIONS") {
-			return new Response(null, { status: 204, headers: corsHeaders(origin) });
-		}
-
-		try {
-			const db = getDb(env);
-
-			// ── Health ──
-			if (path === "/health") {
-				return json({ status: "ok" }, 200, origin);
-			}
-
-			// ── Create channel (rate-limited, accepts either credential) ──
-			if (path === "/api/channels" && request.method === "POST") {
-				if (!(await checkRateLimit(env, request, "create"))) {
-					return json({ error: "Rate limit exceeded" }, 429, origin);
-				}
-
-				const body = await safeReadJson<{
-					publicKey?: unknown;
-					secretHash?: unknown;
-					port?: unknown;
-					allowedPaths?: unknown;
-				}>(request);
-
-				if (!body) return json({ error: "Invalid JSON body" }, 400, origin);
-
-				// Choose auth scheme: prefer ECDSA when both somehow appear.
-				let publicKey: string | null = null;
-				let secretHash: string | null = null;
-
-				if (typeof body.publicKey === "string" && body.publicKey.length > 0) {
-					if (!isHex(body.publicKey, PUBLIC_KEY_HEX_LEN)) {
-						return json({ error: "publicKey must be a 130-char hex string" }, 400, origin);
-					}
-					try {
-						await crypto.subtle.importKey(
-							"raw",
-							fromHex(body.publicKey),
-							{ name: "ECDSA", namedCurve: "P-256" },
-							false,
-							["verify"],
-						);
-					} catch {
-						return json({ error: "publicKey is not a valid ECDSA P-256 point" }, 400, origin);
-					}
-					publicKey = body.publicKey;
-				} else if (typeof body.secretHash === "string" && body.secretHash.length > 0) {
-					if (!isHex(body.secretHash, SECRET_HASH_HEX_LEN)) {
-						return json({ error: "secretHash must be 64-char hex (SHA-256)" }, 400, origin);
-					}
-					secretHash = body.secretHash;
-				} else {
-					return json(
-						{ error: "Provide one of publicKey (recommended) or secretHash" },
-						400,
-						origin,
-					);
-				}
-
-				if (
-					typeof body.port !== "number" ||
-					!Number.isInteger(body.port) ||
-					body.port < 1 ||
-					body.port > 65535
-				) {
-					return json({ error: "port must be an integer 1-65535" }, 400, origin);
-				}
-
-				const allowedPaths = validateAllowedPaths(body.allowedPaths ?? []);
-				if (allowedPaths === null) {
-					return json(
-						{ error: "allowedPaths must be an array of path strings starting with /" },
-						400,
-						origin,
-					);
-				}
-
-				const channelId = crypto.randomUUID().replace(/-/g, "").slice(0, CHANNEL_ID_LEN);
-				const expiresAt = new Date(Date.now() + CHANNEL_EXPIRY_HOURS * 60 * 60 * 1000);
-
-				const [channel] = await db
-					.insert(channels)
-					.values({
-						id: channelId,
-						publicKey,
-						secretHash,
-						port: body.port,
-						allowedPaths: JSON.stringify(allowedPaths),
-						expiresAt,
-					})
-					.returning();
-
-				return json(
-					{
-						channelId: channel.id,
-						port: channel.port,
-						expiresAt: channel.expiresAt.toISOString(),
-						webhookUrl: `${url.origin}/hook/${channel.id}`,
-						authScheme: publicKey ? "ecdsa" : "bearer",
-					},
-					201,
-					origin,
-				);
-			}
-
-			// ── Channel info (public) / delete (auth) ──
-			{
-				const m = path.match(RE_CHANNEL);
-				if (m && request.method === "GET") {
-					const channelId = m[1];
-					const [channel] = await db
-						.select()
-						.from(channels)
-						.where(eq(channels.id, channelId))
-						.limit(1);
-
-					if (!channel) return json({ error: "Channel not found" }, 404, origin);
-
-					return json(
-						{
-							id: channel.id,
-							port: channel.port,
-							allowedPaths: safeJsonParse<string[]>(channel.allowedPaths, []),
-							createdAt: channel.createdAt.toISOString(),
-							expiresAt: channel.expiresAt.toISOString(),
-							webhookUrl: `${url.origin}/hook/${channel.id}`,
-							authScheme: channel.publicKey ? "ecdsa" : "bearer",
-						},
-						200,
-						origin,
-					);
-				}
-				if (m && request.method === "DELETE") {
-					const channelId = m[1];
-					const [channel] = await db
-						.select()
-						.from(channels)
-						.where(eq(channels.id, channelId))
-						.limit(1);
-					if (!channel) return json({ error: "Channel not found" }, 404, origin);
-
-					const cred = pickCredential(channel);
-					if (!cred) return json({ error: "Channel misconfigured" }, 500, origin);
-
-					const verified = await verifyAndReadBody(request, cred, origin);
-					if (!verified.ok) return verified.response;
-
-					await db.delete(channels).where(eq(channels.id, channelId));
-					return json({ deleted: true }, 200, origin);
-				}
-			}
-
-			// ── List events (auth) ──
-			{
-				const m = path.match(RE_CHANNEL_EVENTS);
-				if (m && request.method === "GET") {
-					const channelId = m[1];
-					const [channel] = await db
-						.select()
-						.from(channels)
-						.where(eq(channels.id, channelId))
-						.limit(1);
-					if (!channel) return json({ error: "Channel not found" }, 404, origin);
-
-					const cred = pickCredential(channel);
-					if (!cred) return json({ error: "Channel misconfigured" }, 500, origin);
-
-					const verified = await verifyAndReadBody(request, cred, origin);
-					if (!verified.ok) return verified.response;
-
-					const limit = parseLimit(url.searchParams.get("limit"));
-					const rows = await db
-						.select()
-						.from(events)
-						.where(eq(events.channelId, channelId))
-						.orderBy(desc(events.receivedAt))
-						.limit(limit);
-
-					return json(rows, 200, origin);
-				}
-			}
-
-			// ── Receive webhook (public) ──
-			{
-				const m = path.match(RE_HOOK_RECEIVE);
-				if (m && ["POST", "PUT", "PATCH"].includes(request.method)) {
-					const channelId = m[1];
-
-					const claimed = Number(request.headers.get("content-length") || "0");
-					if (claimed > MAX_BODY_SIZE_BYTES) {
-						return json({ error: "Body too large" }, 413, origin);
-					}
-
-					const [channel] = await db
-						.select()
-						.from(channels)
-						.where(eq(channels.id, channelId))
-						.limit(1);
-					if (!channel) return json({ error: "Channel not found" }, 404, origin);
-
-					const allowedPaths = safeJsonParse<string[]>(channel.allowedPaths, []);
-					if (!isPathAllowed(url.pathname, allowedPaths)) {
-						return json({ error: "Path not allowed for this channel" }, 403, origin);
-					}
-
-					const headers: Record<string, string> = {};
-					let headersBytes = 0;
-					request.headers.forEach((value, key) => {
-						headersBytes += key.length + value.length + 4;
-						headers[key] = value;
-					});
-					if (headersBytes > MAX_HEADERS_BYTES) {
-						return json({ error: "Headers too large" }, 431, origin);
-					}
-
-					const body = await request.text();
-					if (body.length > MAX_BODY_SIZE_BYTES) {
-						return json({ error: "Body too large" }, 413, origin);
-					}
-
-					const eventId = crypto.randomUUID().replace(/-/g, "").slice(0, EVENT_ID_LEN);
-					const [evt] = await db
-						.insert(events)
-						.values({
-							id: eventId,
-							channelId,
-							method: request.method,
-							path: url.pathname,
-							requestHeaders: JSON.stringify(headers),
-							requestBody: body || null,
-						})
-						.returning();
-
-					const ssePayload = JSON.stringify({
-						type: "webhook",
-						id: evt.id,
-						channelId,
-						method: evt.method,
-						path: evt.path,
-						headers,
-						body,
-						receivedAt: evt.receivedAt.toISOString(),
-					});
-
-					const stub = getChannelDO(env, channelId);
-					stub
-						.fetch(new Request("https://do/notify", { method: "POST", body: ssePayload }))
-						.catch((err) => console.error("DO notify failed:", err));
-
-					return json({ received: true, eventId: evt.id, channelId }, 202, origin);
-				}
-			}
-
-			// ── Receive response from client (auth) ──
-			{
-				const m = path.match(RE_HOOK_RESPONSE);
-				if (m && request.method === "POST") {
-					const channelId = m[1];
-					const [channel] = await db
-						.select()
-						.from(channels)
-						.where(eq(channels.id, channelId))
-						.limit(1);
-					if (!channel) return json({ error: "Channel not found" }, 404, origin);
-
-					const cred = pickCredential(channel);
-					if (!cred) return json({ error: "Channel misconfigured" }, 500, origin);
-
-					const verified = await verifyAndReadBody(request, cred, origin);
-					if (!verified.ok) return verified.response;
-
-					let raw: unknown;
-					try {
-						raw = JSON.parse(verified.body);
-					} catch {
-						return json({ error: "Invalid JSON body" }, 400, origin);
-					}
-					if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-						return json({ error: "Invalid JSON body" }, 400, origin);
-					}
-					const parsed = raw as {
-						eventId?: unknown;
-						status?: unknown;
-						headers?: unknown;
-						body?: unknown;
-						latencyMs?: unknown;
-					};
-
-					if (typeof parsed.eventId !== "string" || !/^[a-z0-9]{1,32}$/.test(parsed.eventId)) {
-						return json({ error: "Invalid eventId" }, 400, origin);
-					}
-					if (
-						typeof parsed.status !== "number" ||
-						!Number.isInteger(parsed.status) ||
-						parsed.status < 0 ||
-						parsed.status >= 1000
-					) {
-						return json({ error: "Invalid status" }, 400, origin);
-					}
-
-					const respHeaders =
-						parsed.headers && typeof parsed.headers === "object" && !Array.isArray(parsed.headers)
-							? (parsed.headers as Record<string, string>)
-							: {};
-					const respBody = typeof parsed.body === "string" ? parsed.body : "";
-					const latencyMs =
-						typeof parsed.latencyMs === "number" && Number.isFinite(parsed.latencyMs)
-							? Math.max(0, Math.round(parsed.latencyMs))
-							: 0;
-
-					await db
-						.update(events)
-						.set({
-							responseStatus: parsed.status,
-							responseHeaders: JSON.stringify(respHeaders),
-							responseBody: respBody,
-							latencyMs,
-						})
-						.where(eq(events.id, parsed.eventId));
-
-					const responsePayload = JSON.stringify({
-						type: "response",
-						eventId: parsed.eventId,
-						status: parsed.status,
-						latencyMs,
-					});
-
-					const stub = getChannelDO(env, channelId);
-					stub
-						.fetch(new Request("https://do/notify", { method: "POST", body: responsePayload }))
-						.catch((err) => console.error("DO notify failed:", err));
-
-					return json({ ok: true }, 200, origin);
-				}
-			}
-
-			return json({ error: "Not Found" }, 404, origin);
-		} catch (err) {
-			console.error("Relay error:", err);
-			return json({ error: "Internal Server Error" }, 500, origin);
-		}
-	},
 } satisfies ExportedHandler<Env>;
+
+// Re-exports kept for tests / future modules
+export {
+	getDb,
+	pickCredential,
+	verifyAndReadBody,
+	checkRateLimit,
+	isHex,
+	fromHex,
+	sha256Hex,
+	constantTimeEqual,
+	extractBearer,
+	validateAllowedPaths,
+	isPathAllowed,
+	parseLimit,
+	safeJsonParse,
+	getChannelDO,
+	PUBLIC_KEY_HEX_LEN,
+	SECRET_HASH_HEX_LEN,
+	SIGNATURE_HEX_LEN,
+	SIGNATURE_MAX_SKEW_MS,
+	CHANNEL_ID_LEN,
+	EVENT_ID_LEN,
+	MAX_HEADERS_BYTES,
+};

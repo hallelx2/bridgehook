@@ -167,6 +167,9 @@ importers:
       drizzle-orm:
         specifier: ^0.38.0
         version: 0.38.4(@cloudflare/workers-types@4.20260408.1)(@neondatabase/serverless@0.10.4)(@types/pg@8.11.6)(@types/react@19.2.14)(react@19.2.4)
+      hono:
+        specifier: ^4.12.18
+        version: 4.12.18
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20241230.0
@@ -1678,6 +1681,10 @@ packages:
   hasown@2.0.2:
     resolution: {integrity: sha512-0hJU9SCPvmMzIBdZFqNPXWa6dqh7WdH0cII9y+CyS8rG3nL48Bclra9HmKhVVUHyPWNH5Y7xDwAB7bfgSjkUMQ==}
     engines: {node: '>= 0.4'}
+
+  hono@4.12.18:
+    resolution: {integrity: sha512-RWzP96k/yv0PQfyXnWjs6zot20TqfpfsNXhOnev8d1InAxubW93L11/oNUc3tQqn2G0bSdAOBpX+2uDFHV7kdQ==}
+    engines: {node: '>=16.9.0'}
 
   is-arrayish@0.3.4:
     resolution: {integrity: sha512-m6UrgzFVUYawGBh1dUsWR5M2Clqic9RVXC/9f8ceNlv2IcO9j9J/z8UoCLPqtsPBFNzEpfR3xftohbfqDx8EQA==}
@@ -3263,6 +3270,8 @@ snapshots:
   hasown@2.0.2:
     dependencies:
       function-bind: 1.1.2
+
+  hono@4.12.18: {}
 
   is-arrayish@0.3.4:
     optional: true
