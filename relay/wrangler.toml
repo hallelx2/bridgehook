@@ -36,6 +36,8 @@ id = "647c7df6a0e64bf3882738057ad42f38"
 # Optional:
 #   AUTH_COOKIE_DOMAIN   — e.g. ".bridgehook.dev" for cross-subdomain cookies
 #   AUTH_TRUSTED_ORIGINS — comma-separated allowlist for Better-Auth CSRF
+#   WEB_URL              — base URL of the dashboard (e.g. https://app.bridgehook.dev),
+#                          used to build the verificationUrl during device pairing
 #   RESEND_API_KEY       — magic-link delivery (falls back to console mailer)
 #   MAIL_FROM            — sender address ("BridgeHook <noreply@bridgehook.dev>")
 #   SELF_HOST_USER_ID    — explicit single-user id for self-hosted instances

@@ -12,6 +12,8 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { createAuth, getSessionUser } from "./auth.js";
 import { getOrCreateSelfHostUser, resolveCaller, touchDevice } from "./identity.js";
+import { buildAuthDeviceRoutes, cleanupExpiredDeviceCodes } from "./routes/auth-device.js";
+import { buildMeDevicesRoutes } from "./routes/me-devices.js";
 
 export { ChannelDO } from "./channel-do.js";
 
@@ -27,6 +29,8 @@ export interface Env {
 	AUTH_TRUSTED_ORIGINS?: string;
 	RESEND_API_KEY?: string;
 	MAIL_FROM?: string;
+	/** Web app base URL — used to build verificationUrl in the device-pairing flow. */
+	WEB_URL?: string;
 	/** Self-host: auto-attach all channels to this user id (or auto-created self-host user). */
 	SELF_HOST_USER_ID?: string;
 }
@@ -311,7 +315,30 @@ app.onError((err, c) => {
 	return c.json({ error: "Internal Server Error" }, 500);
 });
 
-// ── Better-Auth mount ─────────────────────────────────────────────────────
+// ── Device pairing routes ─────────────────────────────────────────────────
+// Mounted before the catch-all /auth/* below so they take precedence.
+app.route(
+	"/auth/device",
+	buildAuthDeviceRoutes((c) => {
+		const env = (c as { env: Env }).env;
+		const auth = createAuth(env);
+		if (!auth || !env.WEB_URL) return null;
+		return { auth, db: getDb(env), webUrl: env.WEB_URL };
+	}),
+);
+
+// ── /api/me/devices ────────────────────────────────────────────────────────
+app.route(
+	"/api/me/devices",
+	buildMeDevicesRoutes((c) => {
+		const env = (c as { env: Env }).env;
+		const auth = createAuth(env);
+		if (!auth) return null;
+		return { auth, db: getDb(env) };
+	}),
+);
+
+// ── Better-Auth catch-all mount ───────────────────────────────────────────
 // Mounted only when BETTER_AUTH_SECRET is set. Self-hosters who haven't
 // configured auth get 404s on /auth/** routes — the web client probes
 // /api/config first to know whether to render auth UI.
@@ -721,12 +748,16 @@ export default {
 	async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
 		try {
 			const db = getDb(env);
-			const result = await db
+			const expired = await db
 				.delete(channels)
 				.where(lt(channels.expiresAt, new Date()))
 				.returning({ id: channels.id });
-			if (result.length > 0) {
-				console.log(`Cron cleanup: deleted ${result.length} expired channels`);
+			if (expired.length > 0) {
+				console.log(`Cron cleanup: deleted ${expired.length} expired channels`);
+			}
+			const codeCount = await cleanupExpiredDeviceCodes(db);
+			if (codeCount > 0) {
+				console.log(`Cron cleanup: deleted ${codeCount} expired device codes`);
 			}
 		} catch (err) {
 			console.error("Cron cleanup failed:", err);
