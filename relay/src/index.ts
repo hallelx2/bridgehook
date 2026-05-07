@@ -1,4 +1,9 @@
-import { CHANNEL_EXPIRY_HOURS, MAX_BODY_SIZE_BYTES, MAX_BUFFERED_EVENTS } from "@bridgehook/shared";
+import {
+	CHANNEL_EXPIRY_HOURS,
+	MAX_BODY_SIZE_BYTES,
+	MAX_BUFFERED_EVENTS,
+	TRIAL_DAYS,
+} from "@bridgehook/shared";
 import { events, channels } from "@bridgehook/shared/db/schema";
 import { neon } from "@neondatabase/serverless";
 import { desc, eq, lt } from "drizzle-orm";
@@ -24,6 +29,9 @@ export interface Env {
 	/** Self-host: auto-attach all channels to this user id (or auto-created self-host user). */
 	SELF_HOST_USER_ID?: string;
 }
+
+// ── Version ───────────────────────────────────────────────────────────────
+const RELAY_VERSION = "0.1.0";
 
 // ── Limits ─────────────────────────────────────────────────────────────────
 const CHANNEL_ID_LEN = 12;
@@ -314,6 +322,20 @@ app.all("/auth/*", async (c) => {
 
 // ── Health ──
 app.get("/health", (c) => c.json({ status: "ok" }));
+
+// ── Config probe (public, unauthenticated) ──
+// Web/extension call this once at startup to know whether the relay is
+// running in hosted (auth-enabled) or self-host (auth-disabled) mode and
+// gate UI affordances accordingly.
+app.get("/api/config", (c) => {
+	const authEnabled = Boolean(c.env.BETTER_AUTH_SECRET);
+	return c.json({
+		authEnabled,
+		signupEnabled: authEnabled,
+		trialDays: TRIAL_DAYS,
+		version: RELAY_VERSION,
+	});
+});
 
 // ── Create channel ──
 app.post("/api/channels", async (c) => {
