@@ -1,2 +1,28 @@
-export { channels, events } from "./schema.js";
-export type { ChannelRow, NewChannelRow, EventRow, NewEventRow } from "./schema.js";
+export {
+	channels,
+	events,
+	devices,
+	deviceCodes,
+	subscriptions,
+	user,
+	session,
+	account,
+	verification,
+} from "./schema.js";
+export type {
+	ChannelRow,
+	NewChannelRow,
+	EventRow,
+	NewEventRow,
+	DeviceRow,
+	NewDeviceRow,
+	DeviceCodeRow,
+	NewDeviceCodeRow,
+	SubscriptionRow,
+	NewSubscriptionRow,
+	UserRow,
+	NewUserRow,
+	SessionRow,
+	AccountRow,
+	VerificationRow,
+} from "./schema.js";

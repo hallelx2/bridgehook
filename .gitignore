@@ -29,8 +29,9 @@ Thumbs.db
 .dev.vars
 !.dev.vars.example
 
-# Drizzle
-relay/drizzle/
+# Drizzle — track migrations + meta journal so DB state is reproducible.
+# Studio cache (regenerated on demand) stays out of git.
+relay/drizzle/.cache/
 
 # Misc
 *.log

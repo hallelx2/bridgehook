@@ -372,7 +372,7 @@ app.post("/api/channels", async (c) => {
 		{
 			channelId: channel.id,
 			port: channel.port,
-			expiresAt: channel.expiresAt.toISOString(),
+			expiresAt: channel.expiresAt?.toISOString() ?? null,
 			webhookUrl: `${url.origin}/hook/${channel.id}`,
 			authScheme: publicKey ? "ecdsa" : "bearer",
 		},
@@ -402,7 +402,7 @@ app.get("/api/channels/:channelId", async (c) => {
 		port: channel.port,
 		allowedPaths: safeJsonParse<string[]>(channel.allowedPaths, []),
 		createdAt: channel.createdAt.toISOString(),
-		expiresAt: channel.expiresAt.toISOString(),
+		expiresAt: channel.expiresAt?.toISOString() ?? null,
 		webhookUrl: `${url.origin}/hook/${channel.id}`,
 		authScheme: channel.publicKey ? "ecdsa" : "bearer",
 	});

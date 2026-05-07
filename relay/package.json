@@ -14,12 +14,16 @@
 	"dependencies": {
 		"@bridgehook/shared": "workspace:*",
 		"@neondatabase/serverless": "^0.10.0",
-		"drizzle-orm": "^0.38.0",
-		"hono": "^4.12.18"
+		"better-auth": "^1.6.9",
+		"drizzle-orm": "^0.45.2",
+		"hono": "^4.12.18",
+		"nanoid": "^5.1.11",
+		"resend": "^6.12.3",
+		"stripe": "^22.1.1"
 	},
 	"devDependencies": {
 		"@cloudflare/workers-types": "^4.20241230.0",
-		"drizzle-kit": "^0.30.0",
+		"drizzle-kit": "^0.31.10",
 		"typescript": "^5.7.3",
 		"wrangler": "^3.99.0"
 	}
