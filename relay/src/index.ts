@@ -14,6 +14,7 @@ import { createAuth, getSessionUser } from "./auth.js";
 import { getOrCreateSelfHostUser, resolveCaller, touchDevice } from "./identity.js";
 import { buildAuthDeviceRoutes, cleanupExpiredDeviceCodes } from "./routes/auth-device.js";
 import { buildMeDevicesRoutes } from "./routes/me-devices.js";
+import { buildMeRoutes } from "./routes/me.js";
 
 export { ChannelDO } from "./channel-do.js";
 
@@ -331,6 +332,17 @@ app.route(
 app.route(
 	"/api/me/devices",
 	buildMeDevicesRoutes((c) => {
+		const env = (c as { env: Env }).env;
+		const auth = createAuth(env);
+		if (!auth) return null;
+		return { auth, db: getDb(env) };
+	}),
+);
+
+// ── /api/me/* (account read endpoints + channel management) ──────────────
+app.route(
+	"/api/me",
+	buildMeRoutes((c) => {
 		const env = (c as { env: Env }).env;
 		const auth = createAuth(env);
 		if (!auth) return null;
