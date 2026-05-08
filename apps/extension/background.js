@@ -22,6 +22,37 @@
 
 const RELAY_URL = "https://bridgehook-relay.halleluyaholudele.workers.dev";
 
+// ── Account state (chrome.storage.local) ─────────────────────────────
+//
+// When the user signs in via the device-flow, we store:
+//   { token: "dvc_...", deviceId: "dev_...", userId: "usr_...", email: "...", label: "..." }
+// under chrome.storage.local["bh_device_v1"]. The token travels as
+// Authorization: Bearer on POST /api/channels (channel ownership) and
+// the deviceId is sent in /hook/:id/response so the relay can attribute
+// which executor forwarded an event.
+//
+// Anonymous extension installs (no sign-in) work in self-host mode
+// only; against the hosted relay, channel creation will start failing
+// with 401 once the user has taken commit 5+ live. The popup nudges
+// them to sign in.
+
+const ACCOUNT_KEY = "bh_device_v1";
+
+async function getStoredAccount() {
+	const out = await chrome.storage.local.get([ACCOUNT_KEY]);
+	const raw = out[ACCOUNT_KEY];
+	if (!raw || typeof raw !== "object" || typeof raw.token !== "string") return null;
+	return raw;
+}
+
+async function storeAccount(account) {
+	await chrome.storage.local.set({ [ACCOUNT_KEY]: account });
+}
+
+async function clearAccount() {
+	await chrome.storage.local.remove([ACCOUNT_KEY]);
+}
+
 // ── State ────────────────────────────────────────────────────────────
 
 /** @type {Map<string, BridgeService>} Active bridges keyed by service ID */
@@ -175,9 +206,17 @@ async function createChannel(port, path) {
 	const publicKey = await generateChannelKey(tempId);
 
 	try {
+		// If the user has paired this extension to an account, send the device
+		// token. The relay stamps channels.user_id and channels.device_id on
+		// the new row. Self-host relays ignore the header; hosted relays will
+		// 401 without it.
+		const account = await getStoredAccount();
+		const headers = { "Content-Type": "application/json" };
+		if (account) headers.Authorization = `Bearer ${account.token}`;
+
 		const res = await fetch(`${RELAY_URL}/api/channels`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json" },
+			headers,
 			body: JSON.stringify({ publicKey, port, allowedPaths: [path] }),
 		});
 		if (!res.ok) {
@@ -206,18 +245,113 @@ async function fetchEvents(channelId, limit = 50) {
 }
 
 async function sendResponseToRelay(channelId, eventId, response) {
+	// deviceId is best-effort: when we're paired, attribute which device
+	// forwarded the event so the dashboard can show a device chip on rows.
+	// The relay ignores it on anonymous channels.
+	const account = await getStoredAccount();
 	const body = JSON.stringify({
 		eventId,
 		status: response.status,
 		headers: response.headers,
 		body: response.body,
 		latencyMs: response.latencyMs,
+		deviceId: account?.deviceId,
 	});
 	await signedFetch(channelId, `${RELAY_URL}/hook/${channelId}/response`, {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body,
 	});
+}
+
+// ── Device pairing flow ──────────────────────────────────────────────
+//
+// 1. POST /auth/device/start { kind: "extension", labelHint }
+//    → { deviceCode, verificationUrl, pollInterval, expiresIn }
+// 2. Open a tab to verificationUrl (web /connect?code=...)
+// 3. Poll POST /auth/device/exchange { code } every pollInterval seconds
+//    → 202 while pending, 200 with { token, deviceId, userId } once approved
+// 4. Persist to chrome.storage.local under bh_device_v1.
+
+async function connectAccount() {
+	// Build a friendly labelHint so the dashboard's device list shows a
+	// meaningful name without the user having to rename it.
+	const ua = (typeof navigator !== "undefined" && navigator.userAgent) || "Browser";
+	const browser = /Chrome/i.test(ua) ? "Chrome" : /Firefox/i.test(ua) ? "Firefox" : "Browser";
+	const os = /Mac OS X/i.test(ua)
+		? "macOS"
+		: /Windows/i.test(ua)
+			? "Windows"
+			: /Linux/i.test(ua)
+				? "Linux"
+				: "Unknown OS";
+	const labelHint = `${browser} on ${os}`;
+
+	const startRes = await fetch(`${RELAY_URL}/auth/device/start`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ kind: "extension", labelHint, userAgent: ua }),
+	});
+	if (!startRes.ok) {
+		const text = await startRes.text().catch(() => "");
+		throw new Error(`Device start failed (${startRes.status})${text ? `: ${text}` : ""}`);
+	}
+	const { deviceCode, verificationUrl, pollInterval, expiresIn } = await startRes.json();
+
+	// Open the approval page in a new tab. The user signs in on the web app
+	// (if not already), reviews, clicks Approve. Then we'll see status=approved
+	// on the next /exchange poll.
+	chrome.tabs.create({ url: verificationUrl });
+
+	const intervalMs = Math.max(2000, Number(pollInterval) * 1000 || 5000);
+	const deadline = Date.now() + Math.max(60_000, Number(expiresIn) * 1000 || 900_000);
+
+	while (Date.now() < deadline) {
+		await new Promise((r) => setTimeout(r, intervalMs));
+		const exRes = await fetch(`${RELAY_URL}/auth/device/exchange`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ code: deviceCode }),
+		});
+		if (exRes.status === 410) {
+			throw new Error("Pairing code expired or already used");
+		}
+		if (exRes.status === 202) continue;
+		if (!exRes.ok) {
+			const text = await exRes.text().catch(() => "");
+			throw new Error(`Device exchange failed (${exRes.status})${text ? `: ${text}` : ""}`);
+		}
+		const minted = await exRes.json();
+		if (minted.token && minted.deviceId && minted.userId) {
+			await storeAccount({
+				token: minted.token,
+				deviceId: minted.deviceId,
+				userId: minted.userId,
+				label: minted.label || labelHint,
+				kind: minted.kind || "extension",
+				connectedAt: new Date().toISOString(),
+			});
+			return minted;
+		}
+	}
+	throw new Error("Pairing timed out — try again");
+}
+
+async function disconnectAccount() {
+	await clearAccount();
+}
+
+async function getAccountStatus() {
+	const account = await getStoredAccount();
+	if (!account) return { connected: false };
+	return {
+		connected: true,
+		userId: account.userId,
+		deviceId: account.deviceId,
+		label: account.label,
+		kind: account.kind,
+		connectedAt: account.connectedAt,
+	};
 }
 
 // ── Forwarding ───────────────────────────────────────────────────────
@@ -531,6 +665,30 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 			case "auto_detect": {
 				const alive = await scanPorts();
 				sendResponse({ detected: alive, created: [] });
+				break;
+			}
+			case "get_account_status": {
+				const status = await getAccountStatus();
+				sendResponse(status);
+				break;
+			}
+			case "connect_account": {
+				try {
+					const minted = await connectAccount();
+					sendResponse({
+						ok: true,
+						deviceId: minted.deviceId,
+						userId: minted.userId,
+						label: minted.label,
+					});
+				} catch (err) {
+					sendResponse({ ok: false, error: err instanceof Error ? err.message : String(err) });
+				}
+				break;
+			}
+			case "disconnect_account": {
+				await disconnectAccount();
+				sendResponse({ ok: true });
 				break;
 			}
 			default:

@@ -16,6 +16,7 @@ const detectSection = document.getElementById("detect-section");
 const detectScanning = document.getElementById("detect-scanning");
 const detectResults = document.getElementById("detect-results");
 const toast = document.getElementById("toast");
+const accountBanner = document.getElementById("account-banner");
 
 // ── Render ───────────────────────────────────────────────────────────
 
@@ -70,6 +71,65 @@ function showToast(msg = "Copied!") {
 	toast.textContent = msg;
 	toast.classList.add("show");
 	setTimeout(() => toast.classList.remove("show"), 1500);
+}
+
+// ── Account banner (sign-in / signed-in chip) ────────────────────────
+
+function renderAccount(status) {
+	if (!accountBanner) return;
+	if (!status || !status.connected) {
+		accountBanner.style.display = "flex";
+		accountBanner.innerHTML = `
+			<span style="color:#a1a1aa;">Anonymous — sign in to sync across devices</span>
+			<button id="btn-connect" class="btn-new" style="font-size:11px;padding:4px 10px;">Sign in</button>
+		`;
+		document.getElementById("btn-connect")?.addEventListener("click", onConnect);
+		return;
+	}
+	accountBanner.style.display = "flex";
+	const label = escapeHtml(status.label || "device");
+	accountBanner.innerHTML = `
+		<span style="color:#a1a1aa;">
+			<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#22c55e;margin-right:6px;"></span>
+			Connected as <span style="color:#e4e4e7;">${label}</span>
+		</span>
+		<button id="btn-disconnect" class="btn" style="font-size:11px;padding:4px 10px;color:#a1a1aa;">Disconnect</button>
+	`;
+	document.getElementById("btn-disconnect")?.addEventListener("click", onDisconnect);
+}
+
+async function loadAccount() {
+	chrome.runtime.sendMessage({ type: "get_account_status" }, (status) => {
+		renderAccount(status);
+	});
+}
+
+async function onConnect() {
+	const btn = document.getElementById("btn-connect");
+	if (btn) {
+		btn.textContent = "Waiting…";
+		btn.disabled = true;
+	}
+	chrome.runtime.sendMessage({ type: "connect_account" }, (resp) => {
+		if (resp?.ok) {
+			showToast("Connected!");
+			loadAccount();
+		} else {
+			showToast(resp?.error || "Sign-in failed");
+			if (btn) {
+				btn.textContent = "Sign in";
+				btn.disabled = false;
+			}
+		}
+	});
+}
+
+async function onDisconnect() {
+	if (!confirm("Disconnect this device from your BridgeHook account?")) return;
+	chrome.runtime.sendMessage({ type: "disconnect_account" }, () => {
+		showToast("Disconnected");
+		loadAccount();
+	});
 }
 
 // ── Load Status (only re-render when data changes) ──────────────────
@@ -275,6 +335,9 @@ document.getElementById("f-path").addEventListener("keydown", (e) => {
 // ── Init ─────────────────────────────────────────────────────────────
 
 loadStatus();
+loadAccount();
 
 // Refresh every 5 seconds as a fallback (broadcastStatus pushes updates in real-time)
 setInterval(loadStatus, 5000);
+// Account status is more stable; refresh once a minute is plenty.
+setInterval(loadAccount, 60_000);
