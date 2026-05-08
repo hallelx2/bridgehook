@@ -16,6 +16,7 @@ import { ChannelsList } from "./pages/ChannelsList";
 import { Connect } from "./pages/Connect";
 import { DashboardHome } from "./pages/DashboardHome";
 import { DevicesList } from "./pages/DevicesList";
+import { EventDetail } from "./pages/EventDetail";
 import { EventsFeed } from "./pages/EventsFeed";
 import { Login } from "./pages/Login";
 import { LoginCheckEmail } from "./pages/LoginCheckEmail";
@@ -91,6 +92,14 @@ export function App() {
 					element={
 						<AuthGate>
 							<EventsFeed />
+						</AuthGate>
+					}
+				/>
+				<Route
+					path="/dashboard/events/:id"
+					element={
+						<AuthGate>
+							<EventDetail />
 						</AuthGate>
 					}
 				/>
