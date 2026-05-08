@@ -12,10 +12,14 @@ import { Footer } from "./components/Footer";
 import { Nav } from "./components/Nav";
 import { ScrollFlow } from "./components/ScrollFlow";
 import { AuthCallback } from "./pages/AuthCallback";
+import { ChannelsList } from "./pages/ChannelsList";
 import { Connect } from "./pages/Connect";
-import { Dashboard } from "./pages/Dashboard";
+import { DashboardHome } from "./pages/DashboardHome";
+import { DevicesList } from "./pages/DevicesList";
+import { EventsFeed } from "./pages/EventsFeed";
 import { Login } from "./pages/Login";
 import { LoginCheckEmail } from "./pages/LoginCheckEmail";
+import { Settings } from "./pages/Settings";
 
 function LandingPage() {
 	return (
@@ -78,11 +82,47 @@ export function App() {
 					path="/dashboard"
 					element={
 						<AuthGate>
-							<Dashboard />
+							<DashboardHome />
 						</AuthGate>
 					}
 				/>
-				{/* Catch-all → landing for now. /dashboard sub-routes land in commit 10. */}
+				<Route
+					path="/dashboard/events"
+					element={
+						<AuthGate>
+							<EventsFeed />
+						</AuthGate>
+					}
+				/>
+				<Route
+					path="/dashboard/channels"
+					element={
+						<AuthGate>
+							<ChannelsList />
+						</AuthGate>
+					}
+				/>
+				<Route
+					path="/dashboard/devices"
+					element={
+						<AuthGate>
+							<DevicesList />
+						</AuthGate>
+					}
+				/>
+				<Route
+					path="/dashboard/settings"
+					element={
+						<AuthGate>
+							<Settings />
+						</AuthGate>
+					}
+				/>
+				{/*
+					Event detail (/dashboard/events/:id) and channel detail
+					(/dashboard/channels/:id) land in commit 11 alongside replay UI.
+					Billing (/dashboard/billing) lands in commit 14.
+				*/}
 				<Route path="*" element={<Navigate to="/" replace />} />
 			</Routes>
 		</BrowserRouter>
