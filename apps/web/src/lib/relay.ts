@@ -85,6 +85,10 @@ export async function createChannel(port: number, allowedPaths: string[]): Promi
 		const res = await fetch(`${RELAY_URL}/api/channels`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
+			// credentials: "include" carries the Better-Auth session cookie cross-subdomain
+			// so the relay can stamp channels.user_id when the user is signed in.
+			// Self-host mode ignores this — the relay attaches to the implicit user.
+			credentials: "include",
 			body: JSON.stringify({ publicKey, port, allowedPaths }),
 		});
 
@@ -116,7 +120,9 @@ async function renameKey(fromId: string, toId: string): Promise<void> {
 
 // ── Get channel info (public — no auth needed) ────────────────────────────
 export async function getChannel(channelId: string): Promise<ChannelInfo | null> {
-	const res = await fetch(`${RELAY_URL}/api/channels/${encodeURIComponent(channelId)}`);
+	const res = await fetch(`${RELAY_URL}/api/channels/${encodeURIComponent(channelId)}`, {
+		credentials: "include",
+	});
 	if (res.status === 404) return null;
 	if (!res.ok) throw new Error(`Failed to get channel: ${res.status}`);
 	return res.json() as Promise<ChannelInfo>;

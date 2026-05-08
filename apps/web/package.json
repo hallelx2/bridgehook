@@ -11,9 +11,11 @@
 	},
 	"dependencies": {
 		"@bridgehook/shared": "workspace:*",
+		"better-auth": "^1.6.9",
 		"lucide-react": "^1.11.0",
 		"react": "^19.0.0",
-		"react-dom": "^19.0.0"
+		"react-dom": "^19.0.0",
+		"react-router-dom": "^7.15.0"
 	},
 	"devDependencies": {
 		"@types/react": "^19.0.0",
