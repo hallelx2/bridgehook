@@ -4,11 +4,18 @@ compatibility_date = "2025-01-01"
 compatibility_flags = ["nodejs_compat"]
 
 [durable_objects]
-bindings = [{ name = "CHANNEL", class_name = "ChannelDO" }]
+bindings = [
+  { name = "CHANNEL", class_name = "ChannelDO" },
+  { name = "USER", class_name = "UserDO" },
+]
 
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["ChannelDO"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["UserDO"]
 
 # ── Scheduled cleanup ─────────────────────────────────────────────────────
 # Runs hourly. The handler in src/index.ts deletes channels whose
@@ -41,8 +48,26 @@ id = "647c7df6a0e64bf3882738057ad42f38"
 #   RESEND_API_KEY       — magic-link delivery (falls back to console mailer)
 #   MAIL_FROM            — sender address ("BridgeHook <noreply@bridgehook.dev>")
 #   SELF_HOST_USER_ID    — explicit single-user id for self-hosted instances
-#   STRIPE_SECRET_KEY    — billing (wired in later commits)
-#   STRIPE_WEBHOOK_SECRET — Stripe webhook signature verification
-#   STRIPE_PRICE_ID      — the $2/month price
+#
+# Polar billing (all optional — unset = self-host shape, /api/me/billing/* → 503):
+#   POLAR_ACCESS_TOKEN     — server token from polar.sh dashboard
+#   POLAR_WEBHOOK_SECRET   — webhook secret (whsec_…) for signature verification
+#   POLAR_PRODUCT_ID_HOBBY — Polar product id for the Hobby tier
+#   POLAR_PRODUCT_ID_PRO   — Polar product id for the Pro tier
+#   POLAR_PRODUCT_ID_TEAM  — Polar product id for the Team tier
+#
+# Wildcard webhook intake (Phase 2):
+#   TUNNEL_DOMAIN          — apex domain, e.g. "bridgehook.dev". When set,
+#                            POST/PUT/PATCH on <channelId>.<TUNNEL_DOMAIN>/* lands
+#                            directly in the webhook receiver. GET on the same
+#                            host returns 405 (no website hosting).
+#                            DNS: A record on `*.bridgehook.dev` → 192.0.2.0
+#                            with the orange-cloud proxy on, plus a Worker route
+#                            `*.bridgehook.dev/*`. Reserved subdomains
+#                            (relay, app, www, docs, api) are excluded.
 #
 # Non-secret defaults can also live under [vars] block if needed.
+
+# Non-secret default wired here so wrangler dev / deploy don't need a separate secret put.
+[vars]
+TUNNEL_DOMAIN = "bridgehook.dev"

@@ -3,9 +3,11 @@ import { deleteChannelKey, getChannelPrivateKey } from "../lib/crypto";
 import type { WebhookEventData } from "../lib/relay";
 import {
 	RELAY_URL,
+	claimEvent,
 	createChannel,
 	forwardToLocalhost,
 	getChannel,
+	getClientId,
 	getEvents,
 	pollEvents,
 	safeParseJson,
@@ -240,67 +242,82 @@ export function useBridge() {
 				const currentChannelId = channelIdRef.current;
 				const currentMock = mockRef.current;
 
-				// ── Mock mode: skip localhost, return canned response ────────
-				if (currentMock.enabled) {
-					const cannedResponse = {
-						status: currentMock.status,
-						headers: currentMock.headers,
-						body: currentMock.body,
-						latencyMs: 0,
-					};
-					safeSetState((s) => ({
-						...s,
-						events: s.events.map((e) =>
-							e.id === evt.id
-								? {
-										...e,
-										responseStatus: cannedResponse.status,
-										responseBody: cannedResponse.body,
-										latencyMs: cannedResponse.latencyMs,
-									}
-								: e,
-						),
-					}));
-					if (currentChannelId) {
-						sendResponse(currentChannelId, evt.id, cannedResponse, signal).catch((err) => {
-							if (err instanceof DOMException && err.name === "AbortError") return;
-							console.warn("mock response send failed:", err);
-						});
-					}
-					continue;
-				}
+				// Claim arbitration — when multiple executors are connected,
+				// the first to claim wins. Losers see `claimed: false` and
+				// drop the work; the winner's response will arrive via SSE
+				// (or the next poll cycle) so the UI still updates.
+				if (!currentChannelId) continue;
+				const channelIdForClaim = currentChannelId;
+				const clientId = getClientId();
 
-				// ── Real mode: forward to localhost, capture, send back ──────
-				forwardToLocalhost(evt, currentPort, signal)
-					.then((response) => {
-						safeSetState((s) => ({
-							...s,
-							events: s.events.map((e) =>
-								e.id === evt.id
-									? {
-											...e,
-											responseStatus: response.status,
-											responseBody: response.body,
-											latencyMs: response.latencyMs,
-										}
-									: e,
-							),
-						}));
+				claimEvent(channelIdForClaim, evt.id, clientId, signal)
+					.then((claim) => {
+						if (!claim.claimed) return; // another executor handles this one
 
-						if (currentChannelId) {
-							sendResponse(currentChannelId, evt.id, response, signal).catch((err) => {
+						// ── Mock mode: skip localhost, return canned response ────────
+						if (currentMock.enabled) {
+							const cannedResponse = {
+								status: currentMock.status,
+								headers: currentMock.headers,
+								body: currentMock.body,
+								latencyMs: 0,
+							};
+							safeSetState((s) => ({
+								...s,
+								events: s.events.map((e) =>
+									e.id === evt.id
+										? {
+												...e,
+												responseStatus: cannedResponse.status,
+												responseBody: cannedResponse.body,
+												latencyMs: cannedResponse.latencyMs,
+											}
+										: e,
+								),
+							}));
+							sendResponse(channelIdForClaim, evt.id, cannedResponse, signal).catch((err) => {
 								if (err instanceof DOMException && err.name === "AbortError") return;
-								console.error("sendResponse failed:", err);
+								console.warn("mock response send failed:", err);
 							});
+							return;
 						}
+
+						// ── Real mode: forward to localhost, capture, send back ──────
+						return forwardToLocalhost(evt, currentPort, signal)
+							.then((response) => {
+								safeSetState((s) => ({
+									...s,
+									events: s.events.map((e) =>
+										e.id === evt.id
+											? {
+													...e,
+													responseStatus: response.status,
+													responseBody: response.body,
+													latencyMs: response.latencyMs,
+												}
+											: e,
+									),
+								}));
+								return sendResponse(channelIdForClaim, evt.id, response, signal).catch((err) => {
+									if (err instanceof DOMException && err.name === "AbortError") return;
+									console.error("sendResponse failed:", err);
+								});
+							})
+							.catch((err) => {
+								if (err instanceof DOMException && err.name === "AbortError") return;
+								const message = errorMessage(err);
+								safeSetState((s) => ({
+									...s,
+									events: s.events.map((e) => (e.id === evt.id ? { ...e, error: message } : e)),
+								}));
+							});
 					})
 					.catch((err) => {
+						// Claim itself failed (network / signature error). Don't poison the
+						// event row — drop and let another executor (or the next poll) try.
 						if (err instanceof DOMException && err.name === "AbortError") return;
-						const message = errorMessage(err);
-						safeSetState((s) => ({
-							...s,
-							events: s.events.map((e) => (e.id === evt.id ? { ...e, error: message } : e)),
-						}));
+						console.warn("claimEvent failed:", err);
+						forwardedRef.current.delete(evt.id);
 					});
 			}
 		},

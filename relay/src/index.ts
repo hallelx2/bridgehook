@@ -2,25 +2,33 @@ import {
 	CHANNEL_EXPIRY_HOURS,
 	MAX_BODY_SIZE_BYTES,
 	MAX_BUFFERED_EVENTS,
+	PLANS,
+	type PlanId,
 	TRIAL_DAYS,
 } from "@bridgehook/shared";
-import { events, channels } from "@bridgehook/shared/db/schema";
+import { events, channels, user as userTable } from "@bridgehook/shared/db/schema";
 import { neon } from "@neondatabase/serverless";
-import { desc, eq, lt } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, lt } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/neon-http";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { checkChannelCreate, loadUserAccess } from "./access.js";
 import { createAuth, getSessionUser } from "./auth.js";
+import { createPolarClient } from "./billing.js";
 import { getOrCreateSelfHostUser, resolveCaller, touchDevice } from "./identity.js";
 import { buildAuthDeviceRoutes, cleanupExpiredDeviceCodes } from "./routes/auth-device.js";
+import { buildBillingRoutes } from "./routes/billing.js";
 import { buildMeDevicesRoutes } from "./routes/me-devices.js";
 import { buildMeRoutes } from "./routes/me.js";
 
 export { ChannelDO } from "./channel-do.js";
+export { UserDO } from "./user-do.js";
 
 export interface Env {
 	DATABASE_URL: string;
 	CHANNEL: DurableObjectNamespace;
+	/** Per-user fan-out DO; absent in self-host mode (no auth = no concept of "me"). */
+	USER: DurableObjectNamespace;
 	/** Optional: KV namespace for rate-limit counters. Falls back to no-op if absent. */
 	RATE_LIMIT?: KVNamespace;
 	/** Auth — when unset, relay runs in self-host mode (no auth, no /auth/** routes). */
@@ -34,6 +42,20 @@ export interface Env {
 	WEB_URL?: string;
 	/** Self-host: auto-attach all channels to this user id (or auto-created self-host user). */
 	SELF_HOST_USER_ID?: string;
+	/** Polar billing — when unset, /api/me/billing/* returns 503 and webhooks 404. */
+	POLAR_ACCESS_TOKEN?: string;
+	POLAR_WEBHOOK_SECRET?: string;
+	POLAR_PRODUCT_ID_HOBBY?: string;
+	POLAR_PRODUCT_ID_PRO?: string;
+	POLAR_PRODUCT_ID_TEAM?: string;
+	/**
+	 * Apex domain for wildcard webhook intake (e.g. "bridgehook.dev").
+	 * When set, requests to `<channelId>.<TUNNEL_DOMAIN>` route directly to the
+	 * webhook receiver — no `/hook/<id>` prefix needed. When unset, only the
+	 * legacy path-based `/hook/:channelId` route accepts webhooks (preserves
+	 * dev/self-host without DNS).
+	 */
+	TUNNEL_DOMAIN?: string;
 }
 
 // ── Version ───────────────────────────────────────────────────────────────
@@ -50,8 +72,6 @@ const DEFAULT_EVENT_LIMIT = 50;
 const PUBLIC_KEY_HEX_LEN = 130;
 /** ECDSA P-256 signature (r || s): 64 bytes → 128 hex chars. */
 const SIGNATURE_HEX_LEN = 128;
-/** SHA-256 hex (legacy bearer scheme). */
-const SECRET_HASH_HEX_LEN = 64;
 /** Acceptable clock skew for signed requests. */
 const SIGNATURE_MAX_SKEW_MS = 60_000;
 
@@ -117,25 +137,207 @@ function isHex(s: string, len?: number): boolean {
 	return /^[0-9a-f]+$/i.test(s);
 }
 
-function constantTimeEqual(a: string, b: string): boolean {
-	if (a.length !== b.length) return false;
-	let mismatch = 0;
-	for (let i = 0; i < a.length; i++) {
-		mismatch |= a.charCodeAt(i) ^ b.charCodeAt(i);
-	}
-	return mismatch === 0;
-}
-
-function extractBearer(request: Request): string | null {
-	const auth = request.headers.get("Authorization") || request.headers.get("authorization");
-	if (!auth) return null;
-	const m = auth.match(/^Bearer\s+(.+)$/);
-	return m ? m[1].trim() : null;
-}
-
 function getChannelDO(env: Env, channelId: string) {
 	const id = env.CHANNEL.idFromName(channelId);
 	return env.CHANNEL.get(id);
+}
+
+/**
+ * Subdomains that resolve under TUNNEL_DOMAIN but are NOT channel ids — they
+ * point at first-party properties (relay API, dashboard, docs site, etc.).
+ * Anything else under the apex is treated as a tunnel host.
+ */
+const RESERVED_TUNNEL_SUBDOMAINS = new Set([
+	"relay",
+	"app",
+	"www",
+	"docs",
+	"api",
+	"admin",
+	"status",
+	"blog",
+	"mail",
+	"support",
+]);
+
+/** Channel id format: lowercase alphanumeric, 1–24 chars (matches CHANNEL_ID_LEN). */
+const CHANNEL_ID_RE = /^[a-z0-9]{1,24}$/;
+
+/**
+ * Extract the channel id from a wildcard tunnel host, or `null` when the
+ * request's Host header doesn't look like one.
+ *
+ *   "ch_abc123.bridgehook.dev"  →  "ch_abc123"
+ *   "relay.bridgehook.dev"      →  null  (reserved)
+ *   "bridgehook.dev"            →  null  (apex, no subdomain)
+ *   "ch_abc.example.com"        →  null  (different domain)
+ *   anything when TUNNEL_DOMAIN is unset → null  (feature off)
+ *
+ * Trailing dots are tolerated; ports are stripped; comparison is case-insensitive.
+ */
+function parseTunnelHost(rawHost: string | null, tunnelDomain: string | undefined): string | null {
+	if (!rawHost || !tunnelDomain) return null;
+	let hostname = rawHost.split(":")[0].toLowerCase();
+	if (hostname.endsWith(".")) hostname = hostname.slice(0, -1);
+	const apex = tunnelDomain.toLowerCase();
+	if (!hostname.endsWith(`.${apex}`)) return null;
+	const sub = hostname.slice(0, -apex.length - 1);
+	// Single-label subdomain only — `foo.bar.bridgehook.dev` falls through.
+	if (sub.length === 0 || sub.includes(".")) return null;
+	if (RESERVED_TUNNEL_SUBDOMAINS.has(sub)) return null;
+	if (!CHANNEL_ID_RE.test(sub)) return null;
+	return sub;
+}
+
+/**
+ * Canonical webhook URL for a channel. Subdomain shape when TUNNEL_DOMAIN is
+ * set; legacy `${origin}/hook/<id>` otherwise so dev / self-host without DNS
+ * keeps working.
+ *
+ * The protocol mirrors whatever the relay was reached over, which is correct
+ * for both prod (https) and dev (http://localhost:8787 → http://<id>.localhost
+ * is unusable, so dev defaults to the legacy path even with TUNNEL_DOMAIN set).
+ */
+function buildWebhookUrl(
+	channelId: string,
+	requestUrl: URL,
+	tunnelDomain: string | undefined,
+): string {
+	if (tunnelDomain && requestUrl.protocol === "https:") {
+		return `https://${channelId}.${tunnelDomain}`;
+	}
+	return `${requestUrl.origin}/hook/${channelId}`;
+}
+
+/**
+ * Normalize an incoming request path so `events.path` always reads as the
+ * post-prefix path the user's webhook source actually targeted.
+ *
+ *   path-based ("/hook/ch_abc/foo")        → "/foo"
+ *   subdomain  ("/foo")                    → "/foo"
+ *   bare prefix ("/hook/ch_abc")           → "/"
+ *
+ * Pre-launch this is a behavior change for any historical events with the
+ * full prefix in their path column; the dashboard just renders the stored
+ * value so old rows render with the legacy prefix and new rows without.
+ */
+function stripHookPrefix(requestPath: string, channelId: string): string {
+	const prefix = `/hook/${channelId}`;
+	if (requestPath === prefix) return "/";
+	if (requestPath.startsWith(`${prefix}/`)) return requestPath.slice(prefix.length);
+	return requestPath;
+}
+
+function getUserDO(env: Env, userId: string) {
+	const id = env.USER.idFromName(userId);
+	return env.USER.get(id);
+}
+
+/**
+ * Best-effort fan-out to a user's UserDO. Failures are logged and swallowed
+ * — the SSE push is a UX nicety, never load-bearing.
+ */
+function notifyUserDO(env: Env, userId: string | null, payload: string): void {
+	if (!userId) return;
+	const stub = getUserDO(env, userId);
+	stub
+		.fetch(new Request("https://do/notify", { method: "POST", body: payload }))
+		.catch((err) => console.error("UserDO notify failed:", err));
+}
+
+function jsonResponse(status: number, body: unknown): Response {
+	return new Response(JSON.stringify(body), {
+		status,
+		headers: { "Content-Type": "application/json" },
+	});
+}
+
+/**
+ * Webhook intake — the single canonical path for accepting an inbound webhook,
+ * shared by the legacy `/hook/:channelId` route and the wildcard subdomain
+ * dispatcher. Validates, persists the event row, fans out via both the
+ * channel DO (per-channel SSE) and the user DO (cross-channel dashboard), and
+ * returns 202 immediately. Never awaits localhost — the executor's response
+ * lands later via `POST /hook/:channelId/response` and updates the row
+ * out-of-band.
+ *
+ * `events.path` is stored post-prefix so the dashboard renders consistently
+ * regardless of whether the producer hit the wildcard or legacy URL.
+ */
+async function handleWebhookIntake(
+	channelId: string,
+	request: Request,
+	env: Env,
+): Promise<Response> {
+	if (!CHANNEL_ID_RE.test(channelId)) {
+		return jsonResponse(404, { error: "Channel not found" });
+	}
+	const db = getDb(env);
+
+	const claimed = Number(request.headers.get("content-length") || "0");
+	if (claimed > MAX_BODY_SIZE_BYTES) {
+		return jsonResponse(413, { error: "Body too large" });
+	}
+
+	const [channel] = await db.select().from(channels).where(eq(channels.id, channelId)).limit(1);
+	if (!channel) return jsonResponse(404, { error: "Channel not found" });
+
+	const url = new URL(request.url);
+	const cleanPath = stripHookPrefix(url.pathname, channelId);
+
+	const allowedPaths = safeJsonParse<string[]>(channel.allowedPaths, []);
+	if (!isPathAllowed(cleanPath, allowedPaths)) {
+		return jsonResponse(403, { error: "Path not allowed for this channel" });
+	}
+
+	const headers: Record<string, string> = {};
+	let headersBytes = 0;
+	request.headers.forEach((value, key) => {
+		headersBytes += key.length + value.length + 4;
+		headers[key] = value;
+	});
+	if (headersBytes > MAX_HEADERS_BYTES) {
+		return jsonResponse(431, { error: "Headers too large" });
+	}
+
+	const body = await request.text();
+	if (body.length > MAX_BODY_SIZE_BYTES) {
+		return jsonResponse(413, { error: "Body too large" });
+	}
+
+	const eventId = crypto.randomUUID().replace(/-/g, "").slice(0, EVENT_ID_LEN);
+	const [evt] = await db
+		.insert(events)
+		.values({
+			id: eventId,
+			channelId,
+			method: request.method,
+			path: cleanPath,
+			requestHeaders: JSON.stringify(headers),
+			requestBody: body || null,
+		})
+		.returning();
+
+	const ssePayload = JSON.stringify({
+		type: "webhook",
+		id: evt.id,
+		channelId,
+		method: evt.method,
+		path: evt.path,
+		headers,
+		body,
+		receivedAt: evt.receivedAt.toISOString(),
+	});
+
+	const stub = getChannelDO(env, channelId);
+	stub
+		.fetch(new Request("https://do/notify", { method: "POST", body: ssePayload }))
+		.catch((err) => console.error("DO notify failed:", err));
+
+	// Cross-channel dashboard fan-out: only when the channel has an owner.
+	notifyUserDO(env, channel.userId, ssePayload);
+
+	return jsonResponse(202, { received: true, eventId: evt.id, channelId });
 }
 
 function validateAllowedPaths(input: unknown): string[] | null {
@@ -152,10 +354,14 @@ function validateAllowedPaths(input: unknown): string[] | null {
 	return out;
 }
 
+/**
+ * Match the request path against the channel's allowedPaths whitelist.
+ * Caller is responsible for passing the cleaned (post-prefix) path — see
+ * {@link stripHookPrefix}.
+ */
 function isPathAllowed(requestPath: string, allowedPaths: string[]): boolean {
 	if (allowedPaths.length === 0) return true;
-	const cleaned = requestPath.replace(/^\/hook\/[a-z0-9]+/, "") || "/";
-	return allowedPaths.some((p) => cleaned === p || cleaned.startsWith(`${p}/`));
+	return allowedPaths.some((p) => requestPath === p || requestPath.startsWith(`${p}/`));
 }
 
 function parseLimit(raw: string | null): number {
@@ -188,27 +394,14 @@ async function checkRateLimit(env: Env, request: Request, key: string): Promise<
 }
 
 // ── Authentication ────────────────────────────────────────────────────────
-type AuthCredential =
-	| { type: "ecdsa"; publicKeyHex: string }
-	| { type: "bearer"; secretHash: string };
-
-function pickCredential(channel: {
-	publicKey: string | null;
-	secretHash: string | null;
-}): AuthCredential | null {
-	if (channel.publicKey) return { type: "ecdsa", publicKeyHex: channel.publicKey };
-	if (channel.secretHash) return { type: "bearer", secretHash: channel.secretHash };
-	return null;
-}
+// All channels authenticate via ECDSA P-256 signatures. The legacy bearer
+// (secret_hash) scheme was retired in migration 0008.
 
 async function verifyAndReadBody(
 	request: Request,
-	cred: AuthCredential,
+	publicKeyHex: string,
 ): Promise<{ ok: true; body: string } | { ok: false; status: number; error: string }> {
-	if (cred.type === "ecdsa") {
-		return verifyEcdsa(request, cred.publicKeyHex);
-	}
-	return verifyBearer(request, cred.secretHash);
+	return verifyEcdsa(request, publicKeyHex);
 }
 
 async function verifyEcdsa(
@@ -274,22 +467,6 @@ async function verifyEcdsa(
 	return { ok: true, body };
 }
 
-async function verifyBearer(
-	request: Request,
-	storedHash: string,
-): Promise<{ ok: true; body: string } | { ok: false; status: number; error: string }> {
-	const provided = extractBearer(request);
-	if (!provided) {
-		return { ok: false, status: 401, error: "Missing bearer token" };
-	}
-	const providedHash = await sha256Hex(provided);
-	if (!constantTimeEqual(providedHash, storedHash)) {
-		return { ok: false, status: 401, error: "Invalid bearer token" };
-	}
-	const body = await request.text();
-	return { ok: true, body };
-}
-
 // ── Hono app ──────────────────────────────────────────────────────────────
 type AppEnv = { Bindings: Env };
 const app = new Hono<AppEnv>();
@@ -349,7 +526,57 @@ app.route(
 		return {
 			auth,
 			db: getDb(env),
-			notifier: { getChannelDO: (channelId: string) => getChannelDO(env, channelId) },
+			notifier: {
+				getChannelDO: (channelId: string) => getChannelDO(env, channelId),
+				notifyUser: (userId: string | null, payload: string) => notifyUserDO(env, userId, payload),
+			},
+			tunnelDomain: env.TUNNEL_DOMAIN ?? null,
+		};
+	}),
+);
+
+// ── /api/me/stream (cross-channel SSE) ─────────────────────────────────
+// Long-lived session-authed SSE. Pushes every webhook / response / claim
+// event for any channel owned by the current user. Heartbeats every 20s
+// inside the UserDO so intermediaries don't kill the connection.
+//
+// Self-host mode (no auth) returns 404. The dashboard's per-channel
+// polling stays as a fallback when this stream is unavailable.
+app.get("/api/me/stream", async (c) => {
+	const auth = createAuth(c.env);
+	if (!auth) return c.json({ error: "Auth not configured" }, 404);
+
+	const sessionUser = await getSessionUser(auth, c.req.raw);
+	if (!sessionUser) return c.json({ error: "Not signed in" }, 401);
+
+	const stub = getUserDO(c.env, sessionUser.id);
+	// Forward the request to the DO, preserving the abort signal so the
+	// DO's `request.signal.addEventListener("abort", ...)` cleanup fires
+	// when the client disconnects.
+	return stub.fetch(
+		new Request("https://do/stream", {
+			method: "GET",
+			signal: c.req.raw.signal,
+		}),
+	);
+});
+
+// ── /api/me/billing/* and /api/billing/webhook ──────────────────────────
+// The router mounts at /api so the billing module owns both /me/billing/*
+// (session-authed) and /billing/webhook (signature-verified) under one tree.
+app.route(
+	"/api",
+	buildBillingRoutes((c) => {
+		const env = (c as { env: Env }).env;
+		const auth = createAuth(env);
+		const polar = createPolarClient(env);
+		if (!auth || !polar || !env.WEB_URL) return null;
+		return {
+			auth,
+			db: getDb(env),
+			polar,
+			webhookSecret: env.POLAR_WEBHOOK_SECRET,
+			webUrl: env.WEB_URL,
 		};
 	}),
 );
@@ -370,12 +597,17 @@ app.get("/health", (c) => c.json({ status: "ok" }));
 // ── Config probe (public, unauthenticated) ──
 // Web/extension call this once at startup to know whether the relay is
 // running in hosted (auth-enabled) or self-host (auth-disabled) mode and
-// gate UI affordances accordingly.
+// gate UI affordances accordingly. `billingEnabled` is independent — a
+// hosted instance can run without Polar (env unset → /api/me/billing/* 503),
+// in which case the Billing page hides checkout buttons and shows a
+// "billing not configured" notice instead.
 app.get("/api/config", (c) => {
 	const authEnabled = Boolean(c.env.BETTER_AUTH_SECRET);
+	const billingEnabled = authEnabled && Boolean(c.env.POLAR_ACCESS_TOKEN);
 	return c.json({
 		authEnabled,
 		signupEnabled: authEnabled,
+		billingEnabled,
 		trialDays: TRIAL_DAYS,
 		version: RELAY_VERSION,
 	});
@@ -384,8 +616,7 @@ app.get("/api/config", (c) => {
 // ── Create channel ──
 // In hosted mode (BETTER_AUTH_SECRET set), requires either a Better-Auth
 // session cookie OR a device-token Bearer header. Anonymous creates return
-// 401. The legacy bearer (secretHash) scheme is rejected at this endpoint;
-// existing channels with secretHash continue to verify on per-channel ops.
+// 401. ECDSA P-256 is the only supported channel auth scheme.
 //
 // In self-host mode (BETTER_AUTH_SECRET unset), all creates resolve to the
 // implicit SELF_HOST_USER_ID user (or auto-created self-host@local).
@@ -415,31 +646,25 @@ app.post("/api/channels", async (c) => {
 		userId = caller.userId;
 		deviceId = caller.deviceId;
 		if (deviceId) await touchDevice(db, deviceId);
+
+		// Plan / quota gate. Self-host (no auth branch) skips this entirely
+		// because the implicit user carries the `selfhost` tier.
+		const access = await loadUserAccess(db, userId);
+		if (!access) return c.json({ error: "User not found" }, 404);
+		const gate = await checkChannelCreate(db, access);
+		if (!gate.ok) return c.json({ error: gate.error, code: "quota" }, gate.status);
 	} else {
 		userId = await getOrCreateSelfHostUser(db, env);
 	}
 
 	const body = await safeReadJson<{
 		publicKey?: unknown;
-		secretHash?: unknown;
 		port?: unknown;
 		allowedPaths?: unknown;
 		label?: unknown;
 	}>(c.req.raw);
 
 	if (!body) return c.json({ error: "Invalid JSON body" }, 400);
-
-	// Reject the legacy bearer scheme on new creates. Per-channel verification
-	// still accepts secretHash for existing rows; a later commit drops the column.
-	if (typeof body.secretHash === "string" && body.secretHash.length > 0) {
-		return c.json(
-			{
-				error:
-					"The secretHash (legacy bearer) scheme is no longer accepted for new channels. Send publicKey (ECDSA P-256, 130 hex chars) instead.",
-			},
-			400,
-		);
-	}
 
 	if (typeof body.publicKey !== "string" || body.publicKey.length === 0) {
 		return c.json({ error: "publicKey is required (130-char ECDSA P-256 hex)" }, 400);
@@ -488,7 +713,6 @@ app.post("/api/channels", async (c) => {
 		.values({
 			id: channelId,
 			publicKey,
-			secretHash: null,
 			port: body.port,
 			allowedPaths: JSON.stringify(allowedPaths),
 			userId,
@@ -507,7 +731,7 @@ app.post("/api/channels", async (c) => {
 			userId: channel.userId,
 			deviceId: channel.deviceId,
 			expiresAt: channel.expiresAt?.toISOString() ?? null,
-			webhookUrl: `${url.origin}/hook/${channel.id}`,
+			webhookUrl: buildWebhookUrl(channel.id, url, c.env.TUNNEL_DOMAIN),
 			authScheme: "ecdsa",
 		},
 		201,
@@ -533,8 +757,8 @@ app.get("/api/channels/:channelId", async (c) => {
 		allowedPaths: safeJsonParse<string[]>(channel.allowedPaths, []),
 		createdAt: channel.createdAt.toISOString(),
 		expiresAt: channel.expiresAt?.toISOString() ?? null,
-		webhookUrl: `${url.origin}/hook/${channel.id}`,
-		authScheme: channel.publicKey ? "ecdsa" : "bearer",
+		webhookUrl: buildWebhookUrl(channel.id, url, c.env.TUNNEL_DOMAIN),
+		authScheme: "ecdsa",
 	});
 });
 
@@ -562,11 +786,8 @@ app.delete("/api/channels/:channelId", async (c) => {
 		}
 	}
 
-	// Otherwise require ECDSA (or legacy bearer for old channels).
-	const cred = pickCredential(channel);
-	if (!cred) return c.json({ error: "Channel misconfigured" }, 500);
-
-	const verified = await verifyAndReadBody(c.req.raw, cred);
+	// Otherwise require an ECDSA-signed delete request.
+	const verified = await verifyAndReadBody(c.req.raw, channel.publicKey);
 	if (!verified.ok) return c.json({ error: verified.error }, verified.status as 401 | 500);
 
 	await db.delete(channels).where(eq(channels.id, channelId));
@@ -584,10 +805,7 @@ app.get("/api/channels/:channelId/events", async (c) => {
 	const [channel] = await db.select().from(channels).where(eq(channels.id, channelId)).limit(1);
 	if (!channel) return c.json({ error: "Channel not found" }, 404);
 
-	const cred = pickCredential(channel);
-	if (!cred) return c.json({ error: "Channel misconfigured" }, 500);
-
-	const verified = await verifyAndReadBody(c.req.raw, cred);
+	const verified = await verifyAndReadBody(c.req.raw, channel.publicKey);
 	if (!verified.ok) return c.json({ error: verified.error }, verified.status as 401 | 500);
 
 	const limit = parseLimit(c.req.query("limit") ?? null);
@@ -601,73 +819,109 @@ app.get("/api/channels/:channelId/events", async (c) => {
 	return c.json(rows);
 });
 
-// ── Receive webhook (public) ──
+// ── Receive webhook (public, path-based — back-compat) ──
+// Subdomain intake (`<channelId>.<TUNNEL_DOMAIN>`) is wired in the worker
+// entry below; both paths funnel through {@link handleWebhookIntake} so the
+// behavior stays identical.
 app.on(["POST", "PUT", "PATCH"], "/hook/:channelId", async (c) => {
+	return handleWebhookIntake(c.req.param("channelId"), c.req.raw, c.env);
+});
+
+// ── Claim event for executor (auth) ──
+// Multi-device arbitration: when several executors are connected to the
+// same channel (extension + dashboard tab + paired desktop), they race to
+// forward each event. The first one to call /claim wins via an atomic
+// UPDATE … WHERE claimed_by_device_id IS NULL; the losers see 409 and
+// drop the work. The DO is also notified so any SSE subscriber gets a
+// `{ type: "claimed", eventId, claimerId }` push and can update the UI
+// without waiting for the response round-trip.
+app.post("/hook/:channelId/claim", async (c) => {
 	const channelId = c.req.param("channelId");
 	if (!/^[a-z0-9]{1,24}$/.test(channelId)) {
 		return c.json({ error: "Channel not found" }, 404);
 	}
 	const db = getDb(c.env);
 
-	const claimed = Number(c.req.header("content-length") || "0");
-	if (claimed > MAX_BODY_SIZE_BYTES) {
-		return c.json({ error: "Body too large" }, 413);
-	}
-
 	const [channel] = await db.select().from(channels).where(eq(channels.id, channelId)).limit(1);
 	if (!channel) return c.json({ error: "Channel not found" }, 404);
 
-	const url = new URL(c.req.url);
-	const allowedPaths = safeJsonParse<string[]>(channel.allowedPaths, []);
-	if (!isPathAllowed(url.pathname, allowedPaths)) {
-		return c.json({ error: "Path not allowed for this channel" }, 403);
-	}
+	const verified = await verifyAndReadBody(c.req.raw, channel.publicKey);
+	if (!verified.ok) return c.json({ error: verified.error }, verified.status as 401 | 500);
 
-	const headers: Record<string, string> = {};
-	let headersBytes = 0;
-	c.req.raw.headers.forEach((value, key) => {
-		headersBytes += key.length + value.length + 4;
-		headers[key] = value;
-	});
-	if (headersBytes > MAX_HEADERS_BYTES) {
-		return c.json({ error: "Headers too large" }, 431);
+	let raw: unknown;
+	try {
+		raw = JSON.parse(verified.body);
+	} catch {
+		return c.json({ error: "Invalid JSON body" }, 400);
 	}
+	const parsed = (raw ?? {}) as { eventId?: unknown; clientId?: unknown };
 
-	const body = await c.req.raw.text();
-	if (body.length > MAX_BODY_SIZE_BYTES) {
-		return c.json({ error: "Body too large" }, 413);
+	if (typeof parsed.eventId !== "string" || !/^[a-z0-9]{1,32}$/.test(parsed.eventId)) {
+		return c.json({ error: "Invalid eventId" }, 400);
 	}
+	if (
+		typeof parsed.clientId !== "string" ||
+		parsed.clientId.length < 1 ||
+		parsed.clientId.length > 64
+	) {
+		return c.json({ error: "Invalid clientId (1-64 chars)" }, 400);
+	}
+	const eventId = parsed.eventId;
+	const clientId = parsed.clientId;
 
-	const eventId = crypto.randomUUID().replace(/-/g, "").slice(0, EVENT_ID_LEN);
-	const [evt] = await db
-		.insert(events)
-		.values({
-			id: eventId,
+	// Atomic claim: only the row whose claimed_by_device_id is still NULL
+	// flips. Composite WHERE also pins to this channel so a poisoned eventId
+	// from one channel can't claim another's event.
+	const claimedAt = new Date();
+	const claimed = await db
+		.update(events)
+		.set({ claimedByDeviceId: clientId, claimedAt })
+		.where(
+			and(
+				eq(events.id, eventId),
+				eq(events.channelId, channelId),
+				isNull(events.claimedByDeviceId),
+			),
+		)
+		.returning({ id: events.id });
+
+	if (claimed.length > 0) {
+		// Wake other listeners so the UI can stop spinning on this event.
+		const payload = JSON.stringify({
+			type: "claimed",
+			eventId,
 			channelId,
-			method: c.req.method,
-			path: url.pathname,
-			requestHeaders: JSON.stringify(headers),
-			requestBody: body || null,
+			claimerId: clientId,
+			claimedAt: claimedAt.toISOString(),
+		});
+		const stub = getChannelDO(c.env, channelId);
+		stub
+			.fetch(new Request("https://do/notify", { method: "POST", body: payload }))
+			.catch((err) => console.error("DO notify (claim) failed:", err));
+		notifyUserDO(c.env, channel.userId, payload);
+		return c.json({ claimed: true, claimerId: clientId, claimedAt: claimedAt.toISOString() });
+	}
+
+	// Lost the race — surface the actual winner so the client can render it.
+	const [existing] = await db
+		.select({
+			claimerId: events.claimedByDeviceId,
+			claimedAt: events.claimedAt,
 		})
-		.returning();
-
-	const ssePayload = JSON.stringify({
-		type: "webhook",
-		id: evt.id,
-		channelId,
-		method: evt.method,
-		path: evt.path,
-		headers,
-		body,
-		receivedAt: evt.receivedAt.toISOString(),
-	});
-
-	const stub = getChannelDO(c.env, channelId);
-	stub
-		.fetch(new Request("https://do/notify", { method: "POST", body: ssePayload }))
-		.catch((err) => console.error("DO notify failed:", err));
-
-	return c.json({ received: true, eventId: evt.id, channelId }, 202);
+		.from(events)
+		.where(and(eq(events.id, eventId), eq(events.channelId, channelId)))
+		.limit(1);
+	if (!existing) {
+		return c.json({ error: "Event not found" }, 404);
+	}
+	return c.json(
+		{
+			claimed: false,
+			claimerId: existing.claimerId,
+			claimedAt: existing.claimedAt?.toISOString() ?? null,
+		},
+		409,
+	);
 });
 
 // ── Receive response from client (auth) ──
@@ -681,10 +935,7 @@ app.post("/hook/:channelId/response", async (c) => {
 	const [channel] = await db.select().from(channels).where(eq(channels.id, channelId)).limit(1);
 	if (!channel) return c.json({ error: "Channel not found" }, 404);
 
-	const cred = pickCredential(channel);
-	if (!cred) return c.json({ error: "Channel misconfigured" }, 500);
-
-	const verified = await verifyAndReadBody(c.req.raw, cred);
+	const verified = await verifyAndReadBody(c.req.raw, channel.publicKey);
 	if (!verified.ok) return c.json({ error: verified.error }, verified.status as 401 | 500);
 
 	let raw: unknown;
@@ -739,6 +990,7 @@ app.post("/hook/:channelId/response", async (c) => {
 	const responsePayload = JSON.stringify({
 		type: "response",
 		eventId: parsed.eventId,
+		channelId,
 		status: parsed.status,
 		latencyMs,
 	});
@@ -747,6 +999,7 @@ app.post("/hook/:channelId/response", async (c) => {
 	stub
 		.fetch(new Request("https://do/notify", { method: "POST", body: responsePayload }))
 		.catch((err) => console.error("DO notify failed:", err));
+	notifyUserDO(c.env, channel.userId, responsePayload);
 
 	return c.json({ ok: true });
 });
@@ -754,12 +1007,89 @@ app.post("/hook/:channelId/response", async (c) => {
 // ── Catch-all 404 ──
 app.notFound((c) => c.json({ error: "Not Found" }, 404));
 
+/**
+ * Per-plan event retention sweep. Deletes events older than the plan's
+ * `retentionDays` for users on that plan. Skipped in self-host mode (no
+ * BETTER_AUTH_SECRET) — the implicit selfhost user has unlimited retention
+ * anyway, and self-hosters typically prefer to manage their own DB hygiene.
+ */
+async function retentionSweep(db: DB): Promise<void> {
+	for (const planId of ["trialing", "hobby", "pro", "team"] as PlanId[]) {
+		const retention = PLANS[planId].limits.retentionDays;
+		if (!Number.isFinite(retention) || retention <= 0) continue;
+		const cutoff = new Date(Date.now() - retention * 86_400_000);
+
+		// Two-step: collect channel ids owned by users on this plan, then
+		// delete events on those channels older than the cutoff. A single
+		// JOIN-DELETE would be more efficient but Drizzle's neon-http
+		// adapter doesn't expose a clean DELETE-USING shape.
+		const ownedChannelRows = await db
+			.select({ id: channels.id })
+			.from(channels)
+			.innerJoin(userTable, eq(channels.userId, userTable.id))
+			.where(eq(userTable.plan, planId));
+
+		if (ownedChannelRows.length === 0) continue;
+		const channelIds = ownedChannelRows.map((r) => r.id);
+
+		const deleted = await db
+			.delete(events)
+			.where(and(inArray(events.channelId, channelIds), lt(events.receivedAt, cutoff)))
+			.returning({ id: events.id });
+
+		if (deleted.length > 0) {
+			console.log(
+				`Retention sweep [${planId}]: deleted ${deleted.length} events older than ${retention}d`,
+			);
+		}
+	}
+}
+
 // ── Worker export ──
+//
+// The fetch entry runs *before* Hono. Two shapes of request reach the worker:
+//
+//   1. Wildcard tunnel host (`<channelId>.<TUNNEL_DOMAIN>`):
+//        • POST/PUT/PATCH → straight into {@link handleWebhookIntake}
+//        • OPTIONS         → CORS-friendly 204 (preflight succeeds, no body)
+//        • Anything else   → 405 with an Allow header (the "no website hosting"
+//                            edge guard from Phase 2 of the hardening plan).
+//      Hono is bypassed entirely for these so we don't accidentally pick up
+//      `/auth/**`, `/api/**`, etc. on a host that's supposed to be webhook-only.
+//
+//   2. First-party host (relay.<apex>, app.<apex>, localhost during dev, …):
+//        • Falls through to `app.fetch` — the Hono app handles everything.
 export default {
-	fetch: app.fetch,
+	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+		const tunnelChannelId = parseTunnelHost(request.headers.get("host"), env.TUNNEL_DOMAIN);
+		if (tunnelChannelId !== null) {
+			const method = request.method.toUpperCase();
+			if (method === "POST" || method === "PUT" || method === "PATCH") {
+				return handleWebhookIntake(tunnelChannelId, request, env);
+			}
+			if (method === "OPTIONS") {
+				return new Response(null, {
+					status: 204,
+					headers: {
+						"Access-Control-Allow-Origin": request.headers.get("origin") ?? "*",
+						"Access-Control-Allow-Methods": "POST, PUT, PATCH, OPTIONS",
+						"Access-Control-Allow-Headers":
+							request.headers.get("access-control-request-headers") ?? "Content-Type",
+						"Access-Control-Max-Age": "86400",
+					},
+				});
+			}
+			return new Response("Method Not Allowed", {
+				status: 405,
+				headers: { Allow: "POST, PUT, PATCH, OPTIONS" },
+			});
+		}
+		return app.fetch(request, env, ctx);
+	},
 	/**
 	 * Scheduled handler — wired to `crons` in wrangler.toml.
-	 * Deletes expired channels (and cascades their events) hourly.
+	 * Hourly: expire anonymous channels, expire device codes, sweep events
+	 * past their plan's retention window.
 	 */
 	async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
 		try {
@@ -774,6 +1104,11 @@ export default {
 			const codeCount = await cleanupExpiredDeviceCodes(db);
 			if (codeCount > 0) {
 				console.log(`Cron cleanup: deleted ${codeCount} expired device codes`);
+			}
+			// Skip retention sweep in self-host mode — the selfhost tier has
+			// unlimited retention and there's nothing else to sweep.
+			if (env.BETTER_AUTH_SECRET) {
+				await retentionSweep(db);
 			}
 		} catch (err) {
 			console.error("Cron cleanup failed:", err);

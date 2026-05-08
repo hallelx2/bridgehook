@@ -1,14 +1,18 @@
 import { useState } from "react";
 import { Layout } from "./components/Layout";
 import { Architecture } from "./pages/Architecture";
+import { Auth } from "./pages/Auth";
+import { Billing } from "./pages/Billing";
 import { BrowserBridge } from "./pages/BrowserBridge";
 import { ChannelSecrets } from "./pages/ChannelSecrets";
 import { Tradeoffs, VsCloudflareTunnel, VsLocaltunnel, VsNgrok } from "./pages/Comparison";
+import { DevicePairing } from "./pages/DevicePairing";
 import { HowItWorks } from "./pages/HowItWorks";
 import { Introduction } from "./pages/Introduction";
 import { PathAllowlist } from "./pages/PathAllowlist";
 import { Quickstart } from "./pages/Quickstart";
 import { RelayAPI } from "./pages/RelayAPI";
+import { Replay } from "./pages/Replay";
 import { SSEEvents } from "./pages/SSEEvents";
 import { SSETechnology } from "./pages/SSETechnology";
 import { SecurityModel } from "./pages/SecurityModel";
@@ -23,6 +27,10 @@ const PAGES: Record<string, () => React.JSX.Element> = {
 	"security-model": SecurityModel,
 	"channel-secrets": ChannelSecrets,
 	"path-allowlist": PathAllowlist,
+	auth: Auth,
+	"device-pairing": DevicePairing,
+	billing: Billing,
+	replay: Replay,
 	"vs-ngrok": VsNgrok,
 	"vs-cloudflare-tunnel": VsCloudflareTunnel,
 	"vs-localtunnel": VsLocaltunnel,

@@ -11,6 +11,8 @@ const RELAY_URL = import.meta.env.VITE_RELAY_URL || "http://localhost:8787";
 export interface RelayConfig {
 	authEnabled: boolean;
 	signupEnabled: boolean;
+	/** True when the relay has Polar credentials wired — gates checkout UI. */
+	billingEnabled: boolean;
 	trialDays: number;
 	version: string;
 }
@@ -18,6 +20,7 @@ export interface RelayConfig {
 const FALLBACK_CONFIG: RelayConfig = {
 	authEnabled: false,
 	signupEnabled: false,
+	billingEnabled: false,
 	trialDays: 0,
 	version: "unknown",
 };

@@ -25,6 +25,15 @@ const NAV_SECTIONS = [
 		],
 	},
 	{
+		title: "Hosted Mode",
+		items: [
+			{ id: "auth", label: "Authentication" },
+			{ id: "device-pairing", label: "Device Pairing" },
+			{ id: "billing", label: "Billing" },
+			{ id: "replay", label: "Replay" },
+		],
+	},
+	{
 		title: "Comparison",
 		items: [
 			{ id: "vs-ngrok", label: "vs ngrok" },

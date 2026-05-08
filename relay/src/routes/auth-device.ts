@@ -20,6 +20,7 @@ import { and, eq, isNull, lt, sql } from "drizzle-orm";
 import type { drizzle } from "drizzle-orm/neon-http";
 import { Hono } from "hono";
 import { customAlphabet } from "nanoid";
+import { checkDevicePair, loadUserAccess } from "../access.js";
 import { type Auth, getSessionUser } from "../auth.js";
 import { newDeviceId, newDeviceToken } from "../identity.js";
 import { addMinutes } from "../time.js";
@@ -143,6 +144,13 @@ export function buildAuthDeviceRoutes(getDeps: (c: { env: unknown }) => AuthDevi
 			return c.json({ error: "Code already approved" }, 409);
 		}
 
+		// Plan / quota gate — fail at approve so the web user sees a clear
+		// "device limit reached" message before the extension ever exchanges.
+		const access = await loadUserAccess(deps.db, sessionUser.id);
+		if (!access) return c.json({ error: "User not found" }, 404);
+		const gate = await checkDevicePair(deps.db, access);
+		if (!gate.ok) return c.json({ error: gate.error, code: "quota" }, gate.status);
+
 		await deps.db
 			.update(deviceCodes)
 			.set({ status: "approved", approvedUserId: sessionUser.id })
@@ -181,6 +189,21 @@ export function buildAuthDeviceRoutes(getDeps: (c: { env: unknown }) => AuthDevi
 		}
 		if (row.status !== "approved" || !row.approvedUserId) {
 			return c.json({ status: "pending" }, 202);
+		}
+
+		// Defensive re-check at exchange time — the user could have hit
+		// their device cap between approve and exchange (e.g. paired another
+		// device in a parallel tab), or had their plan downgraded.
+		const access = await loadUserAccess(deps.db, row.approvedUserId);
+		if (!access) {
+			await deps.db.delete(deviceCodes).where(eq(deviceCodes.code, code));
+			return c.json({ error: "User not found" }, 404);
+		}
+		const gate = await checkDevicePair(deps.db, access);
+		if (!gate.ok) {
+			// Consume the code so the extension stops polling on a doomed flow.
+			await deps.db.delete(deviceCodes).where(eq(deviceCodes.code, code));
+			return c.json({ error: gate.error, code: "quota" }, gate.status);
 		}
 
 		// Mint the device + token. The device row is the persistent record;

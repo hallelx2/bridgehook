@@ -122,7 +122,10 @@ export async function getOrCreateSelfHostUser(
 		name: "Self-host",
 		email: "self-host@local",
 		emailVerified: true,
-		plan: "active",
+		// `selfhost` is the canonical infinite-limits tier; see pricing.ts.
+		// (Pre-multi-tier deployments wrote `active` here — the access layer
+		// transparently treats `active` as `selfhost` for backwards compat.)
+		plan: "selfhost",
 	});
 	return id;
 }

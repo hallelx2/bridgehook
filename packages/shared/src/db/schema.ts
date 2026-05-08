@@ -62,10 +62,10 @@ export const channels = pgTable(
 	"channels",
 	{
 		id: varchar("id", { length: 24 }).primaryKey(),
-		// Exactly one of `publicKey` or `secretHash` populated per row (legacy bearer
-		// scheme to be dropped once anonymous channels drain — see commit 17).
-		publicKey: text("public_key"),
-		secretHash: text("secret_hash"),
+		// ECDSA P-256 raw public key (130-char hex). The legacy bearer scheme
+		// (secret_hash) was dropped in migration 0008 — every channel now
+		// authenticates via ECDSA signatures.
+		publicKey: text("public_key").notNull(),
 		port: integer("port").notNull().default(3000),
 		allowedPaths: text("allowed_paths").notNull().default("[]"),
 		// Ownership — nullable while existing anonymous channels drain (24h post-deploy).
@@ -114,10 +114,12 @@ export const events = pgTable(
 			onDelete: "set null",
 		}),
 		kind: varchar("kind", { length: 16 }).notNull().default("live"), // 'live' | 'replay'
-		claimedByDeviceId: varchar("claimed_by_device_id", { length: 24 }).references(
-			() => devices.id,
-			{ onDelete: "set null" },
-		),
+		// Free-form text — accepts both `dev_<20>` ids (paired devices) and
+		// arbitrary client-generated UUIDs (web tabs that aren't paired). The
+		// FK was dropped in migration 0007 specifically so web executors can
+		// claim too. Atomic UPDATE … WHERE claimed_by_device_id IS NULL is
+		// the actual contention primitive — see POST /hook/:channelId/claim.
+		claimedByDeviceId: text("claimed_by_device_id"),
 		claimedAt: timestamp("claimed_at", { withTimezone: true }),
 	},
 	(t) => ({

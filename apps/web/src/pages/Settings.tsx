@@ -58,7 +58,10 @@ function SettingsView() {
 				{user.plan === "trialing" && user.trialEndsAt ? (
 					<Row label="Trial ends" value={new Date(user.trialEndsAt).toLocaleString()} />
 				) : null}
-				<Row label="Event retention" value={`${user.retentionDays} days`} />
+				<Row
+					label="Event retention"
+					value={user.retentionDays === null ? "unlimited" : `${user.retentionDays} days`}
+				/>
 				<div className="pt-2">
 					<button
 						type="button"

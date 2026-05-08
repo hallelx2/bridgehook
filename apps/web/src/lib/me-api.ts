@@ -9,12 +9,31 @@
 
 const RELAY_URL = import.meta.env.VITE_RELAY_URL || "http://localhost:8787";
 
+export interface MeSubscription {
+	/** Polar-side lifecycle: active | trialing | past_due | canceled | incomplete | revoked */
+	status: string;
+	provider: string;
+	cancelAtPeriodEnd: boolean;
+	currentPeriodEnd: string;
+}
+
 export interface MeUser {
 	user: { id: string; email: string; name: string };
-	plan: "trialing" | "active" | "past_due" | "canceled" | "incomplete";
+	/**
+	 * Effective tier — drives quota/feature gating. `selfhost` is internal
+	 * (the implicit user on self-hosted relays); the dashboard never renders
+	 * a checkout for it.
+	 */
+	plan: "trialing" | "hobby" | "pro" | "team" | "selfhost";
 	trialEndsAt: string | null;
 	trialDaysTotal: number;
-	retentionDays: number;
+	/** null = unlimited (selfhost). */
+	retentionDays: number | null;
+	/** True when account is locked to view-only (expired trial / canceled sub). */
+	readOnly: boolean;
+	readOnlyReason: "trial-expired" | "subscription-canceled" | null;
+	/** Polar subscription, null if the user has never checked out. */
+	subscription: MeSubscription | null;
 }
 
 export interface MeChannel {
@@ -166,3 +185,74 @@ export const me = {
 
 /** RELAY_URL re-export so pages can build absolute URLs (e.g. webhook URL chips). */
 export { RELAY_URL };
+
+// ── Cross-channel push (SSE) ──────────────────────────────────────────────
+//
+// `streamMeEvents()` opens an EventSource to /api/me/stream — a long-lived
+// connection backed by the relay's per-user UserDO. Every webhook landing
+// on any of the caller's channels arrives here as a `{ type: "webhook" }`
+// frame; responses arrive as `{ type: "response" }`; claim arbitration
+// fan-outs arrive as `{ type: "claimed" }`.
+//
+// Self-host instances 404 on this endpoint. Pages that consume the stream
+// should fall back to per-page fetches when `error` fires (or check
+// `config.authEnabled` upfront).
+
+export type MeStreamEvent =
+	| { type: "connected" }
+	| {
+			type: "webhook";
+			id: string;
+			channelId: string;
+			method: string;
+			path: string;
+			headers: Record<string, string>;
+			body: string;
+			receivedAt: string;
+			kind?: "live" | "replay";
+			replayOf?: string | null;
+	  }
+	| {
+			type: "response";
+			eventId: string;
+			channelId: string;
+			status: number;
+			latencyMs: number;
+	  }
+	| {
+			type: "claimed";
+			eventId: string;
+			channelId: string;
+			claimerId: string;
+			claimedAt: string;
+	  };
+
+export interface MeStreamHandle {
+	close(): void;
+}
+
+/**
+ * Subscribe to the per-user SSE stream. Returns a handle whose `close()`
+ * tears down the EventSource. The browser auto-reconnects on transient
+ * disconnects; `onError` lets the caller fall back to polling after
+ * persistent failures (e.g. self-host instances where /me/stream 404s).
+ */
+export function streamMeEvents(
+	onEvent: (e: MeStreamEvent) => void,
+	onError?: (err: Event) => void,
+): MeStreamHandle {
+	const url = `${RELAY_URL}/api/me/stream`;
+	const es = new EventSource(url, { withCredentials: true });
+	es.onmessage = (msg) => {
+		try {
+			const data = JSON.parse(msg.data) as MeStreamEvent;
+			onEvent(data);
+		} catch (err) {
+			console.warn("me-stream: malformed payload", err);
+		}
+	};
+	if (onError) es.onerror = onError;
+	return {
+		close: () => es.close(),
+	};
+}

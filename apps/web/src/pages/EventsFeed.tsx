@@ -2,8 +2,11 @@
  * Cross-channel unified event feed. Filters live in the URL query string
  * so views are shareable and back-button friendly. Cursor-paginated.
  *
- * v1: polling every 3s for new events. v2 (later) switches to UserDO
- * SSE push transparently — the renderer doesn't care where rows come from.
+ * Real-time: subscribes to the relay's per-user SSE stream (UserDO). Each
+ * webhook / response / claim event triggers a debounced refetch of the
+ * first page, which keeps the on-screen data filter-aware without merging
+ * stream payload shapes into MeEvent rows. Polling stays as a fallback
+ * when the stream fails (self-host, transient network drop, etc.).
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
@@ -14,9 +17,11 @@ import {
 	type MeDevice,
 	type MeEvent,
 	me,
+	streamMeEvents,
 } from "../lib/me-api";
 
 const POLL_MS = 3000;
+const STREAM_REFETCH_DEBOUNCE_MS = 250;
 const PAGE_SIZE = 50;
 
 export function EventsFeed() {
@@ -96,9 +101,12 @@ function EventsView() {
 		};
 	}, [filters]);
 
-	// Polling: top-up for new events ahead of `events[0].id` periodically.
+	// Real-time: SSE primary, polling fallback. The two coexist — even if
+	// the stream is fine, polling at a slow cadence covers blackouts the
+	// browser hasn't noticed yet (e.g. the laptop slept, EventSource hasn't
+	// fired `error` yet but events have piled up).
 	useEffect(() => {
-		const id = setInterval(async () => {
+		const refetch = async () => {
 			try {
 				const page = await me.events.feed({ ...filtersRef.current, limit: PAGE_SIZE });
 				setEvents((prev) => {
@@ -106,14 +114,47 @@ function EventsView() {
 					if (prev.length === 0) return page.events;
 					const seen = new Set(prev.map((e) => e.id));
 					const fresh = page.events.filter((e) => !seen.has(e.id));
-					if (fresh.length === 0) return prev;
-					return [...fresh, ...prev].slice(0, 1000); // cap in-memory
+					if (fresh.length === 0) {
+						// Update existing rows with any new response data without
+						// re-ordering — covers `response` stream events.
+						const byId = new Map(page.events.map((e) => [e.id, e]));
+						return prev.map((e) => byId.get(e.id) ?? e);
+					}
+					return [...fresh, ...prev].slice(0, 1000);
 				});
 			} catch {
 				/* keep showing stale data on transient errors */
 			}
-		}, POLL_MS);
-		return () => clearInterval(id);
+		};
+
+		// Debounce: bursts of stream events collapse to one refetch.
+		let debounceHandle: ReturnType<typeof setTimeout> | null = null;
+		const scheduleRefetch = () => {
+			if (debounceHandle) return;
+			debounceHandle = setTimeout(() => {
+				debounceHandle = null;
+				refetch();
+			}, STREAM_REFETCH_DEBOUNCE_MS);
+		};
+
+		const stream = streamMeEvents(
+			(e) => {
+				if (e.type === "webhook" || e.type === "response" || e.type === "claimed") {
+					scheduleRefetch();
+				}
+			},
+			() => {
+				/* error fires repeatedly during reconnect; polling below covers it */
+			},
+		);
+
+		const pollId = setInterval(refetch, POLL_MS);
+
+		return () => {
+			stream.close();
+			clearInterval(pollId);
+			if (debounceHandle) clearTimeout(debounceHandle);
+		};
 	}, []);
 
 	const loadMore = useCallback(async () => {

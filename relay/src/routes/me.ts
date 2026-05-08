@@ -26,6 +26,7 @@ import {
 } from "drizzle-orm";
 import type { drizzle } from "drizzle-orm/neon-http";
 import { Hono } from "hono";
+import { checkReplay, finiteOrNull, loadUserAccess } from "../access.js";
 import { type Auth, getSessionUser } from "../auth.js";
 
 type DB = ReturnType<typeof drizzle>;
@@ -41,18 +42,40 @@ const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 /**
  * Channel DO accessor — same shape as in index.ts. Replay needs to notify
  * the DO so any SSE subscriber wakes immediately rather than waiting for
- * the next 2-second poll cycle.
+ * the next 2-second poll cycle. The UserDO notifier mirrors fan-out to
+ * the dashboard's cross-channel stream.
  */
 export interface ChannelNotifier {
 	getChannelDO(channelId: string): {
 		fetch(req: Request): Promise<Response>;
 	};
+	notifyUser(userId: string | null, payload: string): void;
 }
 
 export interface MeEnv {
 	auth: Auth;
 	db: DB;
 	notifier: ChannelNotifier;
+	/**
+	 * Apex domain for wildcard webhook URLs. When set, the listed
+	 * `webhookUrl` reads as `https://<channelId>.<tunnelDomain>` so the
+	 * dashboard surfaces the canonical "no path needed" URL instead of the
+	 * legacy `/hook/<id>` one. `null` falls back to the path-based form.
+	 */
+	tunnelDomain: string | null;
+}
+
+/**
+ * Build a channel's canonical webhook URL — subdomain shape when
+ * tunnelDomain is set and the relay was reached over HTTPS, legacy path
+ * shape otherwise. Mirrors `buildWebhookUrl` in src/index.ts so dashboard
+ * and channel-create responses agree.
+ */
+function buildWebhookUrl(channelId: string, requestUrl: URL, tunnelDomain: string | null): string {
+	if (tunnelDomain && requestUrl.protocol === "https:") {
+		return `https://${channelId}.${tunnelDomain}`;
+	}
+	return `${requestUrl.origin}/hook/${channelId}`;
 }
 
 export function buildMeRoutes(getDeps: (c: { env: unknown }) => MeEnv | null) {
@@ -71,24 +94,36 @@ export function buildMeRoutes(getDeps: (c: { env: unknown }) => MeEnv | null) {
 				id: user.id,
 				email: user.email,
 				name: user.name,
-				plan: user.plan,
-				trialEndsAt: user.trialEndsAt,
-				createdAt: user.createdAt,
 			})
 			.from(user)
 			.where(eq(user.id, sessionUser.id))
 			.limit(1);
 		if (!u) return c.json({ error: "User not found" }, 404);
 
-		// Retention is plan-driven; the actual sweep cron lands in commit 14.
-		const retentionDays = u.plan === "active" ? 30 : 7;
+		// Single source of truth for plan / subscription / read-only state —
+		// see relay/src/access.ts. The /api/me payload is the dashboard's
+		// view into that record.
+		const access = await loadUserAccess(deps.db, u.id);
+		if (!access) return c.json({ error: "User not found" }, 404);
 
 		return c.json({
 			user: { id: u.id, email: u.email, name: u.name },
-			plan: u.plan,
-			trialEndsAt: u.trialEndsAt?.toISOString() ?? null,
+			plan: access.plan,
+			trialEndsAt: access.trialEndsAt?.toISOString() ?? null,
 			trialDaysTotal: TRIAL_DAYS,
-			retentionDays,
+			// `null` here means unlimited (selfhost). Settings.tsx renders it
+			// as "unlimited" rather than "null days".
+			retentionDays: finiteOrNull(access.limits.retentionDays),
+			readOnly: access.readOnly,
+			readOnlyReason: access.reason,
+			subscription: access.subscription
+				? {
+						status: access.subscription.status,
+						provider: access.subscription.provider,
+						cancelAtPeriodEnd: access.subscription.cancelAtPeriodEnd,
+						currentPeriodEnd: access.subscription.currentPeriodEnd.toISOString(),
+					}
+				: null,
 		});
 	});
 
@@ -148,7 +183,7 @@ export function buildMeRoutes(getDeps: (c: { env: unknown }) => MeEnv | null) {
 				allowedPaths: safeJsonArray(r.allowedPaths),
 				createdAt: r.createdAt.toISOString(),
 				expiresAt: r.expiresAt?.toISOString() ?? null,
-				webhookUrl: `${url.origin}/hook/${r.id}`,
+				webhookUrl: buildWebhookUrl(r.id, url, deps.tunnelDomain),
 				device: r.deviceId ? { id: r.deviceId, label: r.deviceLabel, kind: r.deviceKind } : null,
 				stats: {
 					count24h: stat?.count24h ?? 0,
@@ -252,7 +287,7 @@ export function buildMeRoutes(getDeps: (c: { env: unknown }) => MeEnv | null) {
 
 		const [updated] = await deps.db
 			.update(channels)
-			.set({ publicKey, secretHash: null })
+			.set({ publicKey })
 			.where(and(eq(channels.id, channelId), eq(channels.userId, sessionUser.id)))
 			.returning({ id: channels.id });
 		if (!updated) return c.json({ error: "Channel not found" }, 404);
@@ -505,6 +540,13 @@ export function buildMeRoutes(getDeps: (c: { env: unknown }) => MeEnv | null) {
 		const sessionUser = await getSessionUser(deps.auth, c.req.raw);
 		if (!sessionUser) return c.json({ error: "Not signed in" }, 401);
 
+		// Read-only accounts (expired trial, canceled sub) can view past
+		// events but not queue new replays — replay creates a new event row.
+		const access = await loadUserAccess(deps.db, sessionUser.id);
+		if (!access) return c.json({ error: "User not found" }, 404);
+		const gate = checkReplay(access);
+		if (!gate.ok) return c.json({ error: gate.error, code: "quota" }, gate.status);
+
 		const eventId = c.req.param("eventId");
 		if (!/^[a-z0-9]{1,32}$/.test(eventId)) {
 			return c.json({ error: "Event not found" }, 404);
@@ -585,6 +627,7 @@ export function buildMeRoutes(getDeps: (c: { env: unknown }) => MeEnv | null) {
 		stub
 			.fetch(new Request("https://do/notify", { method: "POST", body: ssePayload }))
 			.catch((err) => console.error("DO notify failed:", err));
+		deps.notifier.notifyUser(sessionUser.id, ssePayload);
 
 		return c.json({
 			replayId: inserted.id,

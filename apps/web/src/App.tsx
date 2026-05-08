@@ -12,6 +12,7 @@ import { Footer } from "./components/Footer";
 import { Nav } from "./components/Nav";
 import { ScrollFlow } from "./components/ScrollFlow";
 import { AuthCallback } from "./pages/AuthCallback";
+import { Billing } from "./pages/Billing";
 import { ChannelsList } from "./pages/ChannelsList";
 import { Connect } from "./pages/Connect";
 import { DashboardHome } from "./pages/DashboardHome";
@@ -127,11 +128,15 @@ export function App() {
 						</AuthGate>
 					}
 				/>
-				{/*
-					Event detail (/dashboard/events/:id) and channel detail
-					(/dashboard/channels/:id) land in commit 11 alongside replay UI.
-					Billing (/dashboard/billing) lands in commit 14.
-				*/}
+				<Route
+					path="/dashboard/billing"
+					element={
+						<AuthGate>
+							<Billing />
+						</AuthGate>
+					}
+				/>
+				{/* Channel detail (/dashboard/channels/:id) lands in a later commit. */}
 				<Route path="*" element={<Navigate to="/" replace />} />
 			</Routes>
 		</BrowserRouter>

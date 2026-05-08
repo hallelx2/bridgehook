@@ -53,10 +53,18 @@ export interface SSEResponseEvent {
 	latencyMs: number;
 }
 
+export interface SSEClaimedEvent {
+	type: "claimed";
+	eventId: string;
+	claimerId: string;
+	claimedAt: string;
+}
+
 export type SSEEvent =
 	| { type: "connected"; channelId: string }
 	| SSEWebhookEvent
-	| SSEResponseEvent;
+	| SSEResponseEvent
+	| SSEClaimedEvent;
 
 // ── Safe JSON parse helper (re-exported for hooks) ────────────────────────
 export function safeParseJson<T>(raw: string | null | undefined, fallback: T): T {
@@ -279,6 +287,70 @@ export async function forwardToLocalhost(
 	});
 
 	return { status: response.status, headers: respHeaders, body: respBody, latencyMs };
+}
+
+// ── Claim event for this executor (signed) ────────────────────────────────
+/**
+ * Atomic multi-device arbitration. Many executors can be connected to the
+ * same channel (extension + this dashboard tab + paired desktop); only one
+ * should forward each event. Whoever wins the claim races forwards; the
+ * losers see `claimed: false` and drop the work.
+ *
+ * The clientId here is the per-session tab UUID returned by getClientId().
+ * It's stored in events.claimed_by_device_id as a free-form string
+ * (the FK was dropped in migration 0007 specifically to allow this).
+ */
+export async function claimEvent(
+	channelId: string,
+	eventId: string,
+	clientId: string,
+	signal?: AbortSignal,
+): Promise<{ claimed: true } | { claimed: false; claimerId: string | null }> {
+	const res = await signedFetch(
+		channelId,
+		`${RELAY_URL}/hook/${encodeURIComponent(channelId)}/claim`,
+		{
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ eventId, clientId }),
+			signal,
+		},
+	);
+	if (res.status === 409) {
+		const data = (await res.json().catch(() => ({}))) as { claimerId?: string | null };
+		return { claimed: false, claimerId: data.claimerId ?? null };
+	}
+	if (!res.ok) throw new Error(`claim failed: ${res.status}`);
+	return { claimed: true };
+}
+
+/**
+ * Stable per-tab identifier used as the clientId for claim arbitration.
+ * Persisted in sessionStorage so a refresh keeps the same id (avoids stranding
+ * pending claims across the reload). New tab → new id.
+ */
+const CLIENT_ID_KEY = "bridgehook:client-id";
+let cachedClientId: string | null = null;
+
+export function getClientId(): string {
+	if (cachedClientId) return cachedClientId;
+	try {
+		const existing = sessionStorage.getItem(CLIENT_ID_KEY);
+		if (existing) {
+			cachedClientId = existing;
+			return existing;
+		}
+	} catch {
+		/* sessionStorage unavailable (e.g. SSR) — fall through */
+	}
+	const fresh = `web_${crypto.randomUUID()}`;
+	cachedClientId = fresh;
+	try {
+		sessionStorage.setItem(CLIENT_ID_KEY, fresh);
+	} catch {
+		/* best-effort persistence */
+	}
+	return fresh;
 }
 
 // ── Send response back to relay (signed) ──────────────────────────────────
