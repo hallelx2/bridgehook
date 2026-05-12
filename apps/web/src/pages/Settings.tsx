@@ -62,6 +62,15 @@ function SettingsView() {
 					label="Event retention"
 					value={user.retentionDays === null ? "unlimited" : `${user.retentionDays} days`}
 				/>
+				<Row
+					label="Webhooks today (UTC)"
+					value={
+						user.eventsPerDay === null
+							? `${user.eventsToday.toLocaleString()} (no cap)`
+							: `${user.eventsToday.toLocaleString()} / ${user.eventsPerDay.toLocaleString()}`
+					}
+					mono
+				/>
 				<div className="pt-2">
 					<button
 						type="button"

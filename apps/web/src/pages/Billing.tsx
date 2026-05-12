@@ -1,3 +1,12 @@
+/**
+ * Billing page. At launch, the only tier is `free`, so this page is mostly
+ * a usage panel + "paid tiers coming soon" notice. The full checkout grid
+ * is preserved for when {@link PUBLIC_PLAN_ORDER} is non-empty (i.e. when
+ * Polar is wired on); add `"hobby", "pro", "team"` back to that array to
+ * re-enable the tier cards.
+ *
+ * Self-host (config.authEnabled === false) shows the self-host notice.
+ */
 import {
 	PLANS,
 	PUBLIC_PLAN_ORDER,
@@ -5,17 +14,6 @@ import {
 	type PlanId,
 	formatPrice,
 } from "@bridgehook/shared";
-/**
- * Billing page — pricing tiers + Subscribe / Manage actions.
- *
- * Hosted mode only: in self-host (config.authEnabled === false) the page
- * shows a self-host notice and no checkout buttons.
- *
- * The success URL of a Polar checkout returns the user here with
- * ?upgraded=1 — we surface a confirmation banner. The actual plan flip
- * happens via the relay's webhook handler on Polar's side, so it may
- * lag the redirect by a second or two.
- */
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { DashboardLayout } from "../components/DashboardLayout";
@@ -80,18 +78,6 @@ function BillingView() {
 		);
 	}
 
-	if (config?.authEnabled && !config.billingEnabled) {
-		return (
-			<div className="rounded-lg border border-gray-900 bg-gray-950 p-6 max-w-2xl">
-				<h1 className="text-lg font-semibold mb-2">Billing not configured</h1>
-				<p className="text-sm text-gray-400">
-					This hosted instance does not have a payment provider wired up. Set the Polar env vars on
-					the relay (POLAR_ACCESS_TOKEN and POLAR_PRODUCT_ID_*) to enable subscriptions.
-				</p>
-			</div>
-		);
-	}
-
 	if (!user) {
 		return error ? (
 			<ErrorBox message={error} />
@@ -143,13 +129,13 @@ function BillingView() {
 		}
 	}
 
-	const isTrialing = user.plan === "trialing";
 	const subStatus = user.subscription?.status;
 	const isPastDue = subStatus === "past_due";
-	// Subscription exists and isn't fully canceled — gives access to the portal.
 	const hasManageableSub =
 		!!user.subscription && subStatus !== "canceled" && subStatus !== "revoked";
 	const cancelingAtPeriodEnd = !!user.subscription?.cancelAtPeriodEnd;
+	const isTrialing = user.plan === "trialing";
+	const paidTiersVisible = PUBLIC_PLAN_ORDER.length > 0;
 
 	return (
 		<div className="space-y-6">
@@ -190,30 +176,114 @@ function BillingView() {
 				</div>
 			) : null}
 
-			{error ? (
-				<div className="rounded-md border border-red-900 bg-red-950/40 px-4 py-3 text-sm text-red-300">
-					{error}
-				</div>
-			) : null}
+			{error ? <ErrorBox message={error} /> : null}
 
-			{/* Tier cards */}
-			<section className="grid grid-cols-1 md:grid-cols-3 gap-4">
-				{PUBLIC_PLAN_ORDER.map((id) => (
-					<PlanCard
-						key={id}
-						plan={PLANS[id]}
-						currentPlan={user.plan}
-						busy={busy}
-						onCheckout={() => checkout(id)}
-					/>
-				))}
-			</section>
+			<UsagePanel user={user} />
+
+			{paidTiersVisible ? (
+				<section className="grid grid-cols-1 md:grid-cols-3 gap-4">
+					{PUBLIC_PLAN_ORDER.map((id) => (
+						<PlanCard
+							key={id}
+							plan={PLANS[id]}
+							currentPlan={user.plan}
+							busy={busy}
+							onCheckout={() => checkout(id)}
+						/>
+					))}
+				</section>
+			) : (
+				<PaidComingSoonPanel />
+			)}
 
 			<p className="text-xs text-gray-500 max-w-2xl">
 				Or self-host BridgeHook for free — clone the repo, deploy your own Cloudflare Worker + Neon
 				DB, and you own the whole stack. MIT licensed; no quotas, no gates.
 			</p>
 		</div>
+	);
+}
+
+function UsagePanel({ user }: { user: MeUser }) {
+	const plan = PLANS[user.plan as PlanId] ?? PLANS.free;
+	const cap = user.eventsPerDay;
+	const used = user.eventsToday;
+	const overCap = cap !== null && used >= cap;
+	const percentage = cap !== null && cap > 0 ? Math.min(100, (used / cap) * 100) : 0;
+
+	return (
+		<section className="rounded-lg border border-gray-900 bg-gray-950 p-5 space-y-4">
+			<div className="flex items-baseline justify-between">
+				<div>
+					<div className="text-[10px] uppercase tracking-wider text-gray-500 mb-1">
+						Current plan
+					</div>
+					<div className="text-lg font-semibold">{plan.name}</div>
+				</div>
+				<div className="text-right">
+					<div className="text-[10px] uppercase tracking-wider text-gray-500 mb-1">Today (UTC)</div>
+					<div className="text-lg font-semibold font-mono">
+						{used}
+						{cap !== null ? <span className="text-gray-500"> / {cap}</span> : null}
+					</div>
+				</div>
+			</div>
+
+			{cap !== null ? (
+				<div className="space-y-1.5">
+					<div className="h-1.5 bg-gray-900 rounded-full overflow-hidden">
+						<div
+							className={`h-full transition-all ${overCap ? "bg-amber-500" : "bg-cyan-500"}`}
+							style={{ width: `${percentage}%` }}
+						/>
+					</div>
+					{overCap ? (
+						<p className="text-xs text-amber-300">
+							Daily cap reached. New webhooks return 402 until 00:00 UTC.
+						</p>
+					) : (
+						<p className="text-xs text-gray-500">Resets at 00:00 UTC.</p>
+					)}
+				</div>
+			) : null}
+
+			<div className="grid grid-cols-2 gap-4 pt-2 border-t border-gray-900 text-xs">
+				<Stat label="Channels" value={limitString(plan.limits.maxChannels)} />
+				<Stat label="Devices" value={limitString(plan.limits.maxDevices)} />
+				<Stat
+					label="Retention"
+					value={user.retentionDays === null ? "unlimited" : `${user.retentionDays} days`}
+				/>
+				<Stat label="Webhooks / day" value={limitString(plan.limits.eventsPerDay)} />
+			</div>
+		</section>
+	);
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+	return (
+		<div>
+			<div className="text-[10px] uppercase tracking-wider text-gray-500">{label}</div>
+			<div className="text-gray-200 font-mono">{value}</div>
+		</div>
+	);
+}
+
+function limitString(n: number): string {
+	if (!Number.isFinite(n)) return "unlimited";
+	return n.toLocaleString();
+}
+
+function PaidComingSoonPanel() {
+	return (
+		<section className="rounded-lg border border-gray-900 bg-gray-950 p-5 space-y-2">
+			<h2 className="text-sm font-semibold text-gray-200">Paid plans coming soon</h2>
+			<p className="text-xs text-gray-500 leading-relaxed max-w-xl">
+				Larger daily caps, longer retention, webhook signature verification, body search, and audit
+				trails are on the roadmap. We'll email you when checkout opens. In the meantime, stay on the
+				free plan — or self-host the whole stack for unmetered access.
+			</p>
+		</section>
 	);
 }
 
@@ -290,8 +360,8 @@ function TrialBanner({ trialEndsAt }: { trialEndsAt: string }) {
 	return (
 		<div className="rounded-md border border-cyan-900/50 bg-cyan-950/20 px-4 py-3 text-sm text-cyan-300">
 			{days > 0
-				? `Trial: ${days} day${days === 1 ? "" : "s"} left. Subscribe before it ends to keep using BridgeHook without interruption.`
-				: "Your trial has ended. Subscribe to restore access."}
+				? `Trial: ${days} day${days === 1 ? "" : "s"} left.`
+				: "Your trial has ended. You've been moved to the free plan."}
 		</div>
 	);
 }

@@ -1,20 +1,29 @@
 /**
  * Single source of truth for pricing tiers. Drives:
  *   - Web Billing page render
- *   - Relay quota enforcement (commit 14+)
+ *   - Relay quota enforcement (free-tier daily cap, per-plan retention, etc.)
  *   - Polar product configuration (set the productId env var to match)
  *
- * Self-host mode bypasses real quotas — the implicit user is assigned the
- * `selfhost` tier (see relay/src/identity.ts), which has Infinity limits and
- * is excluded from {@link PUBLIC_PLAN_ORDER} so the Billing page never lists it.
+ * At launch the dashboard only exposes `free` to new signups. The paid tiers
+ * are kept in the table so the access layer and Polar webhook handler stay
+ * complete — flipping them on is a UI change, not a code change.
+ *
+ * Self-host instances bypass real quotas — `getOrCreateSelfHostUser` writes
+ * `plan = 'selfhost'`, which carries Infinity limits and is excluded from
+ * {@link PUBLIC_PLAN_ORDER} so the Billing page never lists it.
  */
 
 /**
- * `selfhost` is an internal-only tier carried by the implicit user that
- * self-hosted relays write to. The access layer treats it as unlimited and
- * never read-only. It does NOT appear in {@link PUBLIC_PLAN_ORDER}.
+ * `free` is the default tier for new hosted-mode signups; replaces the
+ * earlier 7-day `trialing` flow. `selfhost` is the implicit self-host user.
+ * Both are absent from {@link PUBLIC_PLAN_ORDER} — that list drives the
+ * paid checkout cards, which are off at launch.
+ *
+ * `trialing` stays as a valid PlanId for backwards compat with users who
+ * signed up before the free-tier flip; the access layer treats them as
+ * if their trial is currently active.
  */
-export type PlanId = "trialing" | "hobby" | "pro" | "team" | "selfhost";
+export type PlanId = "free" | "trialing" | "hobby" | "pro" | "team" | "selfhost";
 
 export interface PlanLimits {
 	/** Active channels per user. Infinity = unbounded. */
@@ -23,6 +32,11 @@ export interface PlanLimits {
 	maxDevices: number;
 	/** Event retention window in days. */
 	retentionDays: number;
+	/**
+	 * Hard daily event cap, enforced at webhook intake via the RATE_LIMIT KV.
+	 * Infinity = unbounded (selfhost/pro/team).
+	 */
+	eventsPerDay: number;
 	/** Soft monthly event count cap (informational v1; enforced post-MVP). */
 	monthlyEventCap: number;
 	/** Polling cadence in ms — UI hint for rendering "polls every Ns" copy. */
@@ -49,28 +63,48 @@ export interface PlanDef {
 }
 
 export const PLANS: Record<PlanId, PlanDef> = {
+	free: {
+		id: "free",
+		name: "Free",
+		tagline: "Kick the tires. No card required.",
+		priceMonthlyCents: 0,
+		limits: {
+			maxChannels: 1,
+			maxDevices: 1,
+			retentionDays: 3,
+			eventsPerDay: 10,
+			monthlyEventCap: 300,
+			pollIntervalMs: 3000,
+			seats: 1,
+		},
+		features: [
+			{ label: "1 channel, 1 device", included: true },
+			{ label: "10 webhooks / day", included: true },
+			{ label: "3-day event retention", included: true },
+			{ label: "Replay with chain view", included: true },
+			{ label: "Real-time push (SSE)", included: true },
+		],
+		cta: "Sign in",
+	},
 	trialing: {
+		// Legacy: kept for users whose accounts were created during the 7-day
+		// trial flow. New signups go straight to `free`. Limits mirror Hobby
+		// because that's what the trial used to grant.
 		id: "trialing",
 		name: "Trial",
-		tagline: "Full access for 7 days. No card required.",
+		tagline: "Full Hobby features for 7 days.",
 		priceMonthlyCents: 0,
 		limits: {
 			maxChannels: 5,
 			maxDevices: 2,
 			retentionDays: 7,
+			eventsPerDay: Number.POSITIVE_INFINITY,
 			monthlyEventCap: 1_000,
 			pollIntervalMs: 3000,
 			seats: 1,
 		},
-		features: [
-			{ label: "All Hobby features for 7 days", included: true },
-			{
-				label: "Account locks to read-only after trial",
-				included: true,
-				hint: "subscribe before day 7 to keep going",
-			},
-		],
-		cta: "Start trial",
+		features: [],
+		cta: "",
 	},
 	hobby: {
 		id: "hobby",
@@ -81,6 +115,7 @@ export const PLANS: Record<PlanId, PlanDef> = {
 			maxChannels: 5,
 			maxDevices: 2,
 			retentionDays: 7,
+			eventsPerDay: Number.POSITIVE_INFINITY,
 			monthlyEventCap: 1_000,
 			pollIntervalMs: 3000,
 			seats: 1,
@@ -107,6 +142,7 @@ export const PLANS: Record<PlanId, PlanDef> = {
 			maxChannels: Number.POSITIVE_INFINITY,
 			maxDevices: Number.POSITIVE_INFINITY,
 			retentionDays: 30,
+			eventsPerDay: Number.POSITIVE_INFINITY,
 			monthlyEventCap: 100_000,
 			pollIntervalMs: 1000,
 			seats: 1,
@@ -137,6 +173,7 @@ export const PLANS: Record<PlanId, PlanDef> = {
 			maxChannels: Number.POSITIVE_INFINITY,
 			maxDevices: Number.POSITIVE_INFINITY,
 			retentionDays: 90,
+			eventsPerDay: Number.POSITIVE_INFINITY,
 			monthlyEventCap: 500_000,
 			pollIntervalMs: 1000,
 			seats: 5,
@@ -162,6 +199,7 @@ export const PLANS: Record<PlanId, PlanDef> = {
 			maxChannels: Number.POSITIVE_INFINITY,
 			maxDevices: Number.POSITIVE_INFINITY,
 			retentionDays: Number.POSITIVE_INFINITY,
+			eventsPerDay: Number.POSITIVE_INFINITY,
 			monthlyEventCap: Number.POSITIVE_INFINITY,
 			pollIntervalMs: 1000,
 			seats: Number.POSITIVE_INFINITY,
@@ -178,4 +216,9 @@ export function formatPrice(cents: number): string {
 	return `$${dollars.toFixed(2)}`;
 }
 
-export const PUBLIC_PLAN_ORDER: PlanId[] = ["hobby", "pro", "team"];
+/**
+ * Tiers shown on the Billing page's checkout grid. Empty at launch — paid
+ * is dormant until you flip `POLAR_*` env vars on. To re-enable, add
+ * `"hobby", "pro", "team"` back here.
+ */
+export const PUBLIC_PLAN_ORDER: PlanId[] = [];

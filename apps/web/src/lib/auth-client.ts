@@ -35,6 +35,16 @@ interface AuthClient {
 			callbackURL?: string;
 			newUserCallbackURL?: string;
 		}) => Promise<{ data?: unknown; error?: { message?: string } }>;
+		/**
+		 * OAuth sign-in. Provider name matches the key in the relay's
+		 * `socialProviders` config — currently "google" or "github".
+		 * Better-Auth redirects the browser to the provider's authorize URL;
+		 * `callbackURL` is where the user lands after the OAuth dance completes.
+		 */
+		social: (args: {
+			provider: "google" | "github";
+			callbackURL?: string;
+		}) => Promise<{ data?: unknown; error?: { message?: string } }>;
 	};
 	signOut: () => Promise<{ data?: unknown; error?: { message?: string } }>;
 	useSession: () => {

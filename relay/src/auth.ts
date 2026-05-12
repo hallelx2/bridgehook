@@ -1,4 +1,3 @@
-import { TRIAL_DAYS } from "@bridgehook/shared";
 import { account, session, user, verification } from "@bridgehook/shared/db/schema";
 import { neon } from "@neondatabase/serverless";
 /**
@@ -12,13 +11,22 @@ import { neon } from "@neondatabase/serverless";
  * Cross-subdomain cookies: when AUTH_COOKIE_DOMAIN is set (e.g. ".bridgehook.dev"),
  * the session cookie is readable from app.bridgehook.dev and relay.bridgehook.dev.
  * Self-hosters set their own domain or leave it unset for same-origin only.
+ *
+ * Sign-in providers at launch:
+ *   - Google OAuth (registered when GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET set)
+ *   - GitHub OAuth (registered when GITHUB_CLIENT_ID + GITHUB_CLIENT_SECRET set)
+ *   - Magic link (registered when RESEND_API_KEY set, or always in dev with the
+ *     console mailer)
+ *
+ * Each provider is independently optional — missing env vars just drop that
+ * provider out of the registered list, no startup failure. The Login page
+ * checks /api/config.authProviders to decide which buttons to render.
  */
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { magicLink } from "better-auth/plugins";
 import { drizzle } from "drizzle-orm/neon-http";
 import { pickMailer } from "./email.js";
-import { addDays } from "./time.js";
 
 export interface AuthEnv {
 	DATABASE_URL: string;
@@ -28,6 +36,11 @@ export interface AuthEnv {
 	AUTH_TRUSTED_ORIGINS?: string; // comma-separated
 	RESEND_API_KEY?: string;
 	MAIL_FROM?: string;
+	// OAuth provider credentials. Each pair is independent — set one or both.
+	GOOGLE_CLIENT_ID?: string;
+	GOOGLE_CLIENT_SECRET?: string;
+	GITHUB_CLIENT_ID?: string;
+	GITHUB_CLIENT_SECRET?: string;
 }
 
 // We use the returned shape opaquely (only `auth.handler(req)` and
@@ -38,6 +51,30 @@ export type Auth = any;
 
 let cachedAuth: Auth | null | undefined;
 let cachedSecret: string | undefined;
+
+/**
+ * Which sign-in methods this relay has been configured for. Surfaced via
+ * /api/config so the dashboard renders the right buttons. Magic-link is
+ * always considered available in dev (console mailer), but only "real" in
+ * the UI sense when a mailer is wired up.
+ */
+export interface AvailableAuthProviders {
+	google: boolean;
+	github: boolean;
+	magicLink: boolean;
+}
+
+export function getAvailableAuthProviders(env: AuthEnv): AvailableAuthProviders {
+	return {
+		google: Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET),
+		github: Boolean(env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET),
+		// Magic-link is registered unconditionally on the relay side (console
+		// mailer in dev, Resend in prod). Flag it for the UI based on whether
+		// a real mailer is plugged in — dev users can still hit /auth/sign-in
+		// directly if they really want.
+		magicLink: Boolean(env.RESEND_API_KEY),
+	};
+}
 
 /**
  * Lazily construct the Better-Auth handler. Memoized per Worker isolate so
@@ -62,6 +99,24 @@ export function createAuth(env: AuthEnv): Auth | null {
 		.map((s) => s.trim())
 		.filter(Boolean);
 
+	// Build the socialProviders config object — each entry is optional and
+	// only registered when both client id + secret are present. Better-Auth's
+	// own logic auto-verifies email when the OAuth provider reports it as
+	// verified, which is the case for both Google and GitHub.
+	const socialProviders: Record<string, { clientId: string; clientSecret: string }> = {};
+	if (env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET) {
+		socialProviders.google = {
+			clientId: env.GOOGLE_CLIENT_ID,
+			clientSecret: env.GOOGLE_CLIENT_SECRET,
+		};
+	}
+	if (env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET) {
+		socialProviders.github = {
+			clientId: env.GITHUB_CLIENT_ID,
+			clientSecret: env.GITHUB_CLIENT_SECRET,
+		};
+	}
+
 	const auth = betterAuth({
 		secret,
 		baseURL: env.BETTER_AUTH_URL,
@@ -70,8 +125,9 @@ export function createAuth(env: AuthEnv): Auth | null {
 			provider: "pg",
 			schema: { user, session, account, verification },
 		}),
-		// Disable email/password — magic-link only at launch.
+		// Disable email/password — OAuth + magic-link only.
 		emailAndPassword: { enabled: false },
+		socialProviders,
 		plugins: [
 			magicLink({
 				sendMagicLink: async ({ email, url }) => {
@@ -80,7 +136,9 @@ export function createAuth(env: AuthEnv): Auth | null {
 				expiresIn: 15 * 60,
 			}),
 		],
-		// First-time signups get a 7-day trial.
+		// New signups land on the free tier. The 7-day trial is retired; users
+		// keep using the free quota until they hit the daily cap, at which
+		// point Billing surfaces the upsell (paid tiers ship later).
 		databaseHooks: {
 			user: {
 				create: {
@@ -88,8 +146,8 @@ export function createAuth(env: AuthEnv): Auth | null {
 						return {
 							data: {
 								...incoming,
-								plan: "trialing",
-								trialEndsAt: addDays(new Date(), TRIAL_DAYS),
+								plan: "free",
+								trialEndsAt: null,
 							},
 						};
 					},

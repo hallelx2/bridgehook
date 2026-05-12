@@ -20,15 +20,20 @@ export interface MeSubscription {
 export interface MeUser {
 	user: { id: string; email: string; name: string };
 	/**
-	 * Effective tier — drives quota/feature gating. `selfhost` is internal
-	 * (the implicit user on self-hosted relays); the dashboard never renders
-	 * a checkout for it.
+	 * Effective tier — drives quota/feature gating. `free` is the launch
+	 * default; `selfhost` is internal (the implicit user on self-hosted
+	 * relays); `trialing` is legacy. The dashboard never renders a checkout
+	 * for `selfhost`.
 	 */
-	plan: "trialing" | "hobby" | "pro" | "team" | "selfhost";
+	plan: "free" | "trialing" | "hobby" | "pro" | "team" | "selfhost";
 	trialEndsAt: string | null;
 	trialDaysTotal: number;
 	/** null = unlimited (selfhost). */
 	retentionDays: number | null;
+	/** Daily webhook intake cap. null = unlimited. */
+	eventsPerDay: number | null;
+	/** Exact count of webhooks received so far today (UTC). */
+	eventsToday: number;
 	/** True when account is locked to view-only (expired trial / canceled sub). */
 	readOnly: boolean;
 	readOnlyReason: "trial-expired" | "subscription-canceled" | null;

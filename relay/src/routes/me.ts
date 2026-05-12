@@ -26,7 +26,7 @@ import {
 } from "drizzle-orm";
 import type { drizzle } from "drizzle-orm/neon-http";
 import { Hono } from "hono";
-import { checkReplay, finiteOrNull, loadUserAccess } from "../access.js";
+import { checkReplay, finiteOrNull, loadDailyEventCount, loadUserAccess } from "../access.js";
 import { type Auth, getSessionUser } from "../auth.js";
 
 type DB = ReturnType<typeof drizzle>;
@@ -106,6 +106,13 @@ export function buildMeRoutes(getDeps: (c: { env: unknown }) => MeEnv | null) {
 		const access = await loadUserAccess(deps.db, u.id);
 		if (!access) return c.json({ error: "User not found" }, 404);
 
+		// Today's count is computed from the events table (exact). The KV
+		// counter used at intake is the rate-limit gate; this number is what
+		// the dashboard shows.
+		const eventsToday = Number.isFinite(access.limits.eventsPerDay)
+			? await loadDailyEventCount(deps.db, u.id)
+			: 0;
+
 		return c.json({
 			user: { id: u.id, email: u.email, name: u.name },
 			plan: access.plan,
@@ -114,6 +121,8 @@ export function buildMeRoutes(getDeps: (c: { env: unknown }) => MeEnv | null) {
 			// `null` here means unlimited (selfhost). Settings.tsx renders it
 			// as "unlimited" rather than "null days".
 			retentionDays: finiteOrNull(access.limits.retentionDays),
+			eventsPerDay: finiteOrNull(access.limits.eventsPerDay),
+			eventsToday,
 			readOnly: access.readOnly,
 			readOnlyReason: access.reason,
 			subscription: access.subscription

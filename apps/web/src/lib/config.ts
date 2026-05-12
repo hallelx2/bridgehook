@@ -8,11 +8,23 @@ import { useEffect, useState } from "react";
 
 const RELAY_URL = import.meta.env.VITE_RELAY_URL || "http://localhost:8787";
 
+/**
+ * Sign-in providers the relay is configured for. Each is independently
+ * optional — the Login page renders only the buttons whose providers are
+ * `true` here. All three are `false` in self-host mode.
+ */
+export interface AuthProviders {
+	google: boolean;
+	github: boolean;
+	magicLink: boolean;
+}
+
 export interface RelayConfig {
 	authEnabled: boolean;
 	signupEnabled: boolean;
 	/** True when the relay has Polar credentials wired — gates checkout UI. */
 	billingEnabled: boolean;
+	authProviders: AuthProviders;
 	trialDays: number;
 	version: string;
 }
@@ -21,6 +33,7 @@ const FALLBACK_CONFIG: RelayConfig = {
 	authEnabled: false,
 	signupEnabled: false,
 	billingEnabled: false,
+	authProviders: { google: false, github: false, magicLink: false },
 	trialDays: 0,
 	version: "unknown",
 };

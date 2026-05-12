@@ -6,19 +6,21 @@
  *
  *   1. Plan tier (`users.plan`) — drives the limits read from {@link PLANS}
  *   2. Trial state (`users.trialEndsAt`) — past-trial users on `trialing`
- *      flip to read-only
+ *      flip to read-only (legacy; new signups go straight to `free`)
  *   3. Subscription status (`subscriptions.status`) — `canceled` / `revoked`
  *      drops a paid user back to read-only as a safety net (the webhook
- *      should also have flipped `users.plan` back to `trialing`, but races
- *      happen)
+ *      should also have flipped `users.plan`, but races happen)
+ *
+ * Free-tier users (`free`) never flip to read-only — they have a daily event
+ * cap enforced separately at webhook intake via {@link checkDailyEventCap}.
  *
  * Self-host instances never reach this code — `getOrCreateSelfHostUser`
  * writes `plan = "selfhost"` which has Infinity limits and is treated as
  * never-read-only here for defense in depth.
  */
 import { PLANS, type PlanId } from "@bridgehook/shared";
-import { channels, devices, subscriptions, user } from "@bridgehook/shared/db/schema";
-import { and, count, eq, isNull } from "drizzle-orm";
+import { events, channels, devices, subscriptions, user } from "@bridgehook/shared/db/schema";
+import { and, count, eq, gte, isNull } from "drizzle-orm";
 import type { drizzle } from "drizzle-orm/neon-http";
 
 type DB = ReturnType<typeof drizzle>;
@@ -78,14 +80,14 @@ export async function loadUserAccess(db: DB, userId: string): Promise<UserAccess
 	let readOnly = false;
 	let reason: ReadOnlyReason | null = null;
 
-	if (plan === "selfhost") {
-		// Always full access. Defensive: even if a future migration writes
-		// odd state, the implicit user keeps working.
+	if (plan === "selfhost" || plan === "free") {
+		// Always full access (within plan limits — the daily cap is its own
+		// gate). Free has no time-based lock; the daily counter resets at
+		// UTC midnight, so the only "no" answer is "you hit the cap today."
 		readOnly = false;
 	} else if (plan === "trialing") {
-		// Past-trial users with no active sub flip to read-only. The webhook
-		// only resets to `trialing` on `canceled`/`revoked`, so a freshly-
-		// trialing user here is genuinely on a trial.
+		// Legacy users from the old 7-day trial flow. Past-trial users with
+		// no active sub flip to read-only — same shape as before.
 		if (!u.trialEndsAt || u.trialEndsAt.getTime() <= Date.now()) {
 			readOnly = true;
 			reason = "trial-expired";
@@ -125,6 +127,7 @@ export async function loadUserAccess(db: DB, userId: string): Promise<UserAccess
 export function normalizePlan(raw: string): PlanId {
 	if (raw === "active") return "selfhost"; // legacy self-host marker
 	if (
+		raw === "free" ||
 		raw === "trialing" ||
 		raw === "hobby" ||
 		raw === "pro" ||
@@ -133,7 +136,7 @@ export function normalizePlan(raw: string): PlanId {
 	) {
 		return raw;
 	}
-	return "trialing";
+	return "free"; // fail-open to a working free account, not a locked trial
 }
 
 // ── Quota / lock checks ──────────────────────────────────────────────────
@@ -196,6 +199,76 @@ async function countActiveDevices(db: DB, userId: string): Promise<number> {
 		.from(devices)
 		.where(and(eq(devices.userId, userId), isNull(devices.revokedAt)));
 	return Number(n);
+}
+
+// ── Daily event cap (free-tier rate limit) ───────────────────────────────
+//
+// Two views into "events received today":
+//   • `dailyEventCapKey()` + KV — fast, eventually consistent, used in the
+//     hot path at webhook intake. Read-then-write is racy, but at 10/day
+//     resolution the rare off-by-one is acceptable.
+//   • `loadDailyEventCount()` — exact DB count, used by /api/me so the
+//     dashboard shows the true "5/10 today" number.
+//
+// Both bucket by UTC date, so users in any timezone see the cap roll over
+// at midnight UTC. (Local-time buckets aren't worth the complexity at this
+// scale — and would hand attackers a 24h window with two date buckets.)
+
+const ONE_DAY_SECONDS = 86_400;
+const KV_TTL_SLACK_SECONDS = 3_600;
+
+export function utcDateString(now: Date = new Date()): string {
+	return now.toISOString().slice(0, 10); // YYYY-MM-DD
+}
+
+export function dailyEventCapKey(userId: string, date: string = utcDateString()): string {
+	return `events:${userId}:${date}`;
+}
+
+/** Authoritative count for /api/me (DB). */
+export async function loadDailyEventCount(db: DB, userId: string): Promise<number> {
+	const dayStart = new Date(`${utcDateString()}T00:00:00.000Z`);
+	const [{ n }] = await db
+		.select({ n: count() })
+		.from(events)
+		.innerJoin(channels, eq(events.channelId, channels.id))
+		.where(and(eq(channels.userId, userId), gte(events.receivedAt, dayStart)));
+	return Number(n);
+}
+
+/**
+ * Hot-path check + increment for the daily event cap. Returns ok when the
+ * user is under-cap and the counter has been bumped; not-ok when the cap
+ * is reached.
+ *
+ * The KV access is best-effort: when RATE_LIMIT is unbound (e.g. dev
+ * without a KV namespace), we let the request through rather than block
+ * everyone. The DB-backed count in /api/me is the audit trail; this is
+ * just an admission control.
+ */
+export async function checkDailyEventCap(
+	kv: KVNamespace | undefined,
+	access: UserAccess,
+): Promise<AccessCheck> {
+	const cap = access.limits.eventsPerDay;
+	if (!Number.isFinite(cap)) return { ok: true };
+	if (!kv) return { ok: true }; // soft-fail in environments without KV
+
+	const key = dailyEventCapKey(access.userId);
+	const current = Number(await kv.get(key)) || 0;
+	if (current >= cap) {
+		return {
+			ok: false,
+			status: 402,
+			error: `Daily webhook cap reached (${cap} on ${PLANS[access.plan].name}). Resets at 00:00 UTC.`,
+		};
+	}
+	// TTL the counter ~25h so the bucket lives slightly past midnight UTC
+	// in case of clock skew; the next day's key has its own TTL window.
+	await kv.put(key, String(current + 1), {
+		expirationTtl: ONE_DAY_SECONDS + KV_TTL_SLACK_SECONDS,
+	});
+	return { ok: true };
 }
 
 // ── JSON-safe serializer ─────────────────────────────────────────────────

@@ -12,8 +12,8 @@ import { and, desc, eq, inArray, isNull, lt } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/neon-http";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { checkChannelCreate, loadUserAccess } from "./access.js";
-import { createAuth, getSessionUser } from "./auth.js";
+import { checkChannelCreate, checkDailyEventCap, loadUserAccess } from "./access.js";
+import { createAuth, getAvailableAuthProviders, getSessionUser } from "./auth.js";
 import { createPolarClient } from "./billing.js";
 import { getOrCreateSelfHostUser, resolveCaller, touchDevice } from "./identity.js";
 import { buildAuthDeviceRoutes, cleanupExpiredDeviceCodes } from "./routes/auth-device.js";
@@ -288,6 +288,23 @@ async function handleWebhookIntake(
 	const allowedPaths = safeJsonParse<string[]>(channel.allowedPaths, []);
 	if (!isPathAllowed(cleanPath, allowedPaths)) {
 		return jsonResponse(403, { error: "Path not allowed for this channel" });
+	}
+
+	// Daily event cap (free-tier rate limit). Owned channels only — anonymous
+	// channels and self-host (Infinity cap) short-circuit through the access
+	// layer with no KV cost. The cap check increments the KV counter on
+	// success, so this is the only place the counter advances.
+	if (channel.userId) {
+		const access = await loadUserAccess(db, channel.userId);
+		if (access && Number.isFinite(access.limits.eventsPerDay)) {
+			const capCheck = await checkDailyEventCap(env.RATE_LIMIT, access);
+			if (!capCheck.ok) {
+				return jsonResponse(capCheck.status, {
+					error: capCheck.error,
+					code: "quota",
+				});
+			}
+		}
 	}
 
 	const headers: Record<string, string> = {};
@@ -595,19 +612,23 @@ app.all("/auth/*", async (c) => {
 app.get("/health", (c) => c.json({ status: "ok" }));
 
 // ── Config probe (public, unauthenticated) ──
-// Web/extension call this once at startup to know whether the relay is
-// running in hosted (auth-enabled) or self-host (auth-disabled) mode and
-// gate UI affordances accordingly. `billingEnabled` is independent — a
-// hosted instance can run without Polar (env unset → /api/me/billing/* 503),
-// in which case the Billing page hides checkout buttons and shows a
-// "billing not configured" notice instead.
+// Web/extension call this once at startup to gate UI affordances:
+//   - `authEnabled`: hosted-mode flag (false = self-host, no auth UI at all)
+//   - `billingEnabled`: Polar is configured; Billing page shows checkout
+//   - `authProviders`: which sign-in buttons Login should render (google,
+//     github, magicLink). Each is independently optional — the Login page
+//     hides buttons whose providers aren't configured here.
 app.get("/api/config", (c) => {
 	const authEnabled = Boolean(c.env.BETTER_AUTH_SECRET);
 	const billingEnabled = authEnabled && Boolean(c.env.POLAR_ACCESS_TOKEN);
+	const authProviders = authEnabled
+		? getAvailableAuthProviders(c.env)
+		: { google: false, github: false, magicLink: false };
 	return c.json({
 		authEnabled,
 		signupEnabled: authEnabled,
 		billingEnabled,
+		authProviders,
 		trialDays: TRIAL_DAYS,
 		version: RELAY_VERSION,
 	});
