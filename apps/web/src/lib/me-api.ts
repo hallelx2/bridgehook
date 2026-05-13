@@ -137,6 +137,24 @@ export const me = {
 
 	channels: {
 		list: () => meFetch<{ channels: MeChannel[] }>("/channels"),
+		/**
+		 * Find the caller's existing channel for a given local port, or null.
+		 * Drives the "stable webhook URL per port" UX: instead of minting a
+		 * fresh channel every time the user re-bridges port 3000, we hand
+		 * back the same one. Caller is responsible for rotate-key if their
+		 * local IDB private key is missing.
+		 *
+		 * Returns null on any error (not signed in, network blip, …) so
+		 * callers can safely fall back to creating a new channel.
+		 */
+		findByPort: async (port: number): Promise<MeChannel | null> => {
+			try {
+				const { channels } = await meFetch<{ channels: MeChannel[] }>("/channels");
+				return channels.find((c) => c.port === port) ?? null;
+			} catch {
+				return null;
+			}
+		},
 		patch: (id: string, patch: { label?: string | null; allowedPaths?: string[] }) =>
 			meFetch<{ id: string; label: string | null; allowedPaths: string[] }>(
 				`/channels/${encodeURIComponent(id)}`,

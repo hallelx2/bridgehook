@@ -285,7 +285,73 @@ async function signedFetch(channelId, url, init = {}) {
 
 // ── Relay API ────────────────────────────────────────────────────────
 
+/**
+ * Look up the user's existing channel for a given local port, or null
+ * if there isn't one (or we're not signed in). Drives the stable
+ * webhook URL UX — calling createChannel(3000) the second time should
+ * give back the same URL the user already pasted into Stripe.
+ */
+async function findChannelByPort(port) {
+	try {
+		const init = await withAuth({ method: "GET" });
+		const res = await fetch(`${RELAY_URL}/api/me/channels`, init);
+		if (!res.ok) return null;
+		const data = await res.json();
+		const list = Array.isArray(data?.channels) ? data.channels : [];
+		return list.find((c) => Number(c.port) === Number(port)) ?? null;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Re-key an existing channel — used when we own a channel server-side
+ * but lost the IndexedDB private key (cleared storage, fresh install,
+ * different browser profile). Generates a new keypair, persists
+ * locally, and POSTs the public half to /rotate-key. Same channel id,
+ * same webhook URL, fresh signing material.
+ */
+async function rotateChannelKey(channelId) {
+	const publicKey = await generateChannelKey(channelId);
+	try {
+		const init = await withAuth({
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ publicKey }),
+		});
+		const res = await fetch(
+			`${RELAY_URL}/api/me/channels/${encodeURIComponent(channelId)}/rotate-key`,
+			init,
+		);
+		if (!res.ok) {
+			const text = await res.text().catch(() => "");
+			throw new Error(`Rotate-key failed (${res.status})${text ? `: ${text}` : ""}`);
+		}
+	} catch (err) {
+		await deleteChannelKey(channelId);
+		throw err;
+	}
+}
+
 async function createChannel(port, path) {
+	// Stable URL: if the user is signed in and already has a channel for
+	// this port, reuse it instead of minting fresh. Anonymous callers
+	// (signed out, self-host) skip the lookup and get a new channel each
+	// time — same legacy behavior as before.
+	if (account.source !== null) {
+		const existing = await findChannelByPort(port);
+		if (existing) {
+			const hasKey = !!(await getChannelPrivateKey(existing.id));
+			if (!hasKey) await rotateChannelKey(existing.id);
+			return {
+				channelId: existing.id,
+				port: existing.port,
+				webhookUrl: existing.webhookUrl,
+				expiresAt: existing.expiresAt ?? null,
+			};
+		}
+	}
+
 	const tempId = `pending-${crypto.randomUUID()}`;
 	const publicKey = await generateChannelKey(tempId);
 	try {

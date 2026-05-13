@@ -4,7 +4,7 @@ import type { WebhookEventData } from "../lib/relay";
 import {
 	RELAY_URL,
 	claimEvent,
-	createChannel,
+	findOrCreateChannelForPort,
 	forwardToLocalhost,
 	getChannel,
 	getClientId,
@@ -396,7 +396,11 @@ export function useBridge() {
 				}));
 				forwardedRef.current = new Set();
 
-				const channel = await createChannel(port, allowedPaths);
+				// Stable URL per (user, port): when signed in, reuses an
+				// existing channel for this port instead of minting a new
+				// one. Signed-out callers get the same legacy behavior as
+				// before (fresh channel each time).
+				const channel = await findOrCreateChannelForPort(port, allowedPaths);
 				if (controller.signal.aborted) return;
 
 				safeSetState((s) => ({

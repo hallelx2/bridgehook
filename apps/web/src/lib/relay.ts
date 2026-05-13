@@ -81,6 +81,10 @@ export function safeParseJson<T>(raw: string | null | undefined, fallback: T): T
  * Generates a per-channel keypair, stores the private key non-extractable in
  * IndexedDB, and sends the public key to the relay. The server will verify
  * all subsequent authenticated requests against that public key.
+ *
+ * Prefer {@link findOrCreateChannelForPort} when the user might be signed in
+ * — it gives back the same channel id for the same (user, port) pair on
+ * repeated calls, so the webhook URL is stable across sessions / browsers.
  */
 export async function createChannel(port: number, allowedPaths: string[]): Promise<ChannelInfo> {
 	// Temporarily hold a channel id placeholder; IDB is keyed by channel id,
@@ -114,6 +118,64 @@ export async function createChannel(port: number, allowedPaths: string[]): Promi
 		await deleteChannelKey(tempId);
 		throw err;
 	}
+}
+
+/**
+ * Stable-URL channel resolver. When the user is signed in we want the
+ * webhook URL for a given local port to be a permanent fixture of their
+ * account — pasting it into Stripe/Paystack/etc. once and never having
+ * to update it again, even after clearing browser storage or switching
+ * devices.
+ *
+ * Algorithm:
+ *   1. Look up the user's existing channels and check if any owns this
+ *      port. If yes:
+ *      a. If IndexedDB still has the matching private key, reuse the
+ *         channel as-is (this is the warm path).
+ *      b. If the key is missing (cleared storage, different profile,
+ *         …), generate a fresh keypair and rotate the channel's public
+ *         key on the server. Same channel id, same webhook URL — the
+ *         only externally visible side effect is the signing material
+ *         changing.
+ *   2. If no match, fall back to {@link createChannel} (fresh channel,
+ *      fresh URL).
+ *
+ * Anonymous callers (signed out, self-host) skip the lookup entirely
+ * since `/api/me/channels` would 401/404; they get the legacy
+ * fresh-channel-each-time behavior.
+ */
+export async function findOrCreateChannelForPort(
+	port: number,
+	allowedPaths: string[],
+): Promise<ChannelInfo> {
+	const { me } = await import("./me-api");
+
+	const existing = await me.channels.findByPort(port);
+	if (existing) {
+		const { idbGet } = await import("./idb");
+		const hasKey = !!(await idbGet(`channel-key:${existing.id}`));
+		if (!hasKey) {
+			// We own the channel but lost the key — mint a fresh one
+			// and rotate.
+			const publicKey = await generateChannelKey(existing.id);
+			try {
+				await me.channels.rotateKey(existing.id, publicKey);
+			} catch (err) {
+				// Rotate failed (network, race, …). Drop the partial key
+				// so the next attempt starts clean.
+				await deleteChannelKey(existing.id);
+				throw err;
+			}
+		}
+		return {
+			channelId: existing.id,
+			port: existing.port,
+			expiresAt: existing.expiresAt ?? "",
+			webhookUrl: existing.webhookUrl,
+		};
+	}
+
+	return createChannel(port, allowedPaths);
 }
 
 async function renameKey(fromId: string, toId: string): Promise<void> {
