@@ -73,6 +73,8 @@ async function clearDeviceToken() {
  * also mutates the module-level `account` so message handlers can read it.
  */
 async function refreshAccount() {
+	const prevSource = account.source;
+
 	// 1. Cookie probe — credentials: include sends any SameSite=None cookie
 	//    we already have for the relay host.
 	try {
@@ -100,6 +102,12 @@ async function refreshAccount() {
 					console.warn("[BridgeHook] self-register failed:", err);
 				});
 			}
+			// Kick off (or keep) the push-based stream.
+			if (prevSource !== "session") {
+				startUserStream().catch((err) => {
+					console.warn("[BridgeHook] start stream failed:", err);
+				});
+			}
 			return account;
 		}
 	} catch {
@@ -124,6 +132,10 @@ async function refreshAccount() {
 					plan: typeof me.plan === "string" ? me.plan : null,
 					deviceLabel: device.label ?? null,
 				};
+				// Device-mode can't use /api/me/stream (cookie-only). Tear
+				// down any session-mode stream we still hold and fall back
+				// to polling.
+				if (prevSource === "session") stopUserStream();
 				return account;
 			}
 		} catch {
@@ -140,6 +152,7 @@ async function refreshAccount() {
 		plan: null,
 		deviceLabel: null,
 	};
+	if (prevSource === "session") stopUserStream();
 	return account;
 }
 
@@ -167,6 +180,20 @@ async function withAuth(init = {}) {
 const activeBridges = new Map();
 /** @type {Map<string, AbortController>} */
 const pollingControllers = new Map();
+
+// ── User-level SSE stream (push-based webhook delivery) ──────────────
+//
+// Session-mode only: /api/me/stream requires a Better-Auth cookie. When
+// connected, the relay pushes webhook / response / claim frames the
+// moment they land, so localhost forwarding starts within ~ms of the
+// upstream provider's POST. Polling stays as catch-up.
+
+/** @type {AbortController|null} */
+let userStreamController = null;
+/** Reconnect backoff in ms; grows on consecutive failures. */
+let userStreamBackoffMs = 1000;
+/** True between the "connected" frame and stream teardown. */
+let userStreamConnected = false;
 
 /**
  * @typedef {Object} BridgeService
@@ -600,7 +627,168 @@ async function forwardToLocalhost(event, port, servicePath) {
 	}
 }
 
-// ── Bridge loop (per-service polling) ────────────────────────────────
+// ── User stream (SSE) ───────────────────────────────────────────────
+
+function handleUserStreamFrame(frame) {
+	if (!frame || typeof frame !== "object") return;
+	if (frame.type === "connected") {
+		userStreamConnected = true;
+		console.log("[BridgeHook] user stream connected");
+		return;
+	}
+	if (frame.type !== "webhook" || !frame.id || !frame.channelId) return;
+
+	let target = null;
+	for (const service of activeBridges.values()) {
+		if (service.channelId === frame.channelId && service.active) {
+			target = service;
+			break;
+		}
+	}
+	if (!target) return;
+
+	const headers = frame.headers && typeof frame.headers === "object" ? frame.headers : {};
+	const eventLike = {
+		id: frame.id,
+		channelId: frame.channelId,
+		method: frame.method || "POST",
+		path: frame.path || "/",
+		requestHeaders: JSON.stringify(headers),
+		requestBody: typeof frame.body === "string" ? frame.body : "",
+		headers,
+		body: typeof frame.body === "string" ? frame.body : "",
+	};
+	forwardEventThroughBridge(target, eventLike).catch((err) => {
+		console.warn("[BridgeHook] stream forward failed:", err);
+	});
+}
+
+/**
+ * Open a streaming-fetch SSE connection to /api/me/stream. The relay
+ * pushes webhook frames the moment they land, so localhost forwarding
+ * is push-based when the user is signed in via dashboard cookie.
+ *
+ * Reconnects with exponential backoff up to 30s; stops cleanly when
+ * the account loses session-mode or the SW tears down.
+ */
+async function startUserStream() {
+	if (userStreamController) return;
+	if (account.source !== "session") return;
+
+	const controller = new AbortController();
+	userStreamController = controller;
+
+	try {
+		const res = await fetch(`${RELAY_URL}/api/me/stream`, {
+			method: "GET",
+			credentials: "include",
+			headers: { Accept: "text/event-stream" },
+			signal: controller.signal,
+		});
+		if (!res.ok || !res.body) {
+			throw new Error(`stream failed (${res.status})`);
+		}
+		userStreamBackoffMs = 1000;
+
+		const reader = res.body.getReader();
+		const decoder = new TextDecoder();
+		let buffer = "";
+		while (true) {
+			const { value, done } = await reader.read();
+			if (done) break;
+			buffer += decoder.decode(value, { stream: true });
+			while (true) {
+				const idx = buffer.indexOf("\n\n");
+				if (idx < 0) break;
+				const frame = buffer.slice(0, idx);
+				buffer = buffer.slice(idx + 2);
+				// SSE comment frames (": heartbeat") have no data line — skip.
+				const dataLine = frame.split("\n").find((l) => l.startsWith("data: "));
+				if (!dataLine) continue;
+				try {
+					handleUserStreamFrame(JSON.parse(dataLine.slice(6)));
+				} catch (err) {
+					console.warn("[BridgeHook] malformed SSE frame:", err);
+				}
+			}
+		}
+	} catch (err) {
+		if (controller.signal.aborted) {
+			// Intentional teardown; don't reconnect.
+			return;
+		}
+		console.warn("[BridgeHook] user stream error:", err?.message ?? err);
+	} finally {
+		if (userStreamController === controller) {
+			userStreamController = null;
+		}
+		userStreamConnected = false;
+	}
+
+	// Reconnect path — fires only if we got here without an explicit abort.
+	const delay = userStreamBackoffMs;
+	userStreamBackoffMs = Math.min(userStreamBackoffMs * 2, 30_000);
+	setTimeout(() => {
+		if (account.source === "session" && !userStreamController) {
+			startUserStream().catch((err) => {
+				console.warn("[BridgeHook] stream reconnect failed:", err);
+			});
+		}
+	}, delay);
+}
+
+function stopUserStream() {
+	if (userStreamController) {
+		userStreamController.abort();
+		userStreamController = null;
+	}
+	userStreamConnected = false;
+}
+
+// ── Bridge loop (per-service polling + SSE-driven push) ─────────────
+//
+// Two paths feed the same handler:
+//   1. SSE — the user-level /api/me/stream pushes webhook frames to
+//      handleUserStreamFrame() the moment they land.
+//   2. Polling — the per-service loop below still calls fetchEvents()
+//      as a catch-up / fallback. When SSE is healthy we extend the
+//      polling delay; when SSE is down (self-host, device-token auth,
+//      transient errors) polling drops back to its old 2s cadence.
+//
+// `service._handled` is a Set shared across both paths so an event
+// pushed via SSE is filtered out of the next polling pass even though
+// the relay's responseStatus hasn't landed yet.
+
+async function forwardEventThroughBridge(service, evt) {
+	if (!service.active) return;
+	if (!service._handled) service._handled = new Set();
+	if (service._handled.has(evt.id)) return;
+	service._handled.add(evt.id);
+
+	service.eventCount = (service.eventCount || 0) + 1;
+	broadcastStatus();
+
+	const result = await forwardToLocalhost(evt, service.port, service.path);
+	if (result.error) {
+		service.errorCount = (service.errorCount || 0) + 1;
+		chrome.notifications.create({
+			type: "basic",
+			iconUrl: "icons/icon-128.png",
+			title: "BridgeHook",
+			message: `${service.name}: ${result.error}`,
+		});
+	} else {
+		try {
+			await sendResponseToRelay(service.channelId, evt.id, result);
+		} catch (err) {
+			console.warn(`[BridgeHook] response upload failed for ${evt.id}:`, err);
+		}
+		if (result.status >= 400) {
+			service.errorCount = (service.errorCount || 0) + 1;
+		}
+	}
+	broadcastStatus();
+}
 
 function startBridge(service) {
 	if (pollingControllers.has(service.id)) stopBridge(service.id);
@@ -608,7 +796,7 @@ function startBridge(service) {
 	const controller = new AbortController();
 	pollingControllers.set(service.id, controller);
 
-	const forwarded = new Set();
+	if (!service._handled) service._handled = new Set();
 	let consecutiveErrors = 0;
 
 	async function poll() {
@@ -621,27 +809,10 @@ function startBridge(service) {
 			broadcastStatus();
 
 			const unforwarded = events.filter(
-				(e) => !e.responseStatus && !e.error && !forwarded.has(e.id),
+				(e) => !e.responseStatus && !e.error && !service._handled.has(e.id),
 			);
 			for (const evt of unforwarded) {
-				forwarded.add(evt.id);
-				service.eventCount = (service.eventCount || 0) + 1;
-				const result = await forwardToLocalhost(evt, service.port, service.path);
-				if (result.error) {
-					service.errorCount = (service.errorCount || 0) + 1;
-					chrome.notifications.create({
-						type: "basic",
-						iconUrl: "icons/icon-128.png",
-						title: "BridgeHook",
-						message: `${service.name}: ${result.error}`,
-					});
-				} else {
-					await sendResponseToRelay(service.channelId, evt.id, result);
-					if (result.status >= 400) {
-						service.errorCount = (service.errorCount || 0) + 1;
-					}
-				}
-				broadcastStatus();
+				await forwardEventThroughBridge(service, evt);
 			}
 		} catch (err) {
 			consecutiveErrors++;
@@ -656,8 +827,18 @@ function startBridge(service) {
 		}
 		if (!controller.signal.aborted) {
 			// quota: poll slowly (30s) — keeps the SW responsive but doesn't
-			// burn through nothing waiting for tomorrow's reset
-			const delay = service.status === "limit" ? 30000 : consecutiveErrors > 3 ? 10000 : 2000;
+			// burn through nothing waiting for tomorrow's reset.
+			// SSE healthy: drop to 15s — SSE is the live path; this is
+			// just catch-up for events we might have missed during a
+			// reconnect window.
+			const delay =
+				service.status === "limit"
+					? 30000
+					: consecutiveErrors > 3
+						? 10000
+						: userStreamConnected
+							? 15000
+							: 2000;
 			setTimeout(poll, delay);
 		}
 	}
@@ -917,7 +1098,8 @@ chrome.runtime.onStartup.addListener(async () => {
 // Fires every 30s — MV3 minimum. The alarm wakes the SW; we re-attach
 // polling for any active service whose in-tick loop died with the SW.
 // Account state is also refreshed so the popup's identity chip stays
-// in sync when the user signs in/out on the dashboard.
+// in sync when the user signs in/out on the dashboard. The user-level
+// SSE stream is also restarted if it died with the SW.
 chrome.alarms.onAlarm.addListener(async (alarm) => {
 	if (alarm.name !== HEARTBEAT_ALARM) return;
 	if (activeBridges.size === 0) {
@@ -925,6 +1107,11 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 	} else {
 		await refreshAccount();
 		await ensurePollingForActiveServices();
+		if (account.source === "session" && !userStreamController) {
+			startUserStream().catch((err) => {
+				console.warn("[BridgeHook] start stream failed:", err);
+			});
+		}
 		broadcastStatus();
 	}
 });
