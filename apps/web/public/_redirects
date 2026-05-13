@@ -1,0 +1,8 @@
+# SPA fallback for Cloudflare Pages — anything that isn't a real asset gets
+# index.html served with a 200, so React Router can handle `/login`,
+# `/dashboard/*`, `/auth/callback`, etc. on direct navigation and full reloads.
+# Real files (under /assets/*.{js,css,svg,etc.}) are served before this rule
+# matches because the static asset handler runs first.
+#
+# Pattern docs: https://developers.cloudflare.com/pages/configuration/redirects/
+/*    /index.html   200

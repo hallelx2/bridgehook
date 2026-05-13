@@ -1,3 +1,5 @@
+import { Link } from "react-router-dom";
+
 export function FinalCTA() {
 	return (
 		<section className="max-w-7xl mx-auto px-6 pb-48">
@@ -18,12 +20,12 @@ export function FinalCTA() {
 						install, zero config.
 					</p>
 					<div className="flex flex-col sm:flex-row justify-center gap-3">
-						<a
-							href="#/dashboard"
+						<Link
+							to="/login"
 							className="px-8 py-4 bg-on-surface text-background font-bold rounded-xl hover:bg-primary hover:text-on-surface transition-colors text-[15px] no-underline"
 						>
-							Get started free
-						</a>
+							Get started — free
+						</Link>
 						<a
 							href="#try"
 							className="px-8 py-4 bg-transparent text-on-surface border border-border-strong font-semibold rounded-xl hover:bg-surface-2 transition-colors text-[15px] no-underline"

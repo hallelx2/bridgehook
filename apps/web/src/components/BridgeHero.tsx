@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import { HeroLiveDemo } from "./HeroLiveDemo";
 
 /**
@@ -74,12 +75,12 @@ export function BridgeHero() {
 
 				{/* CTAs */}
 				<div className="flex flex-col sm:flex-row items-center justify-center gap-3 mb-16">
-					<a
-						href="#/dashboard"
+					<Link
+						to="/login"
 						className="w-full sm:w-auto px-8 py-4 bg-on-surface text-background font-bold rounded-xl transition-all hover:bg-primary hover:text-on-surface active:scale-[0.98] no-underline text-center text-[15px]"
 					>
-						Open dashboard
-					</a>
+						Get started — free
+					</Link>
 					<a
 						href="#try"
 						className="w-full sm:w-auto px-8 py-4 bg-transparent text-on-surface border border-border-strong font-semibold rounded-xl hover:bg-surface transition-all no-underline text-center text-[15px]"
