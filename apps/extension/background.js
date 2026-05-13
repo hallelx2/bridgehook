@@ -1,64 +1,161 @@
 /**
  * BridgeHook Extension — Background Service Worker
  *
- * This replaces the browser tab as the bridge between the relay server
- * and localhost. Unlike a web page, extensions are exempt from CORS and
- * mixed content restrictions, so forwarding from HTTPS relay to HTTP
- * localhost works perfectly.
+ * Replaces the browser tab as the bridge between the relay and localhost.
+ * Extensions are exempt from CORS / mixed-content so HTTPS-relay → HTTP-
+ * localhost forwarding works without ceremony.
  *
- * Auth model (matches the web client):
- *   - On channel create, we generate an ECDSA P-256 keypair via crypto.subtle.
- *   - The public key is sent to the relay.
- *   - The private key is re-imported as non-extractable and stored in IndexedDB.
- *     From that point on `crypto.subtle.exportKey()` will throw — no JS
- *     (including ours) can read its raw bytes.
- *   - Every authenticated relay request is signed:
- *         sig = ECDSA(key, "METHOD\nPATH\nTIMESTAMP\nSHA256(body)")
+ * Auth (in priority order):
+ *   1. Dashboard session cookie — if the user is signed in at
+ *      bridgehook-web.pages.dev, the relay's cookie travels on
+ *      `fetch(..., { credentials: "include" })` because we set it as
+ *      SameSite=None on the relay. Zero pairing required.
+ *   2. Device-token bearer — long-lived `dvc_…` from the OAuth-style
+ *      device-pair flow. Survives sign-out, useful for headless setups.
+ *   3. Anonymous — works only against self-host relays (no
+ *      BETTER_AUTH_SECRET set).
  *
- * Architecture:
- *   Relay (HTTPS) → polling → Extension background.js → fetch → localhost (HTTP)
- *   localhost response → Extension → POST (signed) → Relay
+ * Channel keys remain non-extractable ECDSA P-256 in IndexedDB. Per-event
+ * signatures (claim / response) sign the canonical request with the
+ * channel's private key regardless of which auth mode mints the channel.
+ *
+ * MV3 resilience: a `bh-heartbeat` chrome.alarms wakes the SW every 30s
+ * (the MV3 minimum) and re-attaches polling for any active service whose
+ * loop died with the SW. The in-tick 2-3s polling continues as long as
+ * the SW is alive.
  */
 
 const RELAY_URL = "https://bridgehook-relay.halleluyaholudele.workers.dev";
+const WEB_URL = "https://bridgehook-web.pages.dev";
 
-// ── Account state (chrome.storage.local) ─────────────────────────────
+// ── Storage keys ─────────────────────────────────────────────────────
+
+const DEVICE_TOKEN_KEY = "bh_device_v1";
+const SERVICES_KEY = "services";
+
+// ── Account state ────────────────────────────────────────────────────
 //
-// When the user signs in via the device-flow, we store:
-//   { token: "dvc_...", deviceId: "dev_...", userId: "usr_...", email: "...", label: "..." }
-// under chrome.storage.local["bh_device_v1"]. The token travels as
-// Authorization: Bearer on POST /api/channels (channel ownership) and
-// the deviceId is sent in /hook/:id/response so the relay can attribute
-// which executor forwarded an event.
-//
-// Anonymous extension installs (no sign-in) work in self-host mode
-// only; against the hosted relay, channel creation will start failing
-// with 401 once the user has taken commit 5+ live. The popup nudges
-// them to sign in.
+// In-memory cache rehydrated on SW boot. The dashboard probe runs on
+// every popup open and on each heartbeat tick.
 
-const ACCOUNT_KEY = "bh_device_v1";
+/** @typedef {"session" | "device" | null} AuthSource */
+/** @typedef {{ source: AuthSource, user: {id?: string, email?: string, name?: string} | null,
+ *             eventsToday: number, eventsPerDay: number | null, plan: string | null,
+ *             deviceLabel: string | null }} AccountState */
 
-async function getStoredAccount() {
-	const out = await chrome.storage.local.get([ACCOUNT_KEY]);
-	const raw = out[ACCOUNT_KEY];
+/** @type {AccountState} */
+let account = {
+	source: null,
+	user: null,
+	eventsToday: 0,
+	eventsPerDay: null,
+	plan: null,
+	deviceLabel: null,
+};
+
+async function getStoredDeviceToken() {
+	const out = await chrome.storage.local.get([DEVICE_TOKEN_KEY]);
+	const raw = out[DEVICE_TOKEN_KEY];
 	if (!raw || typeof raw !== "object" || typeof raw.token !== "string") return null;
 	return raw;
 }
-
-async function storeAccount(account) {
-	await chrome.storage.local.set({ [ACCOUNT_KEY]: account });
+async function storeDeviceToken(record) {
+	await chrome.storage.local.set({ [DEVICE_TOKEN_KEY]: record });
+}
+async function clearDeviceToken() {
+	await chrome.storage.local.remove([DEVICE_TOKEN_KEY]);
 }
 
-async function clearAccount() {
-	await chrome.storage.local.remove([ACCOUNT_KEY]);
+/**
+ * Probe the relay for the current identity. Tries the dashboard cookie
+ * first (no Authorization header), falls back to the device token if
+ * the cookie probe returns 401. Returns the resolved account state and
+ * also mutates the module-level `account` so message handlers can read it.
+ */
+async function refreshAccount() {
+	// 1. Cookie probe — credentials: include sends any SameSite=None cookie
+	//    we already have for the relay host.
+	try {
+		const res = await fetch(`${RELAY_URL}/api/me`, {
+			method: "GET",
+			credentials: "include",
+		});
+		if (res.ok) {
+			const me = await res.json();
+			account = {
+				source: "session",
+				user: { id: me.user?.id, email: me.user?.email, name: me.user?.name },
+				eventsToday: typeof me.eventsToday === "number" ? me.eventsToday : 0,
+				eventsPerDay: typeof me.eventsPerDay === "number" ? me.eventsPerDay : null,
+				plan: typeof me.plan === "string" ? me.plan : null,
+				deviceLabel: null,
+			};
+			return account;
+		}
+	} catch {
+		// fall through to device-token
+	}
+
+	// 2. Device-token probe — if we have a paired token, hit /api/me with
+	//    Authorization: Bearer and report the same shape.
+	const device = await getStoredDeviceToken();
+	if (device?.token) {
+		try {
+			const res = await fetch(`${RELAY_URL}/api/me`, {
+				headers: { Authorization: `Bearer ${device.token}` },
+			});
+			if (res.ok) {
+				const me = await res.json();
+				account = {
+					source: "device",
+					user: { id: me.user?.id, email: me.user?.email, name: me.user?.name },
+					eventsToday: typeof me.eventsToday === "number" ? me.eventsToday : 0,
+					eventsPerDay: typeof me.eventsPerDay === "number" ? me.eventsPerDay : null,
+					plan: typeof me.plan === "string" ? me.plan : null,
+					deviceLabel: device.label ?? null,
+				};
+				return account;
+			}
+		} catch {
+			// fall through to anonymous
+		}
+	}
+
+	// 3. Anonymous (works on self-host relays only).
+	account = {
+		source: null,
+		user: null,
+		eventsToday: 0,
+		eventsPerDay: null,
+		plan: null,
+		deviceLabel: null,
+	};
+	return account;
 }
 
-// ── State ────────────────────────────────────────────────────────────
+/**
+ * Decorate fetch init with the right auth header. When auth.source is
+ * "session", we let the cookie travel and set credentials: include. For
+ * "device" we attach Authorization: Bearer.
+ */
+async function withAuth(init = {}) {
+	const headers = new Headers(init.headers);
+	if (account.source === "session") {
+		return { ...init, credentials: "include", headers };
+	}
+	if (account.source === "device") {
+		const device = await getStoredDeviceToken();
+		if (device?.token) headers.set("Authorization", `Bearer ${device.token}`);
+		return { ...init, headers };
+	}
+	return { ...init, headers };
+}
 
-/** @type {Map<string, BridgeService>} Active bridges keyed by service ID */
+// ── Bridges (active services) ─────────────────────────────────────────
+
+/** @type {Map<string, BridgeService>} */
 const activeBridges = new Map();
-
-/** @type {Map<string, AbortController>} Abort controllers for polling loops */
+/** @type {Map<string, AbortController>} */
 const pollingControllers = new Map();
 
 /**
@@ -70,13 +167,13 @@ const pollingControllers = new Map();
  * @property {string} channelId
  * @property {boolean} active
  * @property {string} createdAt
- * @property {"connected"|"disconnected"|"error"} status
+ * @property {"connected"|"disconnected"|"error"|"limit"} status
  * @property {string|null} error
  * @property {number} eventCount
  * @property {number} errorCount
  */
 
-// ── IndexedDB (CryptoKey storage) ────────────────────────────────────
+// ── IndexedDB (per-channel ECDSA private keys) ───────────────────────
 
 const IDB_NAME = "bridgehook";
 const IDB_VERSION = 1;
@@ -99,29 +196,23 @@ function openDB() {
 	});
 	return dbPromise;
 }
-
 function tx(mode) {
 	return openDB().then((db) => db.transaction(IDB_STORE, mode).objectStore(IDB_STORE));
 }
-
 function idbWrap(req) {
 	return new Promise((resolve, reject) => {
 		req.onsuccess = () => resolve(req.result);
-		req.onerror = () => reject(req.error ?? new Error("IndexedDB request failed"));
+		req.onerror = () => reject(req.error ?? new Error("IDB request failed"));
 	});
 }
-
 async function idbGet(key) {
-	const store = await tx("readonly");
-	return idbWrap(store.get(key));
+	return idbWrap((await tx("readonly")).get(key));
 }
 async function idbPut(key, value) {
-	const store = await tx("readwrite");
-	await idbWrap(store.put(value, key));
+	await idbWrap((await tx("readwrite")).put(value, key));
 }
 async function idbDelete(key) {
-	const store = await tx("readwrite");
-	await idbWrap(store.delete(key));
+	await idbWrap((await tx("readwrite")).delete(key));
 }
 
 // ── Crypto helpers ───────────────────────────────────────────────────
@@ -143,24 +234,14 @@ async function sha256Hex(input) {
 
 const keyRecord = (channelId) => `channel-key:${channelId}`;
 
-/**
- * Generate a fresh keypair for the channel. Returns the hex-encoded raw
- * public key. The non-extractable private key is persisted in IndexedDB.
- */
 async function generateChannelKey(channelId) {
 	const pair = await crypto.subtle.generateKey(KEY_ALG, true, ["sign", "verify"]);
 	const pubRaw = await crypto.subtle.exportKey("raw", pair.publicKey);
 	const publicKeyHex = toHex(pubRaw);
-
-	// Re-import as non-extractable. From now on no script can export the bytes.
 	const pkcs8 = await crypto.subtle.exportKey("pkcs8", pair.privateKey);
 	const nonExtractable = await crypto.subtle.importKey("pkcs8", pkcs8, KEY_ALG, false, ["sign"]);
 	new Uint8Array(pkcs8).fill(0);
-
-	await idbPut(keyRecord(channelId), {
-		privateKey: nonExtractable,
-		publicKeyHex,
-	});
+	await idbPut(keyRecord(channelId), { privateKey: nonExtractable, publicKeyHex });
 	return publicKeyHex;
 }
 
@@ -177,19 +258,14 @@ async function deleteChannelKey(channelId) {
 	}
 }
 
-/**
- * Sign and send an authenticated request. Adds X-BH-Timestamp + X-BH-Signature.
- */
 async function signedFetch(channelId, url, init = {}) {
 	const privateKey = await getChannelPrivateKey(channelId);
 	if (!privateKey) throw new Error(`No signing key for channel ${channelId}`);
-
 	const method = (init.method ?? "GET").toUpperCase();
 	const pathname = new URL(url).pathname;
 	const timestamp = Date.now().toString();
 	const bodyStr = typeof init.body === "string" ? init.body : "";
 	const canonical = `${method}\n${pathname}\n${timestamp}\n${await sha256Hex(bodyStr)}`;
-
 	const sig = await crypto.subtle.sign(SIGN_ALG, privateKey, new TextEncoder().encode(canonical));
 	const headers = new Headers(init.headers);
 	headers.set("X-BH-Timestamp", timestamp);
@@ -200,37 +276,26 @@ async function signedFetch(channelId, url, init = {}) {
 // ── Relay API ────────────────────────────────────────────────────────
 
 async function createChannel(port, path) {
-	// Generate into a temporary slot — we don't know the channel id until the
-	// server responds. On success we move the IDB record into place.
 	const tempId = `pending-${crypto.randomUUID()}`;
 	const publicKey = await generateChannelKey(tempId);
-
 	try {
-		// If the user has paired this extension to an account, send the device
-		// token. The relay stamps channels.user_id and channels.device_id on
-		// the new row. Self-host relays ignore the header; hosted relays will
-		// 401 without it.
-		const account = await getStoredAccount();
-		const headers = { "Content-Type": "application/json" };
-		if (account) headers.Authorization = `Bearer ${account.token}`;
-
-		const res = await fetch(`${RELAY_URL}/api/channels`, {
+		const init = await withAuth({
 			method: "POST",
-			headers,
+			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ publicKey, port, allowedPaths: [path] }),
 		});
+		const res = await fetch(`${RELAY_URL}/api/channels`, init);
 		if (!res.ok) {
 			const text = await res.text().catch(() => "");
 			throw new Error(`Relay returned ${res.status}${text ? ` — ${text}` : ""}`);
 		}
 		const data = await res.json();
-		// Move the key record from tempId → real channelId.
 		const rec = await idbGet(keyRecord(tempId));
 		if (rec) {
 			await idbPut(keyRecord(data.channelId), rec);
 			await idbDelete(keyRecord(tempId));
 		}
-		return data.channelId;
+		return data;
 	} catch (err) {
 		await deleteChannelKey(tempId);
 		throw err;
@@ -240,22 +305,32 @@ async function createChannel(port, path) {
 async function fetchEvents(channelId, limit = 50) {
 	const url = `${RELAY_URL}/api/channels/${channelId}/events?limit=${limit}`;
 	const res = await signedFetch(channelId, url);
-	if (!res.ok) throw new Error(`Failed to get events: ${res.status}`);
+	if (!res.ok) {
+		// 402 with code:"quota" is a soft signal — we want to render it
+		// distinctly from real errors. Bubble up structured info so the
+		// poll loop can flip status to "limit" rather than "error".
+		if (res.status === 402) {
+			const body = await res.json().catch(() => ({}));
+			if (body?.code === "quota") {
+				const err = new Error(body.error || "Daily webhook cap reached");
+				err.kind = "quota";
+				throw err;
+			}
+		}
+		throw new Error(`Failed to get events: ${res.status}`);
+	}
 	return res.json();
 }
 
 async function sendResponseToRelay(channelId, eventId, response) {
-	// deviceId is best-effort: when we're paired, attribute which device
-	// forwarded the event so the dashboard can show a device chip on rows.
-	// The relay ignores it on anonymous channels.
-	const account = await getStoredAccount();
+	const device = await getStoredDeviceToken();
 	const body = JSON.stringify({
 		eventId,
 		status: response.status,
 		headers: response.headers,
 		body: response.body,
 		latencyMs: response.latencyMs,
-		deviceId: account?.deviceId,
+		deviceId: device?.deviceId,
 	});
 	await signedFetch(channelId, `${RELAY_URL}/hook/${channelId}/response`, {
 		method: "POST",
@@ -264,18 +339,24 @@ async function sendResponseToRelay(channelId, eventId, response) {
 	});
 }
 
-// ── Device pairing flow ──────────────────────────────────────────────
+// ── Sign-in handoff ──────────────────────────────────────────────────
 //
-// 1. POST /auth/device/start { kind: "extension", labelHint }
-//    → { deviceCode, verificationUrl, pollInterval, expiresIn }
-// 2. Open a tab to verificationUrl (web /connect?code=...)
-// 3. Poll POST /auth/device/exchange { code } every pollInterval seconds
-//    → 202 while pending, 200 with { token, deviceId, userId } once approved
-// 4. Persist to chrome.storage.local under bh_device_v1.
+// "Sign in" opens the dashboard's login page in a new tab. When the user
+// completes sign-up there, the relay's session cookie is set on the
+// extension's side too (same workers.dev host, SameSite=None). We then
+// re-probe /api/me to pick up the session — the popup runs that probe
+// on focus / open so no explicit handoff is needed.
 
-async function connectAccount() {
-	// Build a friendly labelHint so the dashboard's device list shows a
-	// meaningful name without the user having to rename it.
+function openDashboardLogin() {
+	chrome.tabs.create({ url: `${WEB_URL}/login` });
+}
+function openDashboardSignup() {
+	chrome.tabs.create({ url: `${WEB_URL}/login?signup=1` });
+}
+
+// ── Device-token pair flow (kept for "stay paired after sign-out" use case) ──
+
+async function connectDevice() {
 	const ua = (typeof navigator !== "undefined" && navigator.userAgent) || "Browser";
 	const browser = /Chrome/i.test(ua) ? "Chrome" : /Firefox/i.test(ua) ? "Firefox" : "Browser";
 	const os = /Mac OS X/i.test(ua)
@@ -298,9 +379,6 @@ async function connectAccount() {
 	}
 	const { deviceCode, verificationUrl, pollInterval, expiresIn } = await startRes.json();
 
-	// Open the approval page in a new tab. The user signs in on the web app
-	// (if not already), reviews, clicks Approve. Then we'll see status=approved
-	// on the next /exchange poll.
 	chrome.tabs.create({ url: verificationUrl });
 
 	const intervalMs = Math.max(2000, Number(pollInterval) * 1000 || 5000);
@@ -313,9 +391,7 @@ async function connectAccount() {
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ code: deviceCode }),
 		});
-		if (exRes.status === 410) {
-			throw new Error("Pairing code expired or already used");
-		}
+		if (exRes.status === 410) throw new Error("Pairing code expired or already used");
 		if (exRes.status === 202) continue;
 		if (!exRes.ok) {
 			const text = await exRes.text().catch(() => "");
@@ -323,7 +399,7 @@ async function connectAccount() {
 		}
 		const minted = await exRes.json();
 		if (minted.token && minted.deviceId && minted.userId) {
-			await storeAccount({
+			await storeDeviceToken({
 				token: minted.token,
 				deviceId: minted.deviceId,
 				userId: minted.userId,
@@ -331,39 +407,22 @@ async function connectAccount() {
 				kind: minted.kind || "extension",
 				connectedAt: new Date().toISOString(),
 			});
+			await refreshAccount();
 			return minted;
 		}
 	}
 	throw new Error("Pairing timed out — try again");
 }
 
-async function disconnectAccount() {
-	await clearAccount();
+async function disconnectDevice() {
+	await clearDeviceToken();
+	await refreshAccount();
 }
 
-async function getAccountStatus() {
-	const account = await getStoredAccount();
-	if (!account) return { connected: false };
-	return {
-		connected: true,
-		userId: account.userId,
-		deviceId: account.deviceId,
-		label: account.label,
-		kind: account.kind,
-		connectedAt: account.connectedAt,
-	};
-}
+// ── Forwarding (relay → localhost) ──────────────────────────────────
 
-// ── Forwarding ───────────────────────────────────────────────────────
-
-/**
- * Forward a webhook event to localhost.
- * Extensions are exempt from CORS and mixed content — this just works.
- */
 async function forwardToLocalhost(event, port, servicePath) {
 	const start = performance.now();
-
-	// Extract path: strip the /hook/channelId prefix
 	const eventPath = event.path?.replace(/^\/hook\/[a-z0-9]+/, "") || servicePath || "/";
 
 	const rawHeaders =
@@ -385,7 +444,6 @@ async function forwardToLocalhost(event, port, servicePath) {
 		"transfer-encoding",
 		"content-length",
 	]);
-
 	const headers = {};
 	for (const [k, v] of Object.entries(rawHeaders)) {
 		if (!skip.has(k.toLowerCase())) headers[k] = v;
@@ -419,12 +477,10 @@ async function forwardToLocalhost(event, port, servicePath) {
 	}
 }
 
-// ── Bridge Loop ──────────────────────────────────────────────────────
+// ── Bridge loop (per-service polling) ────────────────────────────────
 
 function startBridge(service) {
-	if (pollingControllers.has(service.id)) {
-		stopBridge(service.id);
-	}
+	if (pollingControllers.has(service.id)) stopBridge(service.id);
 
 	const controller = new AbortController();
 	pollingControllers.set(service.id, controller);
@@ -434,11 +490,9 @@ function startBridge(service) {
 
 	async function poll() {
 		if (controller.signal.aborted) return;
-
 		try {
 			const events = await fetchEvents(service.channelId);
 			consecutiveErrors = 0;
-
 			service.status = "connected";
 			service.error = null;
 			broadcastStatus();
@@ -446,13 +500,10 @@ function startBridge(service) {
 			const unforwarded = events.filter(
 				(e) => !e.responseStatus && !e.error && !forwarded.has(e.id),
 			);
-
 			for (const evt of unforwarded) {
 				forwarded.add(evt.id);
 				service.eventCount = (service.eventCount || 0) + 1;
-
 				const result = await forwardToLocalhost(evt, service.port, service.path);
-
 				if (result.error) {
 					service.errorCount = (service.errorCount || 0) + 1;
 					chrome.notifications.create({
@@ -465,33 +516,29 @@ function startBridge(service) {
 					await sendResponseToRelay(service.channelId, evt.id, result);
 					if (result.status >= 400) {
 						service.errorCount = (service.errorCount || 0) + 1;
-						chrome.notifications.create({
-							type: "basic",
-							iconUrl: "icons/icon-128.png",
-							title: "BridgeHook",
-							message: `${service.name} returned ${result.status} — ${evt.method} ${evt.path}`,
-						});
 					}
 				}
 				broadcastStatus();
 			}
 		} catch (err) {
 			consecutiveErrors++;
-			service.status = "error";
-			service.error = err.message;
+			if (err?.kind === "quota") {
+				service.status = "limit";
+				service.error = err.message;
+			} else {
+				service.status = "error";
+				service.error = err.message;
+			}
 			broadcastStatus();
 		}
-
 		if (!controller.signal.aborted) {
-			const delay = consecutiveErrors > 3 ? 10000 : 2000;
+			// quota: poll slowly (30s) — keeps the SW responsive but doesn't
+			// burn through nothing waiting for tomorrow's reset
+			const delay = service.status === "limit" ? 30000 : consecutiveErrors > 3 ? 10000 : 2000;
 			setTimeout(poll, delay);
 		}
 	}
-
 	poll();
-	console.log(
-		`[BridgeHook] Started bridge for "${service.name}" → localhost:${service.port}${service.path}`,
-	);
 }
 
 function stopBridge(serviceId) {
@@ -505,28 +552,26 @@ function stopBridge(serviceId) {
 		service.status = "disconnected";
 		service.error = null;
 	}
-	console.log(`[BridgeHook] Stopped bridge for ${serviceId}`);
 }
 
-// ── Storage & Service CRUD ───────────────────────────────────────────
+// ── Storage / CRUD ───────────────────────────────────────────────────
 
 async function loadServices() {
-	const { services = [] } = await chrome.storage.local.get("services");
-	return services;
+	const out = await chrome.storage.local.get(SERVICES_KEY);
+	return out[SERVICES_KEY] || [];
 }
-
 async function saveServices(services) {
-	await chrome.storage.local.set({ services });
+	await chrome.storage.local.set({ [SERVICES_KEY]: services });
 }
 
 async function addService(name, port, path) {
-	const channelId = await createChannel(port, path);
+	const created = await createChannel(port, path);
 	const service = {
 		id: crypto.randomUUID(),
 		name,
 		port,
 		path,
-		channelId,
+		channelId: created.channelId,
 		active: true,
 		createdAt: new Date().toISOString(),
 		status: "disconnected",
@@ -534,15 +579,12 @@ async function addService(name, port, path) {
 		eventCount: 0,
 		errorCount: 0,
 	};
-
 	const services = await loadServices();
 	services.push(service);
 	await saveServices(services);
-
 	activeBridges.set(service.id, service);
 	startBridge(service);
-
-	return service;
+	return { service, webhookUrl: created.webhookUrl || `${RELAY_URL}/hook/${created.channelId}` };
 }
 
 async function removeService(serviceId) {
@@ -550,38 +592,30 @@ async function removeService(serviceId) {
 	const service = activeBridges.get(serviceId);
 	if (service?.channelId) await deleteChannelKey(service.channelId);
 	activeBridges.delete(serviceId);
-
 	const services = await loadServices();
-	const updated = services.filter((s) => s.id !== serviceId);
-	await saveServices(updated);
+	await saveServices(services.filter((s) => s.id !== serviceId));
 }
 
 async function toggleService(serviceId) {
 	const services = await loadServices();
 	const service = services.find((s) => s.id === serviceId);
 	if (!service) return;
-
 	service.active = !service.active;
 	await saveServices(services);
-
 	const bridge = activeBridges.get(serviceId);
 	if (bridge) {
 		bridge.active = service.active;
-		if (service.active) {
-			startBridge(bridge);
-		} else {
-			stopBridge(serviceId);
-		}
+		if (service.active) startBridge(bridge);
+		else stopBridge(serviceId);
 	}
-
 	broadcastStatus();
 	return service.active;
 }
 
-// ── Status Broadcasting ──────────────────────────────────────────────
+// ── Broadcasting ─────────────────────────────────────────────────────
 
-function broadcastStatus() {
-	const services = Array.from(activeBridges.values()).map((s) => ({
+function serializeService(s) {
+	return {
 		id: s.id,
 		name: s.name,
 		port: s.port,
@@ -593,12 +627,19 @@ function broadcastStatus() {
 		eventCount: s.eventCount || 0,
 		errorCount: s.errorCount || 0,
 		webhookUrl: `${RELAY_URL}/hook/${s.channelId}`,
-	}));
+	};
+}
 
+function broadcastStatus() {
+	const services = Array.from(activeBridges.values()).map(serializeService);
+	const limitCount = services.filter((s) => s.active && s.status === "limit").length;
 	const activeCount = services.filter((s) => s.active && s.status === "connected").length;
 	const errorCount = services.reduce((sum, s) => sum + (s.errorCount || 0), 0);
 
-	if (errorCount > 0) {
+	if (limitCount > 0) {
+		chrome.action.setBadgeBackgroundColor({ color: "#F59E0B" });
+		chrome.action.setBadgeText({ text: "!" });
+	} else if (errorCount > 0) {
 		chrome.action.setBadgeBackgroundColor({ color: "#EF4444" });
 		chrome.action.setBadgeText({ text: String(errorCount) });
 	} else if (activeCount > 0) {
@@ -608,97 +649,10 @@ function broadcastStatus() {
 		chrome.action.setBadgeText({ text: "" });
 	}
 
-	chrome.runtime.sendMessage({ type: "status", services }).catch(() => {
-		// Popup not open
-	});
+	chrome.runtime.sendMessage({ type: "status", services, account }).catch(() => {});
 }
 
-// ── Message Handling (Popup ↔ Background) ────────────────────────────
-
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-	(async () => {
-		switch (msg.type) {
-			case "get_status": {
-				const services = Array.from(activeBridges.values()).map((s) => ({
-					id: s.id,
-					name: s.name,
-					port: s.port,
-					path: s.path,
-					channelId: s.channelId,
-					active: s.active,
-					status: s.status,
-					error: s.error,
-					eventCount: s.eventCount || 0,
-					errorCount: s.errorCount || 0,
-					webhookUrl: `${RELAY_URL}/hook/${s.channelId}`,
-				}));
-				sendResponse({ services });
-				break;
-			}
-			case "add_service": {
-				const service = await addService(msg.name, msg.port, msg.path);
-				sendResponse({
-					ok: true,
-					service: {
-						...service,
-						webhookUrl: `${RELAY_URL}/hook/${service.channelId}`,
-					},
-				});
-				break;
-			}
-			case "remove_service": {
-				await removeService(msg.serviceId);
-				sendResponse({ ok: true });
-				broadcastStatus();
-				break;
-			}
-			case "toggle_service": {
-				const active = await toggleService(msg.serviceId);
-				sendResponse({ ok: true, active });
-				break;
-			}
-			case "scan_ports": {
-				const alive = await scanPorts();
-				sendResponse({ ports: alive });
-				break;
-			}
-			case "auto_detect": {
-				const alive = await scanPorts();
-				sendResponse({ detected: alive, created: [] });
-				break;
-			}
-			case "get_account_status": {
-				const status = await getAccountStatus();
-				sendResponse(status);
-				break;
-			}
-			case "connect_account": {
-				try {
-					const minted = await connectAccount();
-					sendResponse({
-						ok: true,
-						deviceId: minted.deviceId,
-						userId: minted.userId,
-						label: minted.label,
-					});
-				} catch (err) {
-					sendResponse({ ok: false, error: err instanceof Error ? err.message : String(err) });
-				}
-				break;
-			}
-			case "disconnect_account": {
-				await disconnectAccount();
-				sendResponse({ ok: true });
-				break;
-			}
-			default:
-				sendResponse({ error: "Unknown message type" });
-		}
-	})();
-	return true; // Keep the channel open for async response
-});
-
-// ── Auto-Detect Local Servers ─────────────────────────────────────────
+// ── Auto-detect local servers ────────────────────────────────────────
 
 const COMMON_PORTS = [3000, 3001, 4000, 5000, 5173, 8000, 8080, 8888];
 
@@ -717,41 +671,140 @@ async function probePort(port) {
 		return { port, alive: false, status: 0, server: null };
 	}
 }
-
 async function scanPorts() {
 	const results = await Promise.all(COMMON_PORTS.map(probePort));
 	return results.filter((r) => r.alive);
 }
 
-// ── Startup: Restore Active Bridges ──────────────────────────────────
+// ── Message handlers ─────────────────────────────────────────────────
 
-chrome.runtime.onInstalled.addListener(async () => {
-	console.log("[BridgeHook] Extension installed/updated");
-	await restoreBridges();
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+	(async () => {
+		switch (msg.type) {
+			case "get_status": {
+				const services = Array.from(activeBridges.values()).map(serializeService);
+				sendResponse({ services, account });
+				break;
+			}
+			case "refresh_account": {
+				await refreshAccount();
+				sendResponse({ account });
+				break;
+			}
+			case "open_login": {
+				openDashboardLogin();
+				sendResponse({ ok: true });
+				break;
+			}
+			case "open_signup": {
+				openDashboardSignup();
+				sendResponse({ ok: true });
+				break;
+			}
+			case "open_dashboard": {
+				chrome.tabs.create({ url: `${WEB_URL}/dashboard` });
+				sendResponse({ ok: true });
+				break;
+			}
+			case "connect_device": {
+				try {
+					const minted = await connectDevice();
+					sendResponse({ ok: true, deviceId: minted.deviceId, label: minted.label });
+				} catch (err) {
+					sendResponse({ ok: false, error: err instanceof Error ? err.message : String(err) });
+				}
+				break;
+			}
+			case "disconnect_device": {
+				await disconnectDevice();
+				sendResponse({ ok: true });
+				break;
+			}
+			case "add_service": {
+				try {
+					const { service, webhookUrl } = await addService(msg.name, msg.port, msg.path);
+					sendResponse({ ok: true, service: { ...service, webhookUrl } });
+				} catch (err) {
+					sendResponse({ ok: false, error: err instanceof Error ? err.message : String(err) });
+				}
+				break;
+			}
+			case "remove_service": {
+				await removeService(msg.serviceId);
+				sendResponse({ ok: true });
+				broadcastStatus();
+				break;
+			}
+			case "toggle_service": {
+				const active = await toggleService(msg.serviceId);
+				sendResponse({ ok: true, active });
+				break;
+			}
+			case "scan_ports": {
+				const alive = await scanPorts();
+				sendResponse({ ports: alive });
+				break;
+			}
+			default:
+				sendResponse({ error: "Unknown message type" });
+		}
+	})();
+	return true;
 });
 
-chrome.runtime.onStartup.addListener(async () => {
-	console.log("[BridgeHook] Browser started, restoring bridges");
-	await restoreBridges();
-});
+// ── SW resilience: alarms + rehydrate on wake ────────────────────────
 
-async function restoreBridges() {
+const HEARTBEAT_ALARM = "bh-heartbeat";
+
+async function ensurePollingForActiveServices() {
+	for (const service of activeBridges.values()) {
+		if (service.active && !pollingControllers.has(service.id)) {
+			startBridge(service);
+		}
+	}
+}
+
+async function rehydrate() {
 	const services = await loadServices();
 	for (const service of services) {
-		// If the IDB key was wiped (browser data cleared, profile change, etc.) we
-		// can no longer authenticate — the channel is unrecoverable. Skip it.
 		const hasKey = !!(await getChannelPrivateKey(service.channelId));
 		if (!hasKey) {
 			console.warn(`[BridgeHook] No signing key for "${service.name}" — skipping`);
 			continue;
 		}
-		service.status = "disconnected";
+		service.status = service.active ? "disconnected" : "disconnected";
 		service.error = null;
 		activeBridges.set(service.id, service);
-		if (service.active) startBridge(service);
 	}
+	await refreshAccount();
+	await ensurePollingForActiveServices();
 	broadcastStatus();
 }
 
-// Restore bridges on service worker wake-up
-restoreBridges();
+chrome.runtime.onInstalled.addListener(async () => {
+	await chrome.alarms.create(HEARTBEAT_ALARM, { periodInMinutes: 0.5 });
+	await rehydrate();
+});
+
+chrome.runtime.onStartup.addListener(async () => {
+	await chrome.alarms.create(HEARTBEAT_ALARM, { periodInMinutes: 0.5 });
+	await rehydrate();
+});
+
+// Fires every 30s — MV3 minimum. The alarm wakes the SW; we re-attach
+// polling for any active service whose in-tick loop died with the SW.
+// Account state is also refreshed so the popup's identity chip stays
+// in sync when the user signs in/out on the dashboard.
+chrome.alarms.onAlarm.addListener(async (alarm) => {
+	if (alarm.name !== HEARTBEAT_ALARM) return;
+	if (activeBridges.size === 0) {
+		await rehydrate();
+	} else {
+		await refreshAccount();
+		await ensurePollingForActiveServices();
+		broadcastStatus();
+	}
+});
+
+// SW boot — fires on first install, version update, and every cold wake.
+rehydrate();

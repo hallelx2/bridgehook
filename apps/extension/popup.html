@@ -3,555 +3,497 @@
 <head>
   <meta charset="UTF-8" />
   <style>
+    /* ── Tokens (match the dashboard's redesign) ─────────────────── */
+    :root {
+      --bg: #09090b;
+      --surface: rgba(255,255,255,0.025);
+      --surface-2: rgba(255,255,255,0.04);
+      --border: rgba(255,255,255,0.06);
+      --border-strong: rgba(255,255,255,0.1);
+      --text: #f4f4f5;
+      --text-dim: #a1a1aa;
+      --text-fade: #71717a;
+      --text-ghost: #52525b;
+      --accent: #22d3ee;
+      --ok: #22c55e;
+      --warn: #f59e0b;
+      --error: #ef4444;
+    }
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
-    /* ── Scrollbar ──────────────────────────────────────────────────── */
     ::-webkit-scrollbar { width: 5px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
     ::-webkit-scrollbar-thumb:hover { background: #444; }
 
-    /* ── Body ───────────────────────────────────────────────────────── */
     body {
       width: 400px;
-      min-height: 200px;
-      max-height: 560px;
-      background: #09090b;
+      min-height: 220px;
+      max-height: 600px;
+      background: var(--bg);
       background-image:
-        radial-gradient(ellipse 120% 60% at 50% 0%, rgba(34, 211, 238, 0.04) 0%, transparent 60%),
-        radial-gradient(circle at 20% 80%, rgba(34, 211, 238, 0.015) 0%, transparent 40%);
-      color: #e4e4e7;
+        radial-gradient(ellipse 120% 60% at 50% 0%, rgba(34,211,238,0.045) 0%, transparent 60%),
+        radial-gradient(circle at 80% 100%, rgba(34,211,238,0.018) 0%, transparent 50%);
+      color: var(--text);
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif;
       font-size: 13px;
       overflow-y: auto;
       line-height: 1.5;
     }
 
-    /* ── Header ─────────────────────────────────────────────────────── */
+    /* ── Header ─────────────────────────────────────────────────── */
     header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
       padding: 14px 18px;
-      border-bottom: 1px solid rgba(255,255,255,0.06);
+      border-bottom: 1px solid var(--border);
       background: linear-gradient(180deg, rgba(20,20,24,0.98) 0%, rgba(14,14,18,0.96) 100%);
       backdrop-filter: blur(12px);
       position: sticky;
       top: 0;
       z-index: 10;
     }
-    .header-left {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
+    .header-row { display: flex; align-items: center; justify-content: space-between; }
+    .brand { display: flex; align-items: center; gap: 8px; }
     .logo {
-      font-weight: 700;
-      font-size: 15px;
-      color: #22d3ee;
+      font-weight: 700; font-size: 15px;
+      color: var(--accent);
       letter-spacing: -0.3px;
-      text-shadow: 0 0 20px rgba(34, 211, 238, 0.3);
+      text-shadow: 0 0 16px rgba(34,211,238,0.25);
     }
     .badge {
-      font-size: 10px;
-      color: #71717a;
-      background: rgba(255,255,255,0.06);
-      padding: 2px 8px;
-      border-radius: 10px;
-      border: 1px solid rgba(255,255,255,0.04);
-      font-weight: 500;
-      letter-spacing: 0.2px;
+      font-size: 9px; color: var(--text-fade);
+      background: var(--surface);
+      padding: 2px 7px; border-radius: 10px;
+      border: 1px solid var(--border);
+      font-weight: 600; letter-spacing: 0.4px; text-transform: uppercase;
     }
-    .header-actions {
-      display: flex;
-      gap: 6px;
+    .link-btn {
+      background: none; border: none;
+      color: var(--text-dim);
+      cursor: pointer;
+      font-size: 11px; font-weight: 500;
+      padding: 4px 8px; border-radius: 6px;
+      transition: all 0.15s ease;
+    }
+    .link-btn:hover { color: var(--text); background: var(--surface); }
+
+    /* ── Identity row ───────────────────────────────────────────── */
+    .identity {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 10px; margin-top: 11px; font-size: 11.5px;
+    }
+    .identity .who {
+      display: flex; align-items: center; gap: 8px;
+      color: var(--text-dim); min-width: 0;
+    }
+    .avatar {
+      width: 22px; height: 22px; border-radius: 50%;
+      background: linear-gradient(135deg, #22d3ee 0%, #6366f1 100%);
+      color: #0a0a0a;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 11px; font-weight: 700; flex-shrink: 0;
+    }
+    .email {
+      color: var(--text); font-weight: 500;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      max-width: 220px;
+    }
+    .source-chip {
+      font-size: 9px; text-transform: uppercase; letter-spacing: 0.4px;
+      color: var(--text-fade);
+      background: var(--surface);
+      padding: 2px 7px; border-radius: 10px;
+      border: 1px solid var(--border);
     }
 
-    /* ── Empty state ────────────────────────────────────────────────── */
-    .empty {
-      text-align: center;
-      padding: 40px 24px;
-      color: #52525b;
-    }
-    .empty-illustration {
-      font-family: "Courier New", monospace;
-      font-size: 11px;
-      line-height: 1.35;
-      color: #3f3f46;
-      margin-bottom: 18px;
-      letter-spacing: 1px;
-      user-select: none;
-    }
-    .empty p { margin-bottom: 4px; }
-    .empty .empty-title {
-      color: #a1a1aa;
-      font-weight: 600;
-      font-size: 14px;
-      margin-bottom: 6px;
-    }
-    .empty .empty-desc {
-      font-size: 12px;
-      color: #52525b;
-      line-height: 1.5;
-    }
-
-    /* ── Service card ───────────────────────────────────────────────── */
-    .service {
-      padding: 14px 18px;
-      margin: 8px 10px;
+    /* ── Usage chip ─────────────────────────────────────────────── */
+    .usage {
+      margin: 12px 18px 0;
+      padding: 10px 12px;
+      background: var(--surface);
+      border: 1px solid var(--border);
       border-radius: 8px;
-      background: rgba(255,255,255,0.02);
-      border: 1px solid rgba(255,255,255,0.05);
-      border-left: 3px solid #3f3f46;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.2), 0 1px 2px rgba(0,0,0,0.15);
-      transition: background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+      font-size: 11px;
+      display: flex; align-items: center; justify-content: space-between; gap: 10px;
     }
-    .service:hover {
-      background: rgba(255,255,255,0.035);
-      box-shadow: 0 2px 6px rgba(0,0,0,0.25), 0 1px 3px rgba(0,0,0,0.2);
+    .usage-left { display: flex; align-items: center; gap: 8px; }
+    .usage-label {
+      color: var(--text-fade);
+      text-transform: uppercase; letter-spacing: 0.4px;
+      font-size: 9px; font-weight: 600;
     }
-    /* Status-based left border — JS adds dot classes, CSS matches parent */
-    .service:has(.dot.connected) { border-left-color: #22c55e; }
-    .service:has(.dot.error) { border-left-color: #ef4444; }
-    .service:has(.dot.disconnected) { border-left-color: #ef4444; }
-    .service:has(.dot.inactive) { border-left-color: #52525b; }
+    .usage-count {
+      color: var(--text);
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 12px;
+    }
+    .usage-count .cap { color: var(--text-fade); }
+    .usage-bar {
+      flex: 1; max-width: 130px; height: 4px;
+      background: rgba(255,255,255,0.05);
+      border-radius: 4px; overflow: hidden;
+    }
+    .usage-bar-fill {
+      height: 100%; background: var(--accent);
+      transition: width 0.3s ease, background 0.2s;
+    }
+    .usage-bar-fill.warn { background: var(--warn); }
 
+    /* ── Sign-in card ───────────────────────────────────────────── */
+    .signin-card {
+      margin: 12px 14px 0;
+      padding: 14px;
+      background: linear-gradient(135deg, rgba(34,211,238,0.06) 0%, rgba(34,211,238,0.02) 100%);
+      border: 1px solid rgba(34,211,238,0.18);
+      border-radius: 10px;
+    }
+    .signin-card h3 { font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+    .signin-card p {
+      font-size: 11px; color: var(--text-dim);
+      line-height: 1.55; margin-bottom: 10px;
+    }
+    .signin-card .row { display: flex; gap: 6px; }
+    .signin-primary {
+      flex: 1;
+      background: var(--accent); color: #0a0a0a;
+      border: none; padding: 7px 10px; border-radius: 6px;
+      cursor: pointer; font-size: 11.5px; font-weight: 600;
+      transition: filter 0.15s ease;
+    }
+    .signin-primary:hover { filter: brightness(1.08); }
+    .signin-primary:disabled { opacity: 0.6; cursor: default; }
+    .signin-secondary {
+      flex: 1;
+      background: var(--surface); color: var(--text-dim);
+      border: 1px solid var(--border);
+      padding: 7px 10px; border-radius: 6px;
+      cursor: pointer; font-size: 11.5px; font-weight: 500;
+    }
+    .signin-secondary:hover { background: var(--surface-2); color: var(--text); }
+    .pair-link {
+      display: block; width: 100%;
+      margin-top: 9px;
+      font-size: 10.5px; color: var(--text-fade);
+      cursor: pointer; text-align: center;
+      background: none; border: none;
+    }
+    .pair-link:hover { color: var(--text-dim); text-decoration: underline; }
+
+    /* ── Empty state ─────────────────────────────────────────────── */
+    .empty { text-align: center; padding: 36px 24px; color: var(--text-ghost); }
+    .empty-illustration {
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 10px; line-height: 1.4;
+      color: #3f3f46; margin-bottom: 18px;
+      letter-spacing: 0.5px; user-select: none;
+    }
+    .empty-title { color: var(--text-dim); font-weight: 600; font-size: 14px; margin-bottom: 6px; }
+    .empty-desc { font-size: 12px; color: var(--text-ghost); line-height: 1.5; }
+
+    /* ── Service card ───────────────────────────────────────────── */
+    .services-list { padding: 8px 10px; }
+    .service {
+      padding: 12px 14px;
+      margin-bottom: 7px;
+      border-radius: 10px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      transition: background 0.15s ease, border-color 0.15s ease;
+    }
+    .service:hover { background: var(--surface-2); border-color: var(--border-strong); }
+    .service:last-child { margin-bottom: 0; }
     .service-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 8px;
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 8px; margin-bottom: 7px;
     }
     .service-name {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      font-weight: 600;
-      font-size: 13px;
-      color: #f4f4f5;
+      display: flex; align-items: center; gap: 8px;
+      font-weight: 600; font-size: 13px; color: var(--text); min-width: 0;
+    }
+    .service-name .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+    .status-pill {
+      font-size: 9px;
+      text-transform: uppercase; letter-spacing: 0.4px; font-weight: 700;
+      padding: 2px 7px; border-radius: 10px;
+      flex-shrink: 0; border: 1px solid transparent;
+    }
+    .status-pill.connected { color: var(--ok); background: rgba(34,197,94,0.1); border-color: rgba(34,197,94,0.2); }
+    .status-pill.disconnected { color: var(--text-fade); background: rgba(255,255,255,0.04); border-color: var(--border); }
+    .status-pill.error { color: var(--error); background: rgba(239,68,68,0.1); border-color: rgba(239,68,68,0.2); }
+    .status-pill.limit { color: var(--warn); background: rgba(245,158,11,0.1); border-color: rgba(245,158,11,0.25); }
+
+    .service-meta {
+      font-size: 11px; color: var(--text-fade);
+      margin-bottom: 6px;
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    }
+    .url-row { margin-bottom: 8px; }
+    .url {
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 10.5px; color: var(--text-dim);
+      background: rgba(0,0,0,0.25);
+      border: 1px solid var(--border);
+      padding: 5px 8px; border-radius: 6px;
+      display: block;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .stats {
+      font-size: 10.5px; color: var(--text-fade);
+      display: flex; align-items: center; gap: 12px;
+    }
+    .stats .stat { display: inline-flex; align-items: center; gap: 4px; }
+    .stats .stat.err { color: var(--error); }
+    .err-msg {
+      margin-top: 6px; font-size: 11px;
+      color: var(--error);
+      background: rgba(239,68,68,0.06);
+      border: 1px solid rgba(239,68,68,0.15);
+      padding: 5px 8px; border-radius: 6px;
+    }
+    .limit-msg {
+      margin-top: 6px; font-size: 11px;
+      color: var(--warn);
+      background: rgba(245,158,11,0.06);
+      border: 1px solid rgba(245,158,11,0.2);
+      padding: 5px 8px; border-radius: 6px;
     }
 
-    /* ── Status dot with glow ───────────────────────────────────────── */
-    .dot {
-      width: 8px; height: 8px;
-      border-radius: 50%;
-      display: inline-block;
-      flex-shrink: 0;
-      transition: background 0.3s ease, box-shadow 0.3s ease;
-    }
-    .dot.connected {
-      background: #22c55e;
-      box-shadow: 0 0 6px rgba(34, 197, 94, 0.5), 0 0 12px rgba(34, 197, 94, 0.2);
-    }
-    .dot.disconnected {
-      background: #ef4444;
-      box-shadow: 0 0 6px rgba(239, 68, 68, 0.4);
-    }
-    .dot.inactive {
-      background: #52525b;
-      box-shadow: none;
-    }
-    .dot.error {
-      background: #ef4444;
-      box-shadow: 0 0 6px rgba(239, 68, 68, 0.5), 0 0 12px rgba(239, 68, 68, 0.2);
-      animation: pulseGlow 1.8s ease-in-out infinite;
-    }
-
-    @keyframes pulseGlow {
-      0%, 100% { opacity: 1; box-shadow: 0 0 6px rgba(239, 68, 68, 0.5), 0 0 12px rgba(239, 68, 68, 0.2); }
-      50% { opacity: 0.5; box-shadow: 0 0 3px rgba(239, 68, 68, 0.3); }
-    }
-
-    /* ── Buttons ─────────────────────────────────────────────────────── */
     .service-actions { display: flex; gap: 4px; }
     .btn {
-      border: none;
-      padding: 4px 10px;
+      border: 1px solid var(--border);
+      padding: 4px 9px;
       border-radius: 6px;
-      font-size: 11px;
-      cursor: pointer;
-      font-weight: 500;
-      transition: all 0.15s ease;
-      letter-spacing: 0.1px;
-    }
-    .btn:active { transform: scale(0.96); }
-
-    .btn-pause {
-      background: rgba(251, 191, 36, 0.1);
-      color: #fbbf24;
-      border: 1px solid rgba(251, 191, 36, 0.15);
-    }
-    .btn-pause:hover { background: rgba(251, 191, 36, 0.18); }
-
-    .btn-resume {
-      background: rgba(74, 222, 128, 0.1);
-      color: #4ade80;
-      border: 1px solid rgba(74, 222, 128, 0.15);
-    }
-    .btn-resume:hover { background: rgba(74, 222, 128, 0.18); }
-
-    .btn-remove {
-      background: rgba(248, 113, 113, 0.08);
-      color: #f87171;
-      border: 1px solid rgba(248, 113, 113, 0.12);
-    }
-    .btn-remove:hover { background: rgba(248, 113, 113, 0.18); }
-
-    .btn-copy {
-      background: rgba(34, 211, 238, 0.1);
-      color: #22d3ee;
-      border: 1px solid rgba(34, 211, 238, 0.15);
-      display: inline-flex;
-      align-items: center;
-      gap: 4px;
-    }
-    .btn-copy:hover { background: rgba(34, 211, 238, 0.2); }
-    .btn-copy::before {
-      content: "";
-      display: inline-block;
-      width: 12px;
-      height: 12px;
-      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2322d3ee' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='9' y='9' width='13' height='13' rx='2' ry='2'/%3E%3Cpath d='M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1'/%3E%3C/svg%3E");
-      background-size: contain;
-      background-repeat: no-repeat;
-      flex-shrink: 0;
-    }
-
-    .btn:hover { filter: brightness(1.15); }
-
-    /* ── Service meta & URL ─────────────────────────────────────────── */
-    .service-meta {
-      font-size: 11px;
-      color: #71717a;
-      margin-bottom: 2px;
-    }
-    .service-meta span { margin-right: 12px; }
-
-    .url-row {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      margin-top: 6px;
-    }
-    .url {
-      font-family: "SF Mono", "Cascadia Code", "Fira Code", Consolas, monospace;
       font-size: 10.5px;
-      color: #67e8f9;
-      background: rgba(34, 211, 238, 0.06);
-      padding: 5px 10px;
-      border-radius: 6px;
-      border: 1px solid rgba(34, 211, 238, 0.1);
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      max-width: 280px;
-      flex: 1;
-    }
-
-    .error-msg {
-      color: #fca5a5;
-      font-size: 11px;
-      margin-top: 6px;
-      padding: 4px 8px;
-      background: rgba(239, 68, 68, 0.06);
-      border-radius: 4px;
-      border-left: 2px solid rgba(239, 68, 68, 0.3);
-    }
-
-    .stats {
-      font-size: 11px;
-      color: #52525b;
-      margin-top: 8px;
-      display: flex;
-      align-items: center;
-      gap: 4px;
-    }
-    .stats::before {
-      content: "";
-      display: block;
-      height: 1px;
-      flex: none;
-      width: 100%;
-      background: rgba(255,255,255,0.04);
-      position: absolute;
-      left: 0;
-      right: 0;
-    }
-
-    /* Override stats to use a top border separator instead of pseudo-element */
-    .stats {
-      position: relative;
-      padding-top: 8px;
-      border-top: 1px solid rgba(255,255,255,0.04);
-    }
-    .stats::before { display: none; }
-
-    /* ── Header action buttons ──────────────────────────────────────── */
-    .btn-new {
-      background: linear-gradient(135deg, #0891b2, #0e7490);
-      color: #fff;
-      border: none;
-      padding: 6px 14px;
-      border-radius: 6px;
-      font-size: 12px;
       cursor: pointer;
       font-weight: 500;
-      transition: all 0.15s ease;
-      box-shadow: 0 1px 3px rgba(8, 145, 178, 0.3);
+      letter-spacing: 0.1px;
+      transition: filter 0.15s ease, background 0.15s ease;
+      background: var(--surface);
+      color: var(--text-dim);
     }
-    .btn-new:hover {
-      background: linear-gradient(135deg, #0e7490, #155e75);
-      box-shadow: 0 2px 6px rgba(8, 145, 178, 0.4);
-      transform: translateY(-1px);
-    }
-    .btn-new:active { transform: translateY(0); }
+    .btn:hover { background: var(--surface-2); color: var(--text); }
+    .btn:active { transform: scale(0.97); }
+    .btn-pause { color: var(--warn); background: rgba(245,158,11,0.08); border-color: rgba(245,158,11,0.18); }
+    .btn-pause:hover { background: rgba(245,158,11,0.16); color: var(--warn); }
+    .btn-resume { color: var(--ok); background: rgba(34,197,94,0.08); border-color: rgba(34,197,94,0.18); }
+    .btn-resume:hover { background: rgba(34,197,94,0.16); color: var(--ok); }
+    .btn-remove { color: var(--error); background: rgba(239,68,68,0.06); border-color: rgba(239,68,68,0.14); }
+    .btn-remove:hover { background: rgba(239,68,68,0.16); color: var(--error); }
 
-    /* ── Add form ───────────────────────────────────────────────────── */
-    #add-section {
-      padding: 14px 18px;
-      margin: 8px 10px;
-      border-radius: 8px;
-      background: rgba(255,255,255,0.02);
-      border: 1px solid rgba(255,255,255,0.06);
-      box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+    /* ── Add form ───────────────────────────────────────────────── */
+    #add-section, #detect-section {
+      padding: 14px; margin: 10px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      display: none;
     }
-    .form-title {
-      font-size: 12px;
-      font-weight: 600;
-      color: #a1a1aa;
+    #add-section h4, #detect-section h4 {
+      font-size: 11px; color: var(--text-fade);
+      font-weight: 700; letter-spacing: 0.4px; text-transform: uppercase;
       margin-bottom: 10px;
-      text-transform: uppercase;
-      letter-spacing: 0.6px;
     }
-    .form-row { display: flex; gap: 10px; margin-bottom: 10px; }
-    .form-group { flex: 1; }
-    .form-group label {
+    .field { margin-bottom: 10px; }
+    .field label {
       display: block;
-      font-size: 10px;
-      color: #71717a;
-      margin-bottom: 4px;
-      font-weight: 500;
-      text-transform: uppercase;
-      letter-spacing: 0.4px;
+      font-size: 10px; color: var(--text-fade);
+      letter-spacing: 0.4px; text-transform: uppercase;
+      font-weight: 600; margin-bottom: 5px;
     }
-    .form-group input {
+    .field input {
       width: 100%;
-      background: rgba(255,255,255,0.04);
-      border: 1px solid rgba(255,255,255,0.08);
-      color: #e4e4e7;
-      padding: 8px 10px;
-      border-radius: 6px;
-      font-size: 12px;
-      transition: all 0.2s ease;
-    }
-    .form-group input::placeholder { color: #52525b; }
-    .form-group input:focus {
+      background: rgba(0,0,0,0.3);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 7px 10px; border-radius: 6px;
+      font-size: 12px; font-family: inherit;
       outline: none;
-      border-color: rgba(34, 211, 238, 0.5);
-      box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.08), 0 0 12px rgba(34, 211, 238, 0.06);
-      background: rgba(255,255,255,0.06);
+      transition: border-color 0.15s ease;
     }
-    .form-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 2px; }
-    .btn-add {
-      background: linear-gradient(135deg, #0891b2, #0e7490);
-      color: #fff;
-      padding: 7px 18px;
-      border-radius: 6px;
-      font-weight: 500;
-      box-shadow: 0 1px 3px rgba(8, 145, 178, 0.3);
-      transition: all 0.15s ease;
-    }
-    .btn-add:hover {
-      box-shadow: 0 2px 8px rgba(8, 145, 178, 0.4);
-      transform: translateY(-1px);
+    .field input:focus { border-color: rgba(34,211,238,0.5); }
+    .form-actions { display: flex; gap: 6px; margin-top: 12px; }
+    .form-actions button {
+      flex: 1; padding: 7px;
+      border-radius: 6px; cursor: pointer;
+      font-size: 11.5px; font-weight: 600;
+      border: none;
+      transition: filter 0.15s ease;
     }
     .btn-cancel {
-      background: rgba(255,255,255,0.05);
-      color: #a1a1aa;
-      padding: 7px 18px;
-      border: 1px solid rgba(255,255,255,0.08);
-      border-radius: 6px;
-      transition: all 0.15s ease;
+      background: var(--surface); color: var(--text-dim);
+      border: 1px solid var(--border) !important;
     }
-    .btn-cancel:hover { background: rgba(255,255,255,0.08); }
+    .btn-cancel:hover { background: var(--surface-2); color: var(--text); }
+    .btn-submit { background: var(--accent); color: #0a0a0a; }
+    .btn-submit:hover { filter: brightness(1.08); }
+    .btn-submit:disabled { opacity: 0.6; cursor: default; }
 
-    /* ── Detect section ─────────────────────────────────────────────── */
-    #detect-section > div {
-      padding: 14px 18px;
-      margin: 8px 10px;
-      border-radius: 8px;
-      background: rgba(255,255,255,0.02);
-      border: 1px solid rgba(255,255,255,0.06);
-      box-shadow: 0 1px 3px rgba(0,0,0,0.2);
-    }
-
+    /* ── Detect ─────────────────────────────────────────────────── */
     #detect-scanning {
-      color: #71717a;
-      font-size: 12px;
-      display: flex;
-      align-items: center;
-      gap: 10px;
+      text-align: center; color: var(--text-dim);
+      font-size: 11.5px; padding: 16px 0;
+      display: none;
     }
-    .scan-spinner {
-      display: inline-block;
-      width: 14px;
-      height: 14px;
-      border: 2px solid rgba(34, 211, 238, 0.2);
-      border-top-color: #22d3ee;
-      border-radius: 50%;
-      animation: spin 0.7s linear infinite;
-      flex-shrink: 0;
+    .detect-port {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 8px 10px;
+      background: rgba(0,0,0,0.2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      margin-bottom: 6px;
+      font-size: 11.5px;
     }
-    @keyframes spin {
-      to { transform: rotate(360deg); }
+    .detect-port-info { display: flex; align-items: center; gap: 7px; }
+    .detect-port-info .dot {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: var(--ok);
+      box-shadow: 0 0 6px rgba(34,197,94,0.5);
+    }
+    .detect-port-label {
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 11px; color: var(--text);
+    }
+    .detect-port-label small { color: var(--text-fade); font-weight: 400; }
+    .btn-bridge {
+      background: var(--accent); color: #0a0a0a;
+      border: none;
+      padding: 4px 10px; border-radius: 6px;
+      font-size: 10.5px; font-weight: 600;
+      cursor: pointer;
+    }
+    .btn-bridge:hover { filter: brightness(1.08); }
+    .detect-none {
+      text-align: center; color: var(--text-fade);
+      font-size: 11.5px; padding: 12px 0;
     }
 
-    .detect-port {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 8px 0;
-      border-bottom: 1px solid rgba(255,255,255,0.04);
+    /* ── Bottom bar ─────────────────────────────────────────────── */
+    .bottom-actions {
+      padding: 10px 14px 12px;
+      border-top: 1px solid var(--border);
+      display: flex; gap: 6px;
+      background: rgba(0,0,0,0.2);
+    }
+    .btn-new {
+      flex: 1;
+      background: var(--surface);
+      color: var(--text);
+      border: 1px solid var(--border-strong);
+      padding: 7px 10px; border-radius: 7px;
+      cursor: pointer;
+      font-size: 11.5px; font-weight: 600;
       transition: background 0.15s ease;
     }
-    .detect-port:last-child { border-bottom: none; }
-    .detect-port-info { display: flex; align-items: center; gap: 8px; }
-    .detect-port-info .dot {
-      background: #22c55e;
-      box-shadow: 0 0 6px rgba(34, 197, 94, 0.4);
-    }
-    .detect-port-label { font-size: 12px; color: #d4d4d8; }
-    .detect-port-label small { color: #71717a; font-size: 10px; }
-
-    .btn-bridge {
-      background: linear-gradient(135deg, #0891b2, #0e7490);
-      color: #fff;
+    .btn-new:hover { background: var(--surface-2); }
+    .btn-detect {
+      flex: 1;
+      background: var(--accent); color: #0a0a0a;
       border: none;
-      padding: 4px 14px;
-      border-radius: 6px;
-      font-size: 11px;
+      padding: 7px 10px; border-radius: 7px;
       cursor: pointer;
-      font-weight: 500;
-      transition: all 0.15s ease;
-      box-shadow: 0 1px 3px rgba(8, 145, 178, 0.2);
+      font-size: 11.5px; font-weight: 600;
+      transition: filter 0.15s ease;
     }
-    .btn-bridge:hover {
-      background: linear-gradient(135deg, #0e7490, #155e75);
-      transform: translateY(-1px);
-    }
-    .btn-bridge:active { transform: translateY(0); }
-    .btn-bridge:disabled {
-      background: rgba(255,255,255,0.05);
-      color: #52525b;
-      cursor: default;
-      box-shadow: none;
-      transform: none;
-    }
-    .detect-none {
-      color: #52525b;
-      font-size: 12px;
-      padding: 10px 0;
-      text-align: center;
-    }
+    .btn-detect:hover { filter: brightness(1.08); }
+    .btn-detect:disabled { opacity: 0.6; cursor: default; }
 
-    /* ── Toast ───────────────────────────────────────────────────────── */
-    .copied-toast {
+    /* ── Toast ──────────────────────────────────────────────────── */
+    .toast {
       position: fixed;
-      bottom: -40px;
-      left: 50%;
-      transform: translateX(-50%);
-      background: linear-gradient(135deg, #22d3ee, #06b6d4);
-      color: #052e16;
-      padding: 6px 20px;
-      border-radius: 8px;
-      font-size: 11px;
-      font-weight: 600;
-      box-shadow: 0 4px 12px rgba(34, 211, 238, 0.3);
-      transition: bottom 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.3s ease;
-      opacity: 0;
+      bottom: 16px; left: 50%;
+      transform: translateX(-50%) translateY(10px);
+      background: rgba(34,211,238,0.95);
+      color: #0a0a0a;
+      padding: 7px 14px;
+      border-radius: 18px;
+      font-size: 11.5px; font-weight: 600;
+      opacity: 0; pointer-events: none;
+      transition: opacity 0.2s ease, transform 0.2s ease;
+      box-shadow: 0 4px 14px rgba(0,0,0,0.4);
       z-index: 100;
     }
-    .copied-toast.show {
-      bottom: 14px;
-      opacity: 1;
-    }
-
-    /* ── Transitions ────────────────────────────────────────────────── */
-    #add-section,
-    #detect-section,
-    .service,
-    .empty {
-      animation: fadeSlideIn 0.2s ease-out;
-    }
-    @keyframes fadeSlideIn {
-      from { opacity: 0; transform: translateY(4px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
   </style>
 </head>
 <body>
+
   <header>
-    <div class="header-left">
-      <span class="logo">BridgeHook</span>
-      <span class="badge">Extension</span>
+    <div class="header-row">
+      <div class="brand">
+        <span class="logo">bridgehook</span>
+        <span class="badge">v0.1</span>
+      </div>
+      <button id="btn-dashboard" class="link-btn" title="Open dashboard">Dashboard ↗</button>
     </div>
-    <div class="header-actions">
-      <button class="btn-new" id="btn-detect" style="background:linear-gradient(135deg,#059669,#047857);box-shadow:0 1px 3px rgba(5,150,105,0.3);">Detect</button>
-      <button class="btn-new" id="btn-show-add">+ Add</button>
+    <div id="identity" class="identity">
+      <!-- populated by popup.js -->
     </div>
   </header>
 
-  <!-- Account banner (sign-in / signed-in chip) — populated by popup.js -->
-  <div id="account-banner" style="display:none;padding:8px 12px;border-bottom:1px solid #1f1f23;font-size:12px;color:#a1a1aa;display:flex;align-items:center;justify-content:space-between;gap:8px;"></div>
-
-  <!-- Auto-detect results -->
-  <div id="detect-section" style="display:none">
-    <div>
-      <div id="detect-scanning" style="color:#71717a;font-size:12px;">
-        <span class="scan-spinner"></span>
-        Scanning ports 3000, 3001, 4000, 5000, 5173, 8000, 8080, 8888...
-      </div>
-      <div id="detect-results" style="display:none;"></div>
+  <!-- Anonymous → sign-in card -->
+  <div id="signin-card" class="signin-card" style="display:none;">
+    <h3>Sign in to start</h3>
+    <p>The free plan covers 10 webhooks a day. Sign in at BridgeHook and this extension picks up your session automatically — no pairing needed.</p>
+    <div class="row">
+      <button id="btn-signup" class="signin-primary">Create account</button>
+      <button id="btn-signin" class="signin-secondary">Sign in</button>
     </div>
+    <button id="btn-pair-device" class="pair-link">Or pair this device with a code →</button>
   </div>
 
-  <div id="add-section" style="display:none">
-    <div class="form-title">New Bridge</div>
-    <div class="form-row">
-      <div class="form-group">
-        <label for="f-name">Name</label>
-        <input id="f-name" type="text" placeholder="stripe-api" />
-      </div>
-      <div class="form-group" style="max-width:80px">
-        <label for="f-port">Port</label>
-        <input id="f-port" type="number" value="3000" min="1" max="65535" />
-      </div>
-      <div class="form-group">
-        <label for="f-path">Path</label>
-        <input id="f-path" type="text" placeholder="/webhook" value="/webhook" />
-      </div>
+  <!-- Signed in → usage chip -->
+  <div id="usage" class="usage" style="display:none;">
+    <div class="usage-left">
+      <span class="usage-label">Today</span>
+      <span class="usage-count">
+        <span id="usage-used">0</span><span id="usage-cap" class="cap"></span>
+      </span>
+    </div>
+    <div class="usage-bar"><div id="usage-bar-fill" class="usage-bar-fill" style="width:0%"></div></div>
+  </div>
+
+  <div id="empty" class="empty">
+    <div class="empty-illustration">┌─ relay ─┐
+│         │
+└─→ ??? ──┘</div>
+    <p class="empty-title">No bridges yet</p>
+    <p class="empty-desc">Click <strong>Detect</strong> to find local servers, or add one manually.</p>
+  </div>
+
+  <div id="services-list" class="services-list"></div>
+
+  <div id="add-section">
+    <h4>New bridge</h4>
+    <div class="field">
+      <label for="f-name">Name</label>
+      <input id="f-name" type="text" placeholder="stripe-webhook" />
+    </div>
+    <div class="field">
+      <label for="f-port">Port</label>
+      <input id="f-port" type="number" min="1" max="65535" value="3000" />
+    </div>
+    <div class="field">
+      <label for="f-path">Path</label>
+      <input id="f-path" type="text" placeholder="/webhook" value="/webhook" />
     </div>
     <div class="form-actions">
-      <button class="btn btn-cancel" id="btn-cancel">Cancel</button>
-      <button class="btn btn-add" id="btn-add">Add Service</button>
+      <button id="btn-cancel" class="btn-cancel">Cancel</button>
+      <button id="btn-add" class="btn-submit">Add bridge</button>
     </div>
   </div>
 
-  <div id="services-list"></div>
-  <div id="empty" class="empty" style="display:none">
-    <div class="empty-illustration">
-      _______________<br>
-     |  ___________  |<br>
-     | |           | |<br>
-     | |  ~  ~ ~   | |<br>
-     | |___________| |<br>
-     |_____[___]_____|<br>
-    </div>
-    <p class="empty-title">No bridges yet</p>
-    <p class="empty-desc">Click <b>Detect</b> to find local servers<br>or <b>+ Add</b> to configure manually</p>
+  <div id="detect-section">
+    <h4>Detected local servers</h4>
+    <div id="detect-scanning">Scanning common ports…</div>
+    <div id="detect-results"></div>
   </div>
 
-  <div class="copied-toast" id="toast">Copied!</div>
+  <div class="bottom-actions">
+    <button id="btn-show-add" class="btn-new">+ New</button>
+    <button id="btn-detect" class="btn-detect">⚡ Detect</button>
+  </div>
+
+  <div id="toast" class="toast"></div>
 
   <script src="popup.js"></script>
 </body>
