@@ -180,15 +180,29 @@ export function createAuth(env: AuthEnv): Auth | null {
 				},
 			},
 		},
-		advanced: env.AUTH_COOKIE_DOMAIN
-			? {
-					crossSubDomainCookies: {
-						enabled: true,
-						domain: env.AUTH_COOKIE_DOMAIN,
-					},
-					useSecureCookies: true,
-				}
-			: { useSecureCookies: true },
+		// Cookie policy:
+		//   - `defaultCookieAttributes: { sameSite: "none", secure: true }` is
+		//     required whenever the dashboard origin differs from the relay
+		//     origin (e.g. pages.dev → workers.dev). Without it the browser
+		//     never sends the session cookie on cross-site fetches and AuthGate
+		//     loops back to /login. Better-Auth's default is `Lax` which only
+		//     works for same-site setups.
+		//   - `crossSubDomainCookies` (with a shared apex like ".bridgehook.dev")
+		//     additionally scopes the cookie so app.<apex> and relay.<apex>
+		//     can both read it. Doesn't apply pre-custom-domain but stays
+		//     wired for when AUTH_COOKIE_DOMAIN lands.
+		advanced: {
+			useSecureCookies: true,
+			defaultCookieAttributes: { sameSite: "none", secure: true },
+			...(env.AUTH_COOKIE_DOMAIN
+				? {
+						crossSubDomainCookies: {
+							enabled: true,
+							domain: env.AUTH_COOKIE_DOMAIN,
+						},
+					}
+				: {}),
+		},
 		trustedOrigins: trustedOrigins.length > 0 ? trustedOrigins : undefined,
 	});
 
