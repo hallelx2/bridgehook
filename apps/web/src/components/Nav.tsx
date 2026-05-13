@@ -53,7 +53,7 @@ export function Nav() {
 					Sign in
 				</Link>
 				<Link
-					to="/login"
+					to="/login?signup=1"
 					className="bg-on-surface text-background px-4 py-1.5 rounded-full font-semibold transition-colors hover:bg-primary hover:text-on-surface no-underline text-sm"
 				>
 					Get started

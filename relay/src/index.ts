@@ -623,7 +623,7 @@ app.get("/api/config", (c) => {
 	const billingEnabled = authEnabled && Boolean(c.env.POLAR_ACCESS_TOKEN);
 	const authProviders = authEnabled
 		? getAvailableAuthProviders(c.env)
-		: { google: false, github: false, magicLink: false };
+		: { emailPassword: false, google: false, github: false, magicLink: false };
 	return c.json({
 		authEnabled,
 		signupEnabled: authEnabled,

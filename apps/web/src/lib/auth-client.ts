@@ -30,6 +30,16 @@ interface SessionData {
 
 interface AuthClient {
 	signIn: {
+		/**
+		 * Email + password sign-in. Works against the relay's
+		 * `emailAndPassword` Better-Auth config — the launch path while
+		 * we don't have OAuth credentials or a sending domain.
+		 */
+		email: (args: {
+			email: string;
+			password: string;
+			callbackURL?: string;
+		}) => Promise<{ data?: unknown; error?: { message?: string } }>;
 		magicLink: (args: {
 			email: string;
 			callbackURL?: string;
@@ -43,6 +53,20 @@ interface AuthClient {
 		 */
 		social: (args: {
 			provider: "google" | "github";
+			callbackURL?: string;
+		}) => Promise<{ data?: unknown; error?: { message?: string } }>;
+	};
+	signUp: {
+		/**
+		 * Email + password sign-up. With Better-Auth `autoSignIn: true` set
+		 * server-side, a successful sign-up also creates a session — no
+		 * separate sign-in step needed. `name` is optional; when omitted
+		 * Better-Auth derives a display name from the email.
+		 */
+		email: (args: {
+			email: string;
+			password: string;
+			name?: string;
 			callbackURL?: string;
 		}) => Promise<{ data?: unknown; error?: { message?: string } }>;
 	};
@@ -69,4 +93,4 @@ const _client = createAuthClient({
 
 export const authClient = _client as unknown as AuthClient;
 
-export const { signIn, signOut, useSession } = authClient;
+export const { signIn, signUp, signOut, useSession } = authClient;

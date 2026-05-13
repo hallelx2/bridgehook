@@ -54,11 +54,14 @@ let cachedSecret: string | undefined;
 
 /**
  * Which sign-in methods this relay has been configured for. Surfaced via
- * /api/config so the dashboard renders the right buttons. Magic-link is
- * always considered available in dev (console mailer), but only "real" in
- * the UI sense when a mailer is wired up.
+ * /api/config so the dashboard renders the right buttons.
+ *
+ * `emailPassword` is true whenever auth itself is on — it's the universal
+ * fallback that works without a domain or mailer. The OAuth providers and
+ * magic-link light up as their respective env vars get set.
  */
 export interface AvailableAuthProviders {
+	emailPassword: boolean;
 	google: boolean;
 	github: boolean;
 	magicLink: boolean;
@@ -66,12 +69,11 @@ export interface AvailableAuthProviders {
 
 export function getAvailableAuthProviders(env: AuthEnv): AvailableAuthProviders {
 	return {
+		// Email+password is always usable when auth is up. Verification is
+		// off until RESEND_API_KEY is set — see createAuth() below.
+		emailPassword: true,
 		google: Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET),
 		github: Boolean(env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET),
-		// Magic-link is registered unconditionally on the relay side (console
-		// mailer in dev, Resend in prod). Flag it for the UI based on whether
-		// a real mailer is plugged in — dev users can still hit /auth/sign-in
-		// directly if they really want.
 		magicLink: Boolean(env.RESEND_API_KEY),
 	};
 }
@@ -125,8 +127,20 @@ export function createAuth(env: AuthEnv): Auth | null {
 			provider: "pg",
 			schema: { user, session, account, verification },
 		}),
-		// Disable email/password — OAuth + magic-link only.
-		emailAndPassword: { enabled: false },
+		// Email+password is the launch path because it works without a sending
+		// domain. `requireEmailVerification` flips to true once RESEND_API_KEY
+		// is set — existing accounts get a "please verify" banner from
+		// Better-Auth's standard flow. `autoSignIn` lets sign-up create a
+		// session in one round-trip so users land in /dashboard immediately.
+		// Password reset is gated by mailer availability inside Better-Auth,
+		// so it's a no-op until the env is configured.
+		emailAndPassword: {
+			enabled: true,
+			autoSignIn: true,
+			requireEmailVerification: Boolean(env.RESEND_API_KEY),
+			minPasswordLength: 8,
+			maxPasswordLength: 128,
+		},
 		socialProviders,
 		plugins: [
 			magicLink({

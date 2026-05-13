@@ -10,10 +10,15 @@ const RELAY_URL = import.meta.env.VITE_RELAY_URL || "http://localhost:8787";
 
 /**
  * Sign-in providers the relay is configured for. Each is independently
- * optional — the Login page renders only the buttons whose providers are
- * `true` here. All three are `false` in self-host mode.
+ * optional — the Login page renders only the methods whose providers are
+ * `true` here. All four are `false` in self-host mode.
+ *
+ * `emailPassword` is the universal fallback that works without a sending
+ * domain — it's the launch path; the others light up as their env vars
+ * land.
  */
 export interface AuthProviders {
+	emailPassword: boolean;
 	google: boolean;
 	github: boolean;
 	magicLink: boolean;
@@ -33,7 +38,7 @@ const FALLBACK_CONFIG: RelayConfig = {
 	authEnabled: false,
 	signupEnabled: false,
 	billingEnabled: false,
-	authProviders: { google: false, github: false, magicLink: false },
+	authProviders: { emailPassword: false, google: false, github: false, magicLink: false },
 	trialDays: 0,
 	version: "unknown",
 };

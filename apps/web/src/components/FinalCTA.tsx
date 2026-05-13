@@ -21,7 +21,7 @@ export function FinalCTA() {
 					</p>
 					<div className="flex flex-col sm:flex-row justify-center gap-3">
 						<Link
-							to="/login"
+							to="/login?signup=1"
 							className="px-8 py-4 bg-on-surface text-background font-bold rounded-xl hover:bg-primary hover:text-on-surface transition-colors text-[15px] no-underline"
 						>
 							Get started — free

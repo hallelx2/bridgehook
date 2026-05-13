@@ -6,8 +6,8 @@
  * possible but adds friction with no upside.
  *
  * BridgeHook adds two custom columns to `user`:
- *   - `plan` — billing state mirrored from subscriptions.status
- *   - `trialEndsAt` — when the 7-day trial ends
+ *   - `plan` — billing tier (free / hobby / pro / team / trialing / selfhost)
+ *   - `trialEndsAt` — legacy 7-day trial deadline; null on new free signups
  *
  * Re-run via `npx @better-auth/cli generate` if the Better-Auth version
  * changes; merge any added columns by hand.
@@ -22,8 +22,13 @@ export const user = pgTable("user", {
 	image: text("image"),
 	createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 	updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-	// BridgeHook custom — billing/trial state
-	plan: text("plan").notNull().default("trialing"),
+	// BridgeHook custom — billing/quota state.
+	// Default flipped to "free" at launch (was "trialing" before the
+	// free-tier pivot). Better-Auth's drizzle adapter strips unknown fields
+	// from its INSERT, so this column default is what actually lands on new
+	// signups — the `databaseHooks` override in relay/src/auth.ts is
+	// informational, not load-bearing.
+	plan: text("plan").notNull().default("free"),
 	trialEndsAt: timestamp("trial_ends_at", { withTimezone: true }),
 });
 

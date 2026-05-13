@@ -76,7 +76,7 @@ export function BridgeHero() {
 				{/* CTAs */}
 				<div className="flex flex-col sm:flex-row items-center justify-center gap-3 mb-16">
 					<Link
-						to="/login"
+						to="/login?signup=1"
 						className="w-full sm:w-auto px-8 py-4 bg-on-surface text-background font-bold rounded-xl transition-all hover:bg-primary hover:text-on-surface active:scale-[0.98] no-underline text-center text-[15px]"
 					>
 						Get started — free

@@ -1,12 +1,10 @@
 /**
- * Sign-in page. Renders whatever auth providers the relay has been
- * configured for (Google, GitHub, magic-link) based on /api/config.
+ * Sign-in / sign-up page. Renders whichever auth providers the relay has
+ * been configured for, based on /api/config.authProviders.
  *
- * - OAuth providers: one click → redirect to provider → relay /auth/callback
- *   → back to `next`. Provider returns email_verified, so the user lands in
- *   the dashboard immediately with no separate verification step.
- * - Magic-link: kept as a fallback for hosts that have mail wired up. Hidden
- *   at launch since we don't have a corporate sending domain yet.
+ * Launch shape: email + password is the default visible form (works without
+ * a sending domain). OAuth buttons render above when Google/GitHub clients
+ * are configured. Magic-link is dormant until a mailer is wired up.
  *
  * Self-host (config.authEnabled === false) shouldn't reach this page — the
  * router lands users directly in /dashboard.
@@ -14,15 +12,26 @@
 import { type FormEvent, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { Logo } from "../components/Logo";
-import { signIn } from "../lib/auth-client";
+import { signIn, signUp } from "../lib/auth-client";
 import { useConfig } from "../lib/config";
+
+type Mode = "signin" | "signup";
+type Submitting = "google" | "github" | "magic" | "email" | null;
 
 export function Login() {
 	const navigate = useNavigate();
 	const [search] = useSearchParams();
 	const { config, loading: configLoading } = useConfig();
+
+	// `?signup=1` deep-links to the sign-up tab — the landing page's
+	// "Get started" CTA appends it; "Sign in" doesn't.
+	const initialMode: Mode = search.get("signup") === "1" ? "signup" : "signin";
+	const [mode, setMode] = useState<Mode>(initialMode);
+
 	const [email, setEmail] = useState("");
-	const [submitting, setSubmitting] = useState<"google" | "github" | "magic" | null>(null);
+	const [password, setPassword] = useState("");
+	const [name, setName] = useState("");
+	const [submitting, setSubmitting] = useState<Submitting>(null);
 	const [error, setError] = useState<string | null>(null);
 
 	// Where to land after sign-in. Defaults to dashboard; the device-pairing
@@ -65,12 +74,44 @@ export function Login() {
 		}
 	}
 
+	async function onEmailPassword(e: FormEvent) {
+		e.preventDefault();
+		setError(null);
+		setSubmitting("email");
+		try {
+			const result =
+				mode === "signup"
+					? await signUp.email({
+							email,
+							password,
+							name: name.trim() || email.split("@")[0],
+							callbackURL,
+						})
+					: await signIn.email({ email, password, callbackURL });
+			if (result.error) {
+				setError(
+					result.error.message ||
+						(mode === "signup" ? "Could not create your account" : "Wrong email or password"),
+				);
+				setSubmitting(null);
+				return;
+			}
+			navigate(next, { replace: true });
+		} catch (err) {
+			setError(err instanceof Error ? err.message : "Network error");
+			setSubmitting(null);
+		}
+	}
+
 	const providers = config?.authProviders ?? {
+		emailPassword: false,
 		google: false,
 		github: false,
 		magicLink: false,
 	};
-	const anyProvider = providers.google || providers.github || providers.magicLink;
+	const anyOAuth = providers.google || providers.github;
+	const anyProvider = providers.emailPassword || anyOAuth || providers.magicLink;
+	const isSignup = mode === "signup";
 
 	return (
 		<div className="min-h-screen bg-gray-950 text-gray-100 flex flex-col">
@@ -82,46 +123,50 @@ export function Login() {
 
 			<main className="flex-1 flex items-center justify-center px-6">
 				<div className="w-full max-w-sm">
-					<h1 className="text-2xl font-semibold mb-2">Sign in to BridgeHook</h1>
+					<h1 className="text-2xl font-semibold mb-2">
+						{isSignup ? "Create your account" : "Sign in to BridgeHook"}
+					</h1>
 					<p className="text-sm text-gray-400 mb-8">
-						No passwords. Your email arrives pre-verified from your provider.
+						{isSignup ? "Free forever. 10 webhooks a day, no card needed." : "Welcome back."}
 					</p>
 
 					{configLoading ? (
 						<div className="text-sm text-gray-500 py-12 text-center font-mono">loading…</div>
 					) : !anyProvider ? (
 						<div className="rounded-md border border-amber-900 bg-amber-950/40 px-4 py-3 text-sm text-amber-200">
-							No sign-in providers are configured on this relay. Set <code>GOOGLE_CLIENT_ID</code> /{" "}
-							<code>GITHUB_CLIENT_ID</code> (plus their secrets) on the worker and reload.
+							No sign-in providers are configured on this relay. Set <code>BETTER_AUTH_SECRET</code>{" "}
+							on the worker to enable email/password, then redeploy.
 						</div>
 					) : (
 						<>
-							<div className="space-y-2.5">
-								{providers.google ? (
-									<button
-										type="button"
-										onClick={() => onOAuth("google")}
-										disabled={submitting !== null}
-										className="w-full flex items-center justify-center gap-2.5 bg-white hover:bg-gray-100 disabled:bg-gray-700 disabled:text-gray-400 text-gray-900 font-medium rounded-md py-2.5 text-sm transition-colors"
-									>
-										<GoogleLogo />
-										{submitting === "google" ? "Redirecting…" : "Continue with Google"}
-									</button>
-								) : null}
-								{providers.github ? (
-									<button
-										type="button"
-										onClick={() => onOAuth("github")}
-										disabled={submitting !== null}
-										className="w-full flex items-center justify-center gap-2.5 bg-gray-900 hover:bg-gray-800 border border-gray-800 disabled:bg-gray-900/50 disabled:text-gray-500 text-gray-100 font-medium rounded-md py-2.5 text-sm transition-colors"
-									>
-										<GitHubLogo />
-										{submitting === "github" ? "Redirecting…" : "Continue with GitHub"}
-									</button>
-								) : null}
-							</div>
+							{anyOAuth ? (
+								<div className="space-y-2.5">
+									{providers.google ? (
+										<button
+											type="button"
+											onClick={() => onOAuth("google")}
+											disabled={submitting !== null}
+											className="w-full flex items-center justify-center gap-2.5 bg-white hover:bg-gray-100 disabled:bg-gray-700 disabled:text-gray-400 text-gray-900 font-medium rounded-md py-2.5 text-sm transition-colors"
+										>
+											<GoogleLogo />
+											{submitting === "google" ? "Redirecting…" : "Continue with Google"}
+										</button>
+									) : null}
+									{providers.github ? (
+										<button
+											type="button"
+											onClick={() => onOAuth("github")}
+											disabled={submitting !== null}
+											className="w-full flex items-center justify-center gap-2.5 bg-gray-900 hover:bg-gray-800 border border-gray-800 disabled:bg-gray-900/50 disabled:text-gray-500 text-gray-100 font-medium rounded-md py-2.5 text-sm transition-colors"
+										>
+											<GitHubLogo />
+											{submitting === "github" ? "Redirecting…" : "Continue with GitHub"}
+										</button>
+									) : null}
+								</div>
+							) : null}
 
-							{providers.magicLink && (providers.google || providers.github) ? (
+							{anyOAuth && (providers.emailPassword || providers.magicLink) ? (
 								<div className="my-6 flex items-center gap-3 text-[10px] uppercase tracking-wider text-gray-600">
 									<div className="flex-1 h-px bg-gray-900" />
 									or
@@ -129,8 +174,28 @@ export function Login() {
 								</div>
 							) : null}
 
-							{providers.magicLink ? (
-								<form onSubmit={onMagicLink} className="space-y-4">
+							{providers.emailPassword ? (
+								<form onSubmit={onEmailPassword} className="space-y-4">
+									{isSignup ? (
+										<div>
+											<label
+												htmlFor="name"
+												className="block text-xs uppercase tracking-wider text-gray-500 mb-2"
+											>
+												Name <span className="text-gray-700 normal-case">(optional)</span>
+											</label>
+											<input
+												id="name"
+												type="text"
+												autoComplete="name"
+												value={name}
+												onChange={(e) => setName(e.target.value)}
+												className="w-full bg-gray-900 border border-gray-800 rounded-md px-3 py-2.5 text-sm placeholder-gray-600 focus:outline-none focus:border-cyan-500"
+												placeholder="Jane Developer"
+												disabled={submitting !== null}
+											/>
+										</div>
+									) : null}
 									<div>
 										<label
 											htmlFor="email"
@@ -141,6 +206,7 @@ export function Login() {
 										<input
 											id="email"
 											type="email"
+											autoComplete="email"
 											required
 											value={email}
 											onChange={(e) => setEmail(e.target.value)}
@@ -149,14 +215,89 @@ export function Login() {
 											disabled={submitting !== null}
 										/>
 									</div>
+									<div>
+										<label
+											htmlFor="password"
+											className="block text-xs uppercase tracking-wider text-gray-500 mb-2"
+										>
+											Password
+											{isSignup ? (
+												<span className="text-gray-700 normal-case"> (min 8 chars)</span>
+											) : null}
+										</label>
+										<input
+											id="password"
+											type="password"
+											autoComplete={isSignup ? "new-password" : "current-password"}
+											required
+											minLength={isSignup ? 8 : undefined}
+											value={password}
+											onChange={(e) => setPassword(e.target.value)}
+											className="w-full bg-gray-900 border border-gray-800 rounded-md px-3 py-2.5 text-sm placeholder-gray-600 focus:outline-none focus:border-cyan-500"
+											placeholder="••••••••"
+											disabled={submitting !== null}
+										/>
+									</div>
 									<button
 										type="submit"
-										disabled={submitting !== null || !email}
+										disabled={
+											submitting !== null ||
+											!email ||
+											!password ||
+											(isSignup && password.length < 8)
+										}
 										className="w-full bg-cyan-500 hover:bg-cyan-400 disabled:bg-gray-700 disabled:cursor-not-allowed text-gray-950 font-medium rounded-md py-2.5 text-sm transition-colors"
 									>
-										{submitting === "magic" ? "Sending link…" : "Send magic link"}
+										{submitting === "email"
+											? isSignup
+												? "Creating account…"
+												: "Signing in…"
+											: isSignup
+												? "Create account"
+												: "Sign in"}
 									</button>
+
+									<p className="text-center text-xs text-gray-500 pt-1">
+										{isSignup ? "Already have an account? " : "No account yet? "}
+										<button
+											type="button"
+											onClick={() => {
+												setMode(isSignup ? "signin" : "signup");
+												setError(null);
+											}}
+											className="text-cyan-400 hover:text-cyan-300 font-medium"
+										>
+											{isSignup ? "Sign in" : "Create one"}
+										</button>
+									</p>
+
+									{isSignup && !providers.magicLink ? (
+										<p className="text-[11px] text-gray-600 leading-relaxed pt-2">
+											Save this password somewhere safe — password reset isn't available until our
+											email service is wired up. You can switch to Google or GitHub later in one
+											click.
+										</p>
+									) : null}
 								</form>
+							) : null}
+
+							{providers.magicLink && providers.emailPassword ? (
+								<>
+									<div className="my-6 flex items-center gap-3 text-[10px] uppercase tracking-wider text-gray-600">
+										<div className="flex-1 h-px bg-gray-900" />
+										or
+										<div className="flex-1 h-px bg-gray-900" />
+									</div>
+									<form onSubmit={onMagicLink} className="space-y-2.5">
+										<button
+											type="submit"
+											disabled={submitting !== null || !email}
+											className="w-full border border-gray-800 hover:border-cyan-500 hover:text-cyan-400 disabled:opacity-50 disabled:cursor-not-allowed text-gray-300 rounded-md py-2 text-xs font-medium transition-colors"
+										>
+											{submitting === "magic" ? "Sending link…" : "Email me a sign-in link instead"}
+										</button>
+									</form>
+								</>
 							) : null}
 						</>
 					)}
@@ -168,8 +309,8 @@ export function Login() {
 					) : null}
 
 					<p className="mt-8 text-xs text-gray-500">
-						By signing in you agree we can use your email to identify your account and send service
-						notifications. No marketing.
+						By {isSignup ? "creating an account" : "signing in"} you agree we can use your email to
+						identify your account and send service notifications. No marketing.
 					</p>
 				</div>
 			</main>
