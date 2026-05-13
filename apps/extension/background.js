@@ -90,6 +90,16 @@ async function refreshAccount() {
 				plan: typeof me.plan === "string" ? me.plan : null,
 				deviceLabel: null,
 			};
+			// First-time session detect on this browser → also self-register
+			// as a device so the dashboard's Devices page shows this
+			// extension. Subsequent sessions skip this because the device
+			// token persists in chrome.storage.
+			const existing = await getStoredDeviceToken();
+			if (!existing) {
+				await selfRegisterDevice().catch((err) => {
+					console.warn("[BridgeHook] self-register failed:", err);
+				});
+			}
 			return account;
 		}
 	} catch {
@@ -352,6 +362,53 @@ function openDashboardLogin() {
 }
 function openDashboardSignup() {
 	chrome.tabs.create({ url: `${WEB_URL}/login?signup=1` });
+}
+
+// ── Self-register as a device (session-authed shortcut) ──────────────
+//
+// Called when the cookie probe in refreshAccount() succeeds but no
+// device token is stored locally. The relay's session is the proof of
+// identity, so no pairing code is involved — we POST to
+// /api/me/devices/self-register and the server mints a token plus
+// inserts a `devices` row. Result: the dashboard's Devices list
+// immediately shows this browser without a second user action.
+
+async function selfRegisterDevice() {
+	const ua = (typeof navigator !== "undefined" && navigator.userAgent) || "Browser";
+	const browser = /Chrome/i.test(ua) ? "Chrome" : /Firefox/i.test(ua) ? "Firefox" : "Browser";
+	const os = /Mac OS X/i.test(ua)
+		? "macOS"
+		: /Windows/i.test(ua)
+			? "Windows"
+			: /Linux/i.test(ua)
+				? "Linux"
+				: "Unknown OS";
+	const label = `${browser} on ${os}`;
+
+	const res = await fetch(`${RELAY_URL}/api/me/devices/self-register`, {
+		method: "POST",
+		credentials: "include",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ kind: "extension", label, userAgent: ua }),
+	});
+	if (!res.ok) {
+		const text = await res.text().catch(() => "");
+		throw new Error(`self-register failed (${res.status})${text ? `: ${text}` : ""}`);
+	}
+	const minted = await res.json();
+	if (!minted.token || !minted.deviceId) {
+		throw new Error("self-register returned malformed payload");
+	}
+	await storeDeviceToken({
+		token: minted.token,
+		deviceId: minted.deviceId,
+		userId: minted.userId,
+		label: minted.label || label,
+		kind: minted.kind || "extension",
+		connectedAt: new Date().toISOString(),
+	});
+	console.log(`[BridgeHook] Self-registered as ${minted.deviceId} (${minted.label})`);
+	return minted;
 }
 
 // ── Device-token pair flow (kept for "stay paired after sign-out" use case) ──
