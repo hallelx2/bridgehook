@@ -68,6 +68,16 @@ id = "647c7df6a0e64bf3882738057ad42f38"
 #
 # Non-secret defaults can also live under [vars] block if needed.
 
-# Non-secret default wired here so wrangler dev / deploy don't need a separate secret put.
-[vars]
-TUNNEL_DOMAIN = "bridgehook.dev"
+# [vars]
+# TUNNEL_DOMAIN — re-enable once you own bridgehook.dev and have set up
+# Phase 1 DNS (wildcard A record on *.bridgehook.dev → orange-cloud proxy
+# + Worker route `*.bridgehook.dev/*`). With it set, buildWebhookUrl()
+# emits `https://<channelId>.<TUNNEL_DOMAIN>` as the webhook URL surfaced
+# to users; with it unset the relay falls back to the legacy
+# `${origin}/hook/<id>` form on whatever host the relay is reached at —
+# which works today because the worker is live at
+# bridgehook-relay.halleluyaholudele.workers.dev.
+#
+# When ready to flip on:
+#   [vars]
+#   TUNNEL_DOMAIN = "bridgehook.dev"
