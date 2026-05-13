@@ -18,6 +18,12 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # @bridgehook/shared is a TypeScript project-reference target; the
+      # downstream apps' `tsc --noEmit` resolves types via the built .d.ts
+      # files in packages/shared/dist, so we need a fresh build first.
+      # (The Build Web / Build Docs jobs run `tsc -b` which cascades and
+      # doesn't need this — only the --noEmit form does.)
+      - run: pnpm --filter @bridgehook/shared build
       - run: pnpm -r typecheck
 
   build-web:

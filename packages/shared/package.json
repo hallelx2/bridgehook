@@ -13,6 +13,7 @@
 		"./db/schema": "./src/db/schema.ts"
 	},
 	"scripts": {
+		"build": "tsc --build",
 		"typecheck": "tsc --noEmit"
 	},
 	"dependencies": {
