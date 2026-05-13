@@ -27,6 +27,7 @@ import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { magicLink } from "better-auth/plugins";
 import { drizzle } from "drizzle-orm/neon-http";
 import { pickMailer } from "./email.js";
+import { hashPassword, verifyPassword } from "./password.js";
 
 export interface AuthEnv {
 	DATABASE_URL: string;
@@ -134,12 +135,23 @@ export function createAuth(env: AuthEnv): Auth | null {
 		// session in one round-trip so users land in /dashboard immediately.
 		// Password reset is gated by mailer availability inside Better-Auth,
 		// so it's a no-op until the env is configured.
+		//
+		// Custom hash: PBKDF2-SHA256 via crypto.subtle (see ./password.ts).
+		// Better-Auth's default scrypt blows CF Workers' 10ms CPU budget on
+		// the free plan and surfaces as 503 "exceeded CPU time limit". Our
+		// PBKDF2 implementation fits in ~5-8ms with a weaker but acceptable
+		// security margin for the early-access launch — bump iteration
+		// count in password.ts once you upgrade to Workers Paid.
 		emailAndPassword: {
 			enabled: true,
 			autoSignIn: true,
 			requireEmailVerification: Boolean(env.RESEND_API_KEY),
 			minPasswordLength: 8,
 			maxPasswordLength: 128,
+			password: {
+				hash: hashPassword,
+				verify: verifyPassword,
+			},
 		},
 		socialProviders,
 		plugins: [
