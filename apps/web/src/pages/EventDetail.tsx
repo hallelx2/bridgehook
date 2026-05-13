@@ -13,6 +13,7 @@ import { DashboardLayout } from "../components/DashboardLayout";
 import { JsonTree } from "../components/dashboard/JsonTree";
 import { ReplayEditor } from "../components/dashboard/ReplayEditor";
 import type { LiveEvent } from "../hooks/useBridge";
+import { useUserStream } from "../hooks/useUserStream";
 import { type MeEventDetail, me } from "../lib/me-api";
 
 const POLL_MS = 2000;
@@ -53,7 +54,8 @@ function EventDetailView() {
 
 	// Light polling so a queued replay's response shows up without a manual
 	// refresh. Stops after the response settles or if the chain is fully
-	// resolved (no pending children).
+	// resolved (no pending children). The SSE subscription below makes this
+	// effectively a safety-net — most updates land via stream first.
 	useEffect(() => {
 		if (!data) return;
 		const hasPending =
@@ -63,6 +65,24 @@ function EventDetailView() {
 		const timer = setInterval(load, POLL_MS);
 		return () => clearInterval(timer);
 	}, [data, load]);
+
+	// Real-time updates: a `response` frame whose eventId matches this
+	// event or one of its replays refetches immediately. A `webhook` frame
+	// on the same channel may be a new replay landing in our chain — also
+	// refetch.
+	useUserStream(
+		useCallback(
+			(e) => {
+				if (!data) return;
+				const isOurResponse =
+					e.type === "response" &&
+					(e.eventId === data.event.id || data.replays.some((r) => r.id === e.eventId));
+				const isOurChannelWebhook = e.type === "webhook" && e.channelId === data.event.channelId;
+				if (isOurResponse || isOurChannelWebhook) load();
+			},
+			[data, load],
+		),
+	);
 
 	if (!id) return null;
 

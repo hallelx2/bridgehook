@@ -7,12 +7,15 @@
  * extended, which is a Phase 2 improvement). For now self-host users
  * see a small notice and a link to the legacy single-channel view.
  */
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { DashboardLayout } from "../components/DashboardLayout";
+import { useUserStream } from "../hooks/useUserStream";
 import { useConfig } from "../lib/config";
 import { type MeChannel, type MeDevice, type MeEvent, type MeUser, me } from "../lib/me-api";
 import { Dashboard as LegacyDashboard } from "./Dashboard";
+
+const STREAM_REFETCH_DEBOUNCE_MS = 300;
 
 export function DashboardHome() {
 	const { config, loading } = useConfig();
@@ -43,6 +46,24 @@ function HostedHome() {
 	const [devices, setDevices] = useState<MeDevice[] | null>(null);
 	const [recent, setRecent] = useState<MeEvent[] | null>(null);
 	const [error, setError] = useState<string | null>(null);
+	const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+	const refetch = useCallback(async () => {
+		try {
+			const [u, c, d, e] = await Promise.all([
+				me.get(),
+				me.channels.list(),
+				me.devices.list(),
+				me.events.feed({ limit: 8 }),
+			]);
+			setUser(u);
+			setChannels(c.channels);
+			setDevices(d.devices);
+			setRecent(e.events);
+		} catch (err) {
+			setError(err instanceof Error ? err.message : String(err));
+		}
+	}, []);
 
 	useEffect(() => {
 		let alive = true;
@@ -59,8 +80,26 @@ function HostedHome() {
 			});
 		return () => {
 			alive = false;
+			if (debounceRef.current) clearTimeout(debounceRef.current);
 		};
 	}, []);
+
+	// Real-time refresh: any webhook / response / claimed frame on the
+	// user's SSE stream coalesces into a debounced refetch so the tiles,
+	// recent activity, and channel counts stay live.
+	useUserStream(
+		useCallback(
+			(e) => {
+				if (e.type !== "webhook" && e.type !== "response" && e.type !== "claimed") return;
+				if (debounceRef.current) return;
+				debounceRef.current = setTimeout(() => {
+					debounceRef.current = null;
+					refetch();
+				}, STREAM_REFETCH_DEBOUNCE_MS);
+			},
+			[refetch],
+		),
+	);
 
 	if (error) return <ErrorBox message={error} />;
 	if (!user || !channels || !devices || !recent) return <Loading />;

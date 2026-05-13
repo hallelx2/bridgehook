@@ -2,9 +2,12 @@
  * Channels list page. Owned channels with metadata, last activity,
  * and inline rename. Webhook URL copy button per row.
  */
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { DashboardLayout } from "../components/DashboardLayout";
+import { useUserStream } from "../hooks/useUserStream";
 import { type MeChannel, me } from "../lib/me-api";
+
+const STREAM_REFETCH_DEBOUNCE_MS = 300;
 
 export function ChannelsList() {
 	return (
@@ -19,13 +22,39 @@ function ChannelsView() {
 	const [error, setError] = useState<string | null>(null);
 	const [editingId, setEditingId] = useState<string | null>(null);
 	const [draftLabel, setDraftLabel] = useState("");
+	const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+	const refetch = useCallback(async () => {
+		try {
+			const d = await me.channels.list();
+			setChannels(d.channels);
+		} catch (err) {
+			setError(err instanceof Error ? err.message : String(err));
+		}
+	}, []);
 
 	useEffect(() => {
-		me.channels
-			.list()
-			.then((d) => setChannels(d.channels))
-			.catch((err) => setError(err instanceof Error ? err.message : String(err)));
-	}, []);
+		refetch();
+		return () => {
+			if (debounceRef.current) clearTimeout(debounceRef.current);
+		};
+	}, [refetch]);
+
+	// Live counts / last-event time: any webhook frame for any of the
+	// user's channels triggers a debounced refetch.
+	useUserStream(
+		useCallback(
+			(e) => {
+				if (e.type !== "webhook" && e.type !== "response") return;
+				if (debounceRef.current) return;
+				debounceRef.current = setTimeout(() => {
+					debounceRef.current = null;
+					refetch();
+				}, STREAM_REFETCH_DEBOUNCE_MS);
+			},
+			[refetch],
+		),
+	);
 
 	async function saveLabel(id: string) {
 		try {
