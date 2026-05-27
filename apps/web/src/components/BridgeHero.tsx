@@ -1,58 +1,26 @@
 import { Link } from "react-router-dom";
 import { HeroLiveDemo } from "./HeroLiveDemo";
+import { ShaderBackground } from "./ShaderBackground";
 
 /**
- * Hero: telescoping gradient pillars that form a valley across the viewport.
- * Heights are tall on edges, short in the center — like looking through a
- * bridge. Colors are a single warm-orange spectrum, intentionally muted.
- * Text sits in a dimmed center ellipse for legibility over the bars.
+ * Hero. A live WebGL shader (domain-warped FBM noise tinted with the brand
+ * orange) paints the backdrop; a soft center ellipse darkens the area
+ * behind the headline so it stays legible. Falls back to the page
+ * background color when WebGL is unavailable or reduced-motion is on.
  */
-const BAR_COUNT = 15;
-
-function generateBars() {
-	const bars = [];
-	const mid = (BAR_COUNT - 1) / 2;
-
-	for (let i = 0; i < BAR_COUNT; i++) {
-		const distFromCenter = Math.abs(i - mid) / mid;
-		const minH = 30;
-		const maxH = 95;
-		const height = minH + (maxH - minH) * distFromCenter ** 0.7;
-		const delay = (1 - distFromCenter) * 2.5;
-
-		bars.push({
-			left: `${(i / BAR_COUNT) * 100}%`,
-			width: `${100 / BAR_COUNT + 0.1}%`,
-			height: `${height}vh`,
-			delay: `${delay.toFixed(1)}s`,
-		});
-	}
-	return bars;
-}
-
-const BARS = generateBars();
 
 export function BridgeHero() {
 	return (
 		<section className="min-h-screen flex flex-col items-center justify-start relative pt-28 overflow-hidden">
-			{/* Bars */}
+			{/* Shader background */}
 			<div className="absolute inset-0 -z-10 overflow-hidden">
-				{BARS.map((bar, i) => (
-					<div
-						key={i}
-						className="telescope-pillar animate-telescope"
-						style={{
-							left: bar.left,
-							width: bar.width,
-							height: bar.height,
-							animationDelay: bar.delay,
-						}}
-					/>
-				))}
+				<ShaderBackground />
 			</div>
 
-			{/* Center legibility ellipse — keeps text readable over bars */}
-			<div className="absolute inset-0 -z-[5] bg-[radial-gradient(ellipse_60%_50%_at_50%_45%,rgba(3,3,3,0.92)_0%,transparent_100%)] pointer-events-none" />
+			{/* Soft center ellipse — extra legibility insurance on top of the
+			    shader's own vignette. Tuned to fade out before reaching the
+			    edges so the noise pattern still reads. */}
+			<div className="absolute inset-0 -z-[5] bg-[radial-gradient(ellipse_55%_45%_at_50%_42%,rgba(3,3,3,0.78)_0%,transparent_100%)] pointer-events-none" />
 
 			<div className="max-w-6xl mx-auto px-6 text-center relative z-10 pt-16 pb-8">
 				{/* Badge */}
