@@ -21,6 +21,7 @@ import { EventDetail } from "./pages/EventDetail";
 import { EventsFeed } from "./pages/EventsFeed";
 import { Login } from "./pages/Login";
 import { LoginCheckEmail } from "./pages/LoginCheckEmail";
+import { Privacy } from "./pages/Privacy";
 import { Settings } from "./pages/Settings";
 
 function LandingPage() {
@@ -72,6 +73,7 @@ export function App() {
 				<Route path="/login" element={<Login />} />
 				<Route path="/login/check-email" element={<LoginCheckEmail />} />
 				<Route path="/auth/callback" element={<AuthCallback />} />
+				<Route path="/privacy" element={<Privacy />} />
 				<Route
 					path="/connect"
 					element={

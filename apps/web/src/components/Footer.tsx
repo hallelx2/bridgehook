@@ -1,4 +1,7 @@
+import { Link } from "react-router-dom";
 import { Logo } from "./Logo";
+
+const GITHUB_URL = "https://github.com/hallelx2/bridgehook";
 
 export function Footer() {
 	return (
@@ -11,35 +14,27 @@ export function Footer() {
 					</p>
 				</div>
 
-				<div className="grid grid-cols-2 md:grid-cols-3 gap-12 md:gap-24">
+				<div className="grid grid-cols-2 gap-12 md:gap-24">
 					<div>
 						<h4 className="text-on-surface font-bold text-xs uppercase tracking-[0.2em] mb-6">
-							Platform
+							Product
 						</h4>
 						<ul className="space-y-3">
 							<li>
-								<a
-									href="#"
+								<Link
+									to="/login"
 									className="text-on-surface-variant hover:text-primary transition-colors text-sm font-medium no-underline"
 								>
-									Web app
-								</a>
+									Sign in
+								</Link>
 							</li>
 							<li>
-								<a
-									href="#"
+								<Link
+									to="/login?signup=1"
 									className="text-on-surface-variant hover:text-primary transition-colors text-sm font-medium no-underline"
 								>
-									Desktop app
-								</a>
-							</li>
-							<li>
-								<a
-									href="#"
-									className="text-on-surface-variant hover:text-primary transition-colors text-sm font-medium no-underline"
-								>
-									Relay API
-								</a>
+									Get started
+								</Link>
 							</li>
 						</ul>
 					</div>
@@ -50,50 +45,21 @@ export function Footer() {
 						<ul className="space-y-3">
 							<li>
 								<a
-									href="#"
-									className="text-on-surface-variant hover:text-primary transition-colors text-sm font-medium no-underline"
-								>
-									Documentation
-								</a>
-							</li>
-							<li>
-								<a
-									href="#"
+									href={GITHUB_URL}
+									target="_blank"
+									rel="noopener noreferrer"
 									className="text-on-surface-variant hover:text-primary transition-colors text-sm font-medium no-underline"
 								>
 									GitHub
 								</a>
 							</li>
 							<li>
-								<a
-									href="#"
+								<Link
+									to="/privacy"
 									className="text-on-surface-variant hover:text-primary transition-colors text-sm font-medium no-underline"
 								>
-									Status
-								</a>
-							</li>
-						</ul>
-					</div>
-					<div>
-						<h4 className="text-on-surface font-bold text-xs uppercase tracking-[0.2em] mb-6">
-							Company
-						</h4>
-						<ul className="space-y-3">
-							<li>
-								<a
-									href="#"
-									className="text-on-surface-variant hover:text-primary transition-colors text-sm font-medium no-underline"
-								>
-									About
-								</a>
-							</li>
-							<li>
-								<a
-									href="#"
-									className="text-on-surface-variant hover:text-primary transition-colors text-sm font-medium no-underline"
-								>
-									Blog
-								</a>
+									Privacy
+								</Link>
 							</li>
 						</ul>
 					</div>
@@ -102,7 +68,7 @@ export function Footer() {
 
 			<div className="max-w-7xl mx-auto px-6 mt-20 pt-8 border-t border-border-subtle">
 				<p className="text-on-surface-muted text-[10px] font-bold tracking-[0.3em] uppercase">
-					&copy; 2025 BridgeHook. Built on Cloudflare Workers. Free &amp; open source.
+					&copy; 2026 BridgeHook. Built on Cloudflare Workers. Open source.
 				</p>
 			</div>
 		</footer>
