@@ -25,8 +25,8 @@ export function Privacy() {
 						<p>
 							BridgeHook is a webhook-relay service. You point an external provider (Stripe,
 							Paystack, GitHub, etc.) at a unique URL we give you; we receive the webhook on our
-							servers and forward it to a local development server on your own machine through
-							our browser extension or desktop app.
+							servers and forward it to a local development server on your own machine through our
+							browser extension or desktop app.
 						</p>
 					</Section>
 
@@ -38,14 +38,14 @@ export function Privacy() {
 								your password. We do not see your password in plain text.
 							</li>
 							<li>
-								<strong>Webhook payloads</strong> — the HTTP method, path, headers, and body of
-								each webhook delivered to your channels, plus the response your local server
-								returned. This is the core data the product operates on.
+								<strong>Webhook payloads</strong> — the HTTP method, path, headers, and body of each
+								webhook delivered to your channels, plus the response your local server returned.
+								This is the core data the product operates on.
 							</li>
 							<li>
-								<strong>Channel + device metadata</strong> — the local port you bridge, an
-								optional label you give a channel, and the user-agent / OS of any device
-								(extension, desktop, CLI) you sign in from.
+								<strong>Channel + device metadata</strong> — the local port you bridge, an optional
+								label you give a channel, and the user-agent / OS of any device (extension, desktop,
+								CLI) you sign in from.
 							</li>
 							<li>
 								<strong>Session cookies</strong> — a single first-party cookie set by our
@@ -53,10 +53,10 @@ export function Privacy() {
 							</li>
 						</ul>
 						<p className="mt-3">
-							We do not run third-party analytics, ad trackers, fingerprinting libraries, or
-							session replay. The extension does not read any web page you visit; its only host
-							permissions are <code className="text-primary">localhost</code> (to forward webhooks
-							to your dev server) and the BridgeHook relay (to fetch incoming events).
+							We do not run third-party analytics, ad trackers, fingerprinting libraries, or session
+							replay. The extension does not read any web page you visit; its only host permissions
+							are <code className="text-primary">localhost</code> (to forward webhooks to your dev
+							server) and the BridgeHook relay (to fetch incoming events).
 						</p>
 					</Section>
 
@@ -65,8 +65,10 @@ export function Privacy() {
 							<li>To deliver webhooks from the public internet to your local machine.</li>
 							<li>To show you a dashboard of events received, with replay and inspection.</li>
 							<li>To authenticate you and enforce the limits of your plan.</li>
-							<li>To send transactional email (password reset, billing receipts) — only when you
-								take an action that requires it.</li>
+							<li>
+								To send transactional email (password reset, billing receipts) — only when you take
+								an action that requires it.
+							</li>
 						</ul>
 						<p className="mt-3">
 							We do not sell, rent, or share your data with advertisers, data brokers, or
@@ -76,8 +78,8 @@ export function Privacy() {
 
 					<Section title="Who we share it with">
 						<p>
-							We use the following subprocessors strictly to run the service. They process data
-							on our behalf and are bound by their own data-protection terms:
+							We use the following subprocessors strictly to run the service. They process data on
+							our behalf and are bound by their own data-protection terms:
 						</p>
 						<ul className="list-disc pl-6 space-y-2 mt-3">
 							<li>
@@ -105,17 +107,18 @@ export function Privacy() {
 
 					<Section title="Your rights">
 						<ul className="list-disc pl-6 space-y-2">
-							<li>You can delete any channel at any time from the dashboard — this also deletes
-								every event ever received on that channel.</li>
+							<li>
+								You can delete any channel at any time from the dashboard — this also deletes every
+								event ever received on that channel.
+							</li>
 							<li>You can revoke any paired device at any time.</li>
-							<li>You can request export or deletion of all data we hold about you by emailing{" "}
-								<a
-									href={`mailto:${CONTACT_EMAIL}`}
-									className="text-primary hover:underline"
-								>
+							<li>
+								You can request export or deletion of all data we hold about you by emailing{" "}
+								<a href={`mailto:${CONTACT_EMAIL}`} className="text-primary hover:underline">
 									{CONTACT_EMAIL}
 								</a>
-								. We respond within 30 days.</li>
+								. We respond within 30 days.
+							</li>
 						</ul>
 					</Section>
 
@@ -128,8 +131,8 @@ export function Privacy() {
 
 					<Section title="Changes to this policy">
 						<p>
-							If we materially change what we collect or how we use it, we'll update the date at
-							the top of this page and notify active users by email.
+							If we materially change what we collect or how we use it, we'll update the date at the
+							top of this page and notify active users by email.
 						</p>
 					</Section>
 
