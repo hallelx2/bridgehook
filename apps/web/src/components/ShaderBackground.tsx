@@ -74,18 +74,19 @@ void main() {
   float n = fbm(p + 2.5 * r);
 
   // Page background — keep low values matching #030303 so the canvas
-  // edges blend into the body.
+  // edges blend into the body. Bands are widened compared to the
+  // first cut so the brand orange occupies more of the field.
   vec3 col = vec3(0.012);
-  col = mix(col, vec3(0.18, 0.07, 0.02), smoothstep(0.0, 0.45, n));   // ember
-  col = mix(col, vec3(1.0, 0.36, 0.15),  smoothstep(0.55, 0.82, n));  // primary #FF5C26
-  col = mix(col, vec3(1.0, 0.70, 0.30),  smoothstep(0.82, 0.98, n));  // gold peaks
+  col = mix(col, vec3(0.32, 0.12, 0.03), smoothstep(0.0, 0.35, n));   // ember
+  col = mix(col, vec3(1.0, 0.36, 0.15),  smoothstep(0.38, 0.72, n));  // primary #FF5C26
+  col = mix(col, vec3(1.0, 0.78, 0.36),  smoothstep(0.72, 0.95, n));  // gold peaks
 
-  // Radial vignette, biased slightly vertical so the headline sits
-  // in the darkest pocket. mix(0.18, 1.05, ...) crushes the center
-  // toward black and lifts the edges a touch above the source color.
+  // Soft radial vignette, biased slightly vertical. mix(0.55, 1.3, ...)
+  // keeps the center readable but lets the brand orange punch through;
+  // the CSS ellipse layered above handles the final headline-area dim.
   vec2 c = uv - 0.5;
   float dist = length(c * vec2(1.0, 1.4));
-  col *= mix(0.18, 1.05, smoothstep(0.05, 0.65, dist));
+  col *= mix(0.55, 1.3, smoothstep(0.05, 0.65, dist));
 
   // Cheap film grain so flat regions feel alive instead of banded.
   float grain = (fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) - 0.5) * 0.022;

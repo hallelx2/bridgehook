@@ -17,10 +17,10 @@ export function BridgeHero() {
 				<ShaderBackground />
 			</div>
 
-			{/* Soft center ellipse — extra legibility insurance on top of the
-			    shader's own vignette. Tuned to fade out before reaching the
-			    edges so the noise pattern still reads. */}
-			<div className="absolute inset-0 -z-[5] bg-[radial-gradient(ellipse_55%_45%_at_50%_42%,rgba(3,3,3,0.78)_0%,transparent_100%)] pointer-events-none" />
+			{/* Tight center ellipse — just enough to keep the headline
+			    legible without crushing the surrounding shader colors.
+			    The shader's own vignette does most of the work. */}
+			<div className="absolute inset-0 -z-[5] bg-[radial-gradient(ellipse_42%_32%_at_50%_42%,rgba(3,3,3,0.55)_0%,transparent_100%)] pointer-events-none" />
 
 			<div className="max-w-6xl mx-auto px-6 text-center relative z-10 pt-16 pb-8">
 				{/* Badge */}
