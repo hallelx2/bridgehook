@@ -71,22 +71,22 @@ void main() {
                 fbm(p + vec2(1.7, 9.2) - t));
   vec2 r = vec2(fbm(p + 2.0 * q + vec2(8.3, 2.8) + t * 0.85),
                 fbm(p + 2.0 * q + vec2(2.6, 5.4) - t * 0.85));
+  // Gradient FBM peaks around ±0.5; remap to [0,1] so the color
+  // thresholds below actually trigger. Extra contrast push so the
+  // brand orange dominates instead of sitting in a thin band.
   float n = fbm(p + 2.5 * r);
+  n = clamp(0.5 + 0.85 * n, 0.0, 1.0);
 
-  // Page background — keep low values matching #030303 so the canvas
-  // edges blend into the body. Bands are widened compared to the
-  // first cut so the brand orange occupies more of the field.
   vec3 col = vec3(0.012);
-  col = mix(col, vec3(0.32, 0.12, 0.03), smoothstep(0.0, 0.35, n));   // ember
-  col = mix(col, vec3(1.0, 0.36, 0.15),  smoothstep(0.38, 0.72, n));  // primary #FF5C26
-  col = mix(col, vec3(1.0, 0.78, 0.36),  smoothstep(0.72, 0.95, n));  // gold peaks
+  col = mix(col, vec3(0.32, 0.12, 0.03), smoothstep(0.0, 0.28, n));   // ember
+  col = mix(col, vec3(1.0, 0.36, 0.15),  smoothstep(0.28, 0.55, n));  // primary #FF5C26
+  col = mix(col, vec3(1.0, 0.78, 0.36),  smoothstep(0.55, 0.85, n));  // gold peaks
 
-  // Soft radial vignette, biased slightly vertical. mix(0.55, 1.3, ...)
-  // keeps the center readable but lets the brand orange punch through;
-  // the CSS ellipse layered above handles the final headline-area dim.
+  // Very gentle vignette — just a touch of edge brightening, no
+  // center crush. The CSS overlay handles headline legibility.
   vec2 c = uv - 0.5;
   float dist = length(c * vec2(1.0, 1.4));
-  col *= mix(0.55, 1.3, smoothstep(0.05, 0.65, dist));
+  col *= mix(0.85, 1.25, smoothstep(0.05, 0.65, dist));
 
   // Cheap film grain so flat regions feel alive instead of banded.
   float grain = (fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) - 0.5) * 0.022;
