@@ -46,10 +46,13 @@ float noise(vec2 p) {
     u.y);
 }
 
+// 3 octaves is plenty for a background — the higher octaves are
+// invisible under the vignette and grain. Halving the loop count
+// roughly halves shader compile time on cold GPUs.
 float fbm(vec2 p) {
   float v = 0.0;
   float a = 0.5;
-  for (int i = 0; i < 5; i++) {
+  for (int i = 0; i < 3; i++) {
     v += a * noise(p);
     p *= 2.02;
     a *= 0.5;
@@ -61,20 +64,18 @@ void main() {
   vec2 uv = gl_FragCoord.xy / u_resolution.xy;
   vec2 p = (gl_FragCoord.xy - 0.5 * u_resolution.xy) / u_resolution.y;
 
-  // Slow drift + a very subtle mouse parallax. Multiplying the mouse
-  // term by a small constant keeps it from sloshing the whole field
-  // around violently.
+  // Slow drift + a very subtle mouse parallax.
   float t = u_time * 0.06;
   p += (u_mouse - 0.5) * 0.2;
 
+  // Single domain-warp pass (down from two) — visually nearly
+  // identical and cuts per-pixel FBM calls from 5 to 3.
   vec2 q = vec2(fbm(p + t),
                 fbm(p + vec2(1.7, 9.2) - t));
-  vec2 r = vec2(fbm(p + 2.0 * q + vec2(8.3, 2.8) + t * 0.85),
-                fbm(p + 2.0 * q + vec2(2.6, 5.4) - t * 0.85));
   // Gradient FBM peaks around ±0.5; remap to [0,1] so the color
   // thresholds below actually trigger. Extra contrast push so the
-  // brand orange dominates instead of sitting in a thin band.
-  float n = fbm(p + 2.5 * r);
+  // brand orange dominates.
+  float n = fbm(p + 2.0 * q);
   n = clamp(0.5 + 0.85 * n, 0.0, 1.0);
 
   vec3 col = vec3(0.012);
@@ -108,6 +109,13 @@ function compile(gl: WebGLRenderingContext, type: number, src: string): WebGLSha
 	return shader;
 }
 
+// CSS fallback gradient applied to the canvas element itself. Shows
+// instantly on first paint — before WebGL has compiled the shader,
+// or forever if WebGL isn't available. Approximates the shader's
+// average color so the transition is barely noticeable.
+const FALLBACK_GRADIENT =
+	"radial-gradient(ellipse 80% 60% at 50% 50%, #2b0d04 0%, #110402 55%, #030303 100%)";
+
 export function ShaderBackground({ className = "" }: { className?: string }) {
 	const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -116,121 +124,156 @@ export function ShaderBackground({ className = "" }: { className?: string }) {
 		if (!canvas) return;
 
 		const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+		let cancelled = false;
+		let teardown: (() => void) | null = null;
 
-		const gl = canvas.getContext("webgl", {
-			antialias: false,
-			alpha: true,
-			premultipliedAlpha: false,
-			powerPreference: "low-power",
-		});
-		if (!gl) return;
+		function init() {
+			if (cancelled || !canvas) return;
 
-		const vs = compile(gl, gl.VERTEX_SHADER, VERTEX_SHADER);
-		const fs = compile(gl, gl.FRAGMENT_SHADER, FRAGMENT_SHADER);
-		if (!vs || !fs) return;
+			const gl = canvas.getContext("webgl", {
+				antialias: false,
+				alpha: true,
+				premultipliedAlpha: false,
+				powerPreference: "low-power",
+			});
+			if (!gl) return;
 
-		const program = gl.createProgram();
-		if (!program) return;
-		gl.attachShader(program, vs);
-		gl.attachShader(program, fs);
-		gl.linkProgram(program);
-		if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-			console.error("Program link error:", gl.getProgramInfoLog(program));
-			return;
-		}
-		gl.useProgram(program);
+			const vs = compile(gl, gl.VERTEX_SHADER, VERTEX_SHADER);
+			const fs = compile(gl, gl.FRAGMENT_SHADER, FRAGMENT_SHADER);
+			if (!vs || !fs) return;
 
-		// Two triangles covering clip space.
-		const buffer = gl.createBuffer();
-		gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-		gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
-
-		const posAttrib = gl.getAttribLocation(program, "a_pos");
-		gl.enableVertexAttribArray(posAttrib);
-		gl.vertexAttribPointer(posAttrib, 2, gl.FLOAT, false, 0, 0);
-
-		const uResolution = gl.getUniformLocation(program, "u_resolution");
-		const uTime = gl.getUniformLocation(program, "u_time");
-		const uMouse = gl.getUniformLocation(program, "u_mouse");
-
-		let mouseX = 0.5;
-		let mouseY = 0.5;
-		let targetMouseX = 0.5;
-		let targetMouseY = 0.5;
-
-		// Cap render scale: full DPR on a 4K display burns GPU for no
-		// perceptible win on a noise pattern. 1.5 is the sweet spot.
-		const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
-
-		function resize() {
-			if (!canvas || !gl) return;
-			const w = Math.floor(canvas.clientWidth * dpr);
-			const h = Math.floor(canvas.clientHeight * dpr);
-			if (canvas.width !== w || canvas.height !== h) {
-				canvas.width = w;
-				canvas.height = h;
-				gl.viewport(0, 0, w, h);
+			const program = gl.createProgram();
+			if (!program) return;
+			gl.attachShader(program, vs);
+			gl.attachShader(program, fs);
+			gl.linkProgram(program);
+			if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+				console.error("Program link error:", gl.getProgramInfoLog(program));
+				return;
 			}
-		}
+			gl.useProgram(program);
 
-		function onMouseMove(e: PointerEvent) {
-			if (!canvas) return;
-			const rect = canvas.getBoundingClientRect();
-			targetMouseX = (e.clientX - rect.left) / rect.width;
-			targetMouseY = 1.0 - (e.clientY - rect.top) / rect.height;
-		}
+			const buffer = gl.createBuffer();
+			gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+			gl.bufferData(
+				gl.ARRAY_BUFFER,
+				new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]),
+				gl.STATIC_DRAW,
+			);
 
-		resize();
-		const ro = new ResizeObserver(resize);
-		ro.observe(canvas);
-		window.addEventListener("pointermove", onMouseMove, { passive: true });
+			const posAttrib = gl.getAttribLocation(program, "a_pos");
+			gl.enableVertexAttribArray(posAttrib);
+			gl.vertexAttribPointer(posAttrib, 2, gl.FLOAT, false, 0, 0);
 
-		const start = performance.now();
-		let rafId = 0;
-		let paused = document.hidden;
+			const uResolution = gl.getUniformLocation(program, "u_resolution");
+			const uTime = gl.getUniformLocation(program, "u_time");
+			const uMouse = gl.getUniformLocation(program, "u_mouse");
 
-		function frame() {
-			if (paused || !gl || !canvas) return;
-			const t = (performance.now() - start) / 1000;
-			// Critically damped follow on the mouse so flicks don't
-			// snap the field around.
-			mouseX += (targetMouseX - mouseX) * 0.05;
-			mouseY += (targetMouseY - mouseY) * 0.05;
+			let mouseX = 0.5;
+			let mouseY = 0.5;
+			let targetMouseX = 0.5;
+			let targetMouseY = 0.5;
 
-			gl.uniform2f(uResolution, canvas.width, canvas.height);
-			gl.uniform1f(uTime, reducedMotion ? 0 : t);
-			gl.uniform2f(uMouse, mouseX, mouseY);
+			// Cap render scale: full DPR on a 4K display burns GPU for
+			// no perceptible win on a noise pattern.
+			const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
 
-			gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-
-			if (!reducedMotion) {
-				rafId = requestAnimationFrame(frame);
+			function resize() {
+				if (!canvas || !gl) return;
+				const w = Math.floor(canvas.clientWidth * dpr);
+				const h = Math.floor(canvas.clientHeight * dpr);
+				if (canvas.width !== w || canvas.height !== h) {
+					canvas.width = w;
+					canvas.height = h;
+					gl.viewport(0, 0, w, h);
+				}
 			}
-		}
 
-		function onVisibility() {
-			paused = document.hidden;
-			if (!paused && !reducedMotion) {
-				rafId = requestAnimationFrame(frame);
-			} else {
+			function onMouseMove(e: PointerEvent) {
+				if (!canvas) return;
+				const rect = canvas.getBoundingClientRect();
+				targetMouseX = (e.clientX - rect.left) / rect.width;
+				targetMouseY = 1.0 - (e.clientY - rect.top) / rect.height;
+			}
+
+			resize();
+			const ro = new ResizeObserver(resize);
+			ro.observe(canvas);
+			window.addEventListener("pointermove", onMouseMove, { passive: true });
+
+			const start = performance.now();
+			let rafId = 0;
+			let paused = document.hidden;
+
+			function frame() {
+				if (paused || !gl || !canvas) return;
+				const t = (performance.now() - start) / 1000;
+				mouseX += (targetMouseX - mouseX) * 0.05;
+				mouseY += (targetMouseY - mouseY) * 0.05;
+
+				gl.uniform2f(uResolution, canvas.width, canvas.height);
+				gl.uniform1f(uTime, reducedMotion ? 0 : t);
+				gl.uniform2f(uMouse, mouseX, mouseY);
+
+				gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+				if (!reducedMotion) {
+					rafId = requestAnimationFrame(frame);
+				}
+			}
+
+			function onVisibility() {
+				paused = document.hidden;
+				if (!paused && !reducedMotion) {
+					rafId = requestAnimationFrame(frame);
+				} else {
+					cancelAnimationFrame(rafId);
+				}
+			}
+			document.addEventListener("visibilitychange", onVisibility);
+
+			rafId = requestAnimationFrame(frame);
+
+			teardown = () => {
 				cancelAnimationFrame(rafId);
-			}
+				ro.disconnect();
+				window.removeEventListener("pointermove", onMouseMove);
+				document.removeEventListener("visibilitychange", onVisibility);
+				gl.deleteBuffer(buffer);
+				gl.deleteProgram(program);
+				gl.deleteShader(vs);
+				gl.deleteShader(fs);
+			};
 		}
-		document.addEventListener("visibilitychange", onVisibility);
 
-		rafId = requestAnimationFrame(frame);
+		// Defer the WebGL init off the page-load critical path. The
+		// canvas's CSS background gradient paints instantly; the live
+		// shader fades in once the browser is idle.
+		const win = window as Window & {
+			requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+			cancelIdleCallback?: (handle: number) => void;
+		};
+		let idleHandle = 0;
+		let timeoutHandle = 0;
+		if (win.requestIdleCallback) {
+			idleHandle = win.requestIdleCallback(init, { timeout: 500 });
+		} else {
+			timeoutHandle = window.setTimeout(init, 0);
+		}
 
 		return () => {
-			cancelAnimationFrame(rafId);
-			ro.disconnect();
-			window.removeEventListener("pointermove", onMouseMove);
-			document.removeEventListener("visibilitychange", onVisibility);
-			gl.deleteBuffer(buffer);
-			gl.deleteProgram(program);
-			gl.deleteShader(vs);
-			gl.deleteShader(fs);
+			cancelled = true;
+			if (idleHandle && win.cancelIdleCallback) win.cancelIdleCallback(idleHandle);
+			if (timeoutHandle) clearTimeout(timeoutHandle);
+			teardown?.();
 		};
 	}, []);
 
-	return <canvas ref={canvasRef} className={`absolute inset-0 w-full h-full ${className}`} />;
+	return (
+		<canvas
+			ref={canvasRef}
+			style={{ background: FALLBACK_GRADIENT }}
+			className={`absolute inset-0 w-full h-full ${className}`}
+		/>
+	);
 }
