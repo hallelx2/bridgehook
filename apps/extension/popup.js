@@ -35,7 +35,7 @@ function renderAccount(account) {
 	if (!account || account.source === null) {
 		identityEl.innerHTML = `
 			<span class="who">
-				<span class="avatar" style="background:linear-gradient(135deg,#3f3f46,#52525b);">?</span>
+				<span class="avatar" style="background:#1f2937;color:#9ca3af;">?</span>
 				<span style="color:var(--text-fade);">Not signed in</span>
 			</span>
 		`;

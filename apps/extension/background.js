@@ -941,13 +941,13 @@ function broadcastStatus() {
 	const errorCount = services.reduce((sum, s) => sum + (s.errorCount || 0), 0);
 
 	if (limitCount > 0) {
-		chrome.action.setBadgeBackgroundColor({ color: "#F59E0B" });
+		chrome.action.setBadgeBackgroundColor({ color: "#fbbf24" });
 		chrome.action.setBadgeText({ text: "!" });
 	} else if (errorCount > 0) {
-		chrome.action.setBadgeBackgroundColor({ color: "#EF4444" });
+		chrome.action.setBadgeBackgroundColor({ color: "#f87171" });
 		chrome.action.setBadgeText({ text: String(errorCount) });
 	} else if (activeCount > 0) {
-		chrome.action.setBadgeBackgroundColor({ color: "#22C55E" });
+		chrome.action.setBadgeBackgroundColor({ color: "#4ade80" });
 		chrome.action.setBadgeText({ text: String(activeCount) });
 	} else {
 		chrome.action.setBadgeText({ text: "" });
