@@ -5,7 +5,7 @@
 	"version": "0.1.0",
 	"permissions": ["storage", "notifications", "alarms"],
 	"host_permissions": [
-		"http://localhost:*/*",
+		"http://localhost/*",
 		"https://relay.bridgehook.dev/*",
 		"https://bridgehook-relay.halleluyaholudele.workers.dev/*",
 		"https://bridgehook-web.pages.dev/*",
