@@ -8,7 +8,7 @@ import { Footer } from "../components/Footer";
 import { Nav } from "../components/Nav";
 
 const LAST_UPDATED = "May 27, 2026";
-const CONTACT_EMAIL = "hachiagoholdings@gmail.com";
+const CONTACT_EMAIL = "halleluyaholudele@gmail.com";
 
 export function Privacy() {
 	return (

@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" fill="none">
+  <!-- Rounded square background (gray-950, matches dashboard) -->
+  <rect width="1024" height="1024" rx="220" fill="#030712"/>
+
+  <!-- Subtle inner highlight so the icon doesn't read as a flat square at small sizes -->
+  <rect x="2" y="2" width="1020" height="1020" rx="218" stroke="rgba(255,255,255,0.04)" stroke-width="2" fill="none"/>
+
+  <!-- Bridge arch + left pillar (gray-200) -->
+  <!-- Scaled from the website's BridgeHookIcon: 32 → 1024 (32x) -->
+  <!-- Original: M 4 24 V 16 C 4 9.373, 9.373 4, 16 4 C 22.627 4, 28 9.373, 28 16 V 20 -->
+  <path
+    d="M 128 768 V 512 C 128 299.94, 299.94 128, 512 128 C 724.06 128, 896 299.94, 896 512 V 640"
+    stroke="#e5e7eb"
+    stroke-width="112"
+    stroke-linecap="round"
+  />
+  <path
+    d="M 128 640 V 896"
+    stroke="#e5e7eb"
+    stroke-width="112"
+    stroke-linecap="round"
+  />
+
+  <!-- Hook curl (orange brand #FF5C26) -->
+  <path
+    d="M 896 640 V 768 C 896 838.69, 838.69 896, 768 896 H 704"
+    stroke="#FF5C26"
+    stroke-width="112"
+    stroke-linecap="round"
+  />
+</svg>

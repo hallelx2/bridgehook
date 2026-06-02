@@ -15,6 +15,7 @@
 <p align="center">
   <a href="#quickstart">Quickstart</a> &bull;
   <a href="#how-it-actually-works">Architecture</a> &bull;
+  <a href="#clients">Clients</a> &bull;
   <a href="#observability">Observability</a> &bull;
   <a href="#prior-art--honesty">Prior Art</a> &bull;
   <a href="#self-hosting">Self-Host</a> &bull;
@@ -152,9 +153,11 @@ That's the entire protocol. Any HTTP client can run it — browser, CLI, mobile 
 
 Workers have a 30-second CPU limit per request. SSE held in a Worker would die. So the SSE stream lives in a per-channel **Durable Object** (`relay/src/channel-do.ts`), which can hold writers indefinitely and hibernates when idle. This is what makes "leave it open all day, free tier" actually work.
 
-### 3. `localhost` from an HTTPS page is allowed
+### 3. `localhost` from an HTTPS page — and where the browser tightened up
 
-HTTPS pages normally can't `fetch()` `http://...` (mixed-content blocking). The exception, since ~2016 in Chrome and Firefox: **`localhost` is treated as a "potentially trustworthy origin"** under the W3C secure-contexts spec. This is the trick that makes the whole thing possible. Without it, BridgeHook wouldn't work and the browser would have no way to reach your dev server.
+HTTPS pages normally can't `fetch()` `http://...` (mixed-content blocking). The long-standing exception, since ~2016: **`localhost` is treated as a "potentially trustworthy origin"** under the W3C secure-contexts spec — which is what made browser-tab forwarding possible in the first place.
+
+Since **Chrome 142 (Oct 2025)**, [Local Network Access](https://developer.chrome.com/blog/local-network-access) adds a one-time permission prompt whenever a *public* site (the hosted dashboard) reaches `localhost`. That's exactly why the **browser extension is the friendly default**: the extension and the desktop app are native, sit outside the page sandbox, and forward to any localhost port with no prompt and no CORS. Browser-tab mode still works, but now means "grant the one-time Chrome permission + add the BridgeHook decorator for CORS." See [Clients](#clients) for how the pieces fit.
 
 ### 4. The relay is a dumb pipe
 
@@ -163,6 +166,32 @@ The relay's only jobs are: store events, hold the SSE stream, correlate request 
 ### 5. Channel secrets never leave your browser
 
 When you create a channel, your browser generates a random secret, hashes it with SHA-256, and sends only the hash to the relay. The raw secret stays in browser memory. The relay uses constant-time hash comparison to authenticate the SSE and response endpoints. The webhook *sender* (Stripe, GitHub) never sees the secret — they just POST to a public URL and get a response back.
+
+---
+
+## Clients
+
+The agent protocol is just isomorphic HTTP (see above), so the same relay can be driven by several clients. We ship them in order of how many people they help with the least friction — and the **browser extension is the backbone**: install once, then zero code, any localhost port, any framework, with none of the browser sandbox limits to fight.
+
+| Client | Status | Best for | Install | Code in your app | Browser limits |
+| --- | --- | --- | --- | --- | --- |
+| **Browser extension** (Chrome) | **Available** | The default — dev on a machine with a browser | One-time | None | None |
+| **Desktop tray** (Tauri) | Phase 2 | Background relay without a tab open | One-time | None | None |
+| **Browser tab** | Situational | Quick demo / self-host, truly zero-install | None | Decorator (for CORS) | One-time Chrome "Local Network" prompt |
+| **Programmatic SDK** (Python / TS) | Planned | Embed in your app; **headless servers & Docker, in-process** | `pip` / `npm` | One line | None (no browser) |
+| **CLI agent** | Later | Headless boxes / CI bridging code you don't own | Binary | None | None (no browser) |
+
+### Roadmap order
+
+1. **Extension (now) — the backbone.** Zero code, any port, any framework, no Chrome restrictions to fight. The friendly, install-once default that covers the primary use case.
+2. **Programmatic SDK + decorator (next).** One package, two unlocks:
+   - **Browser "no-install" mode** — the decorator (`@bridgehook` in Python, middleware in TS) sets the CORS headers so the hosted dashboard can read your local API's response; the user grants Chrome's one-time Local Network permission.
+   - **Headless / Docker** — `bridgehook.connect(token)` runs in your app process, opens the relay stream itself, and dispatches webhooks **in-process**. No browser means none of the sandbox/CORS/Local-Network rules apply — this is the easiest environment of all.
+3. **CLI (later, optional).** A thin wrapper over the SDK's forwarding loop for headless boxes where adding even one line of code isn't acceptable. Low priority — the SDK already covers most server cases.
+
+> **Docker note:** inside a container `localhost` is the container itself. The embedded SDK sidesteps this (it dispatches in-process); a sidecar CLI must target the app's service name (e.g. `http://app:3000`) or share its network namespace.
+
+The relay protocol — channel create, SSE stream, event claim, signed response, device-token auth — is the stable contract every client reuses, so each new client is a small adapter rather than a rewrite.
 
 ---
 
