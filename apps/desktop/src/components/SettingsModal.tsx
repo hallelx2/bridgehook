@@ -139,7 +139,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
 								type="button"
 								onClick={runRetention}
 								disabled={applying || retentionDays <= 0}
-								className="px-2.5 h-7 text-caption uppercase tracking-wider font-semibold rounded-sm bg-uranium text-uranium-ink hover:bg-uranium-dim disabled:opacity-30 transition-colors"
+								className="px-2.5 h-7 text-caption uppercase tracking-wider font-semibold rounded-md bg-uranium-dim text-uranium-ink hover:bg-uranium disabled:opacity-30 transition-colors"
 							>
 								{applying ? "applying…" : "apply now"}
 							</button>

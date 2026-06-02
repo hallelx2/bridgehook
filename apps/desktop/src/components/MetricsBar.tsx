@@ -67,7 +67,7 @@ export function MetricsBar({ events, windowMs = 60_000 }: MetricsBarProps) {
 			/>
 			<Stat label="p50" value={metrics.p50 == null ? "—" : `${metrics.p50}`} suffix="ms" />
 			<Stat label="p95" value={metrics.p95 == null ? "—" : `${metrics.p95}`} suffix="ms" />
-			<Sparkline values={metrics.buckets} width={64} height={14} bars color="#ccff00" />
+			<Sparkline values={metrics.buckets} width={64} height={14} bars color="#22d3ee" />
 		</div>
 	);
 }

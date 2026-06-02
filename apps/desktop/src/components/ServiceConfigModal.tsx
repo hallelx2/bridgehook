@@ -448,7 +448,7 @@ export function ServiceConfigModal({ service, onClose, onSaved }: ServiceConfigM
 						type="button"
 						onClick={handleSave}
 						disabled={saving}
-						className="px-2.5 h-7 text-caption uppercase tracking-wider font-semibold rounded-sm bg-uranium text-uranium-ink hover:bg-uranium-dim disabled:opacity-30 transition-colors"
+						className="px-2.5 h-7 text-caption uppercase tracking-wider font-semibold rounded-md bg-uranium-dim text-uranium-ink hover:bg-uranium disabled:opacity-30 transition-colors"
 					>
 						{saving ? "saving…" : "✓ save"}
 					</button>

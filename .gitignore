@@ -6,6 +6,9 @@ dist/
 build/
 .output/
 
+# Packaged extension (rebuilt from apps/extension/ on demand)
+bridgehook-extension-*.zip
+
 # Tauri
 apps/desktop/src-tauri/target/
 

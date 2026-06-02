@@ -20,7 +20,7 @@ export function Sparkline({
 	width = 80,
 	height = 20,
 	className,
-	color = "#ccff00",
+	color = "#22d3ee",
 	bars = false,
 }: SparklineProps) {
 	const { path, rects, max } = useMemo(() => {
@@ -48,7 +48,7 @@ export function Sparkline({
 	if (values.length === 0) {
 		return (
 			<svg width={width} height={height} className={className} aria-hidden="true">
-				<line x1={0} y1={height / 2} x2={width} y2={height / 2} stroke="#272a37" strokeWidth={1} />
+				<line x1={0} y1={height / 2} x2={width} y2={height / 2} stroke="#1f2937" strokeWidth={1} />
 			</svg>
 		);
 	}

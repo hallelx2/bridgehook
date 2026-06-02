@@ -14,9 +14,9 @@ const dotColor: Record<StatusDotProps["status"], string> = {
 };
 
 const dotShadow: Record<StatusDotProps["status"], string> = {
-	connected: "shadow-[0_0_8px_rgba(204,255,0,0.6)]",
-	idle: "shadow-[0_0_6px_rgba(244,195,97,0.5)]",
-	disconnected: "shadow-[0_0_6px_rgba(255,122,122,0.5)]",
+	connected: "shadow-[0_0_8px_rgba(34,211,238,0.6)]",
+	idle: "shadow-[0_0_6px_rgba(251,191,36,0.5)]",
+	disconnected: "shadow-[0_0_6px_rgba(248,113,113,0.5)]",
 	inactive: "",
 };
 

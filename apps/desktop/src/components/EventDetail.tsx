@@ -354,8 +354,8 @@ export function EventDetail({ event, service, onClose, onReplay }: EventDetailPr
 						onClick={handleReplay}
 						disabled={replaying}
 						className={cn(
-							"flex items-center gap-1.5 px-2.5 h-7 text-caption uppercase tracking-wider rounded-sm font-semibold transition-colors disabled:opacity-30",
-							"bg-uranium text-uranium-ink hover:bg-uranium-dim",
+							"flex items-center gap-1.5 px-2.5 h-7 text-caption uppercase tracking-wider rounded-md font-semibold transition-colors disabled:opacity-30",
+							"bg-uranium-dim text-uranium-ink hover:bg-uranium",
 						)}
 					>
 						<svg width="10" height="10" viewBox="0 0 12 12" fill="none" aria-hidden="true">

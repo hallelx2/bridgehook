@@ -327,7 +327,10 @@ export function App() {
 					</button>
 					<BridgeMark />
 					<div className="leading-none">
-						<div className="text-ui font-semibold tracking-tight">bridgehook</div>
+						<div className="text-ui font-extrabold tracking-[-0.02em]">
+							<span className="text-fg">bridge</span>
+							<span className="text-brand">hook</span>
+						</div>
 						<div className="text-micro text-fg-faint -mt-0.5 tracking-widest uppercase">
 							webhook bridge
 						</div>
@@ -346,7 +349,7 @@ export function App() {
 								)}
 								style={
 									activeCount > 0
-										? { background: "rgba(204,255,0,0.4)", filter: "blur(4px)" }
+										? { background: "rgba(34, 211, 238, 0.4)", filter: "blur(4px)" }
 										: undefined
 								}
 							/>
@@ -632,15 +635,33 @@ export function App() {
 	);
 }
 
-/* ─── Brand mark — geometric dot in a square frame ──────────────────── */
+/* ─── Brand mark — bridge arch + orange hook curl (matches the website) ── */
 
 function BridgeMark() {
 	return (
-		<div className="relative w-7 h-7 flex items-center justify-center">
-			<div className="absolute inset-0 border border-uranium/60 rounded-sm" />
-			<div className="absolute inset-1 border border-uranium/30" />
-			<div className="relative w-1.5 h-1.5 bg-uranium rounded-full shadow-[0_0_8px_rgba(204,255,0,0.6)]" />
-		</div>
+		<svg
+			width="22"
+			height="22"
+			viewBox="0 0 32 32"
+			fill="none"
+			xmlns="http://www.w3.org/2000/svg"
+			aria-hidden="true"
+			className="shrink-0"
+		>
+			<path
+				d="M4 24V16C4 9.373 9.373 4 16 4C22.627 4 28 9.373 28 16V20"
+				stroke="#e5e7eb"
+				strokeWidth="3.5"
+				strokeLinecap="round"
+			/>
+			<path d="M4 20V28" stroke="#e5e7eb" strokeWidth="3.5" strokeLinecap="round" />
+			<path
+				d="M28 20V24C28 26.209 26.209 28 24 28H22"
+				stroke="#FF5C26"
+				strokeWidth="3.5"
+				strokeLinecap="round"
+			/>
+		</svg>
 	);
 }
 
@@ -712,9 +733,9 @@ function SidebarService({
 		status === "connected" ? "bg-uranium" : status === "disconnected" ? "bg-err" : "bg-fg-ghost";
 	const dotShadow =
 		status === "connected"
-			? "shadow-[0_0_10px_rgba(204,255,0,0.6)]"
+			? "shadow-[0_0_10px_rgba(34,211,238,0.6)]"
 			: status === "disconnected"
-				? "shadow-[0_0_8px_rgba(255,122,122,0.5)]"
+				? "shadow-[0_0_8px_rgba(248,113,113,0.5)]"
 				: "";
 
 	// Sparkline: last 60s in 12 buckets
@@ -767,7 +788,7 @@ function SidebarService({
 				>
 					{service.name}
 				</button>
-				<Sparkline values={sparkValues} width={40} height={12} bars color="#ccff00" />
+				<Sparkline values={sparkValues} width={40} height={12} bars color="#22d3ee" />
 			</div>
 
 			{/* Address row */}
@@ -916,7 +937,7 @@ function EmptyServicesState({
 				<button
 					type="button"
 					onClick={onAdd}
-					className="px-3 h-8 text-caption uppercase tracking-wider rounded bg-uranium text-uranium-ink hover:bg-uranium-dim transition-colors font-semibold"
+					className="px-3 h-8 text-caption uppercase tracking-wider rounded-md bg-uranium-dim text-uranium-ink hover:bg-uranium transition-colors font-semibold"
 				>
 					+ add manually
 				</button>

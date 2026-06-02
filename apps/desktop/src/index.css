@@ -1,5 +1,3 @@
-@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400;1,500&display=swap");
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -7,8 +5,7 @@
 @layer base {
 	:root {
 		color-scheme: dark;
-		--bg: #0c0d11;
-		--noise: 0.018;
+		--bg: #030712; /* gray-950 — matches web dashboard */
 	}
 
 	html,
@@ -19,41 +16,42 @@
 	}
 
 	body {
-		font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-		font-feature-settings: "calt" 1, "ss01" 1, "ss02" 1, "zero" 1;
-		font-variant-ligatures: contextual;
+		font-family: "Manrope", "Inter", ui-sans-serif, system-ui, sans-serif;
+		font-feature-settings: "calt" 1, "ss01" 1;
 		-webkit-font-smoothing: antialiased;
 		-moz-osx-font-smoothing: grayscale;
-		color: #e8e9ed;
+		color: #e5e7eb; /* gray-200 */
 
-		/* A subtle film of noise + a centered radial wash. Sets a floor of
-		   "atmosphere" so flat dark surfaces don't feel sterile. */
+		/* Flat surface, no atmospheric gradients — matches the dashboard. */
 		background-color: var(--bg);
-		background-image: radial-gradient(
-				ellipse 80% 60% at 50% -10%,
-				rgba(204, 255, 0, 0.05),
-				transparent 60%
-			), radial-gradient(ellipse 60% 50% at 50% 110%, rgba(132, 205, 255, 0.025), transparent 60%);
-		background-attachment: fixed;
 	}
 
-	/* Hairline focus ring everywhere, never the browser default */
+	/* Cyan hairline focus, never the browser default. */
 	:focus-visible {
-		outline: 1px solid #ccff00;
+		outline: 1px solid #22d3ee; /* cyan-400 */
 		outline-offset: 1px;
 		border-radius: 2px;
 	}
 
-	/* Selection */
+	/* Orange selection — keeps the brand color present in the smallest way,
+	   matching the website's behavior. */
 	::selection {
-		background: rgba(204, 255, 0, 0.28);
+		background: rgba(255, 92, 38, 0.28);
 		color: #ffffff;
 	}
 
-	/* Tabular numbers for any number-heavy element */
+	/* Tabular numbers for any number-heavy element. */
 	.tabular,
 	code,
 	pre {
+		font-variant-numeric: tabular-nums;
+	}
+
+	/* Force monospace anywhere the .font-data class is applied. Useful for
+	   shells where the surrounding text is sans but the inline value should
+	   be tabular and mono (channel ids, ports, timestamps). */
+	.font-data {
+		font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 		font-variant-numeric: tabular-nums;
 	}
 }
@@ -68,13 +66,13 @@
 		background: transparent;
 	}
 	::-webkit-scrollbar-thumb {
-		background: rgba(105, 110, 130, 0.18);
-		border-radius: 0;
+		background: rgba(107, 114, 128, 0.22); /* gray-500 at low alpha */
+		border-radius: 4px;
 		border: 3px solid transparent;
 		background-clip: padding-box;
 	}
 	::-webkit-scrollbar-thumb:hover {
-		background: rgba(204, 255, 0, 0.35);
+		background: rgba(34, 211, 238, 0.35); /* cyan-400 */
 		background-clip: padding-box;
 		border: 3px solid transparent;
 	}
@@ -84,98 +82,79 @@
 
 	/* ── Atmosphere helpers ────────────────────────────────────────── */
 
-	/* Subtle CRT-style scan line over a panel — tile this background */
-	.scanlines {
-		position: relative;
-	}
-	.scanlines::after {
-		content: "";
-		position: absolute;
-		inset: 0;
-		pointer-events: none;
-		background-image: linear-gradient(
-			to bottom,
-			transparent 0,
-			transparent 2px,
-			rgba(255, 255, 255, 0.012) 2px,
-			rgba(255, 255, 255, 0.012) 3px
-		);
-		background-size: 100% 3px;
-		mix-blend-mode: overlay;
-	}
-
-	/* Vertical accent rule on the left edge of an active row */
+	/* Vertical accent rule on the left edge of an active row. */
 	.rule-accent {
-		box-shadow: inset 2px 0 0 #ccff00;
+		box-shadow: inset 2px 0 0 #22d3ee; /* cyan-400 */
 	}
 
-	/* Minute grid texture — for empty states / decorative panels */
+	/* Minute grid texture — for empty states / decorative panels. */
 	.grid-texture {
 		background-image: linear-gradient(to right, rgba(255, 255, 255, 0.015) 1px, transparent 1px),
 			linear-gradient(to bottom, rgba(255, 255, 255, 0.015) 1px, transparent 1px);
 		background-size: 24px 24px;
 	}
 
-	/* Glass — used for command palette and modal chrome */
+	/* Glass — used for command palette and modal chrome. Tuned to the
+	   new darker panel color so the blur reads correctly. */
 	.glass {
-		background: rgba(17, 18, 24, 0.86);
+		background: rgba(10, 15, 26, 0.86);
 		backdrop-filter: blur(16px) saturate(140%);
 		-webkit-backdrop-filter: blur(16px) saturate(140%);
 	}
 
-	/* ── Method-tag color helpers (one source of truth) ──────────── */
+	/* ── Method-tag color helpers (one source of truth) ──────────────
+	   Colors mirror the website's MethodPill exactly. */
 	.method-get {
-		color: #84cdff;
-		background: rgba(132, 205, 255, 0.1);
+		color: #60a5fa; /* blue-400 */
+		background: rgba(96, 165, 250, 0.1);
 	}
 	.method-post {
-		color: #a8e6a3;
-		background: rgba(168, 230, 163, 0.1);
+		color: #4ade80; /* green-400 */
+		background: rgba(74, 222, 128, 0.1);
 	}
 	.method-put {
-		color: #ffc78a;
-		background: rgba(255, 199, 138, 0.1);
+		color: #fbbf24; /* amber-400 */
+		background: rgba(251, 191, 36, 0.1);
 	}
 	.method-patch {
-		color: #e8b6ff;
-		background: rgba(232, 182, 255, 0.1);
+		color: #c084fc; /* purple-400 */
+		background: rgba(192, 132, 252, 0.1);
 	}
 	.method-delete {
-		color: #ff9a8a;
-		background: rgba(255, 154, 138, 0.12);
+		color: #f87171; /* red-400 */
+		background: rgba(248, 113, 113, 0.12);
 	}
 	.method-default {
-		color: #9b9eaa;
-		background: rgba(155, 158, 170, 0.1);
+		color: #9ca3af; /* gray-400 */
+		background: rgba(156, 163, 175, 0.1);
 	}
 
-	/* ── Legacy animation aliases (retained so existing classNames
-	      in components keep working until each is rewritten) ─────── */
+	/* ── Pulse-glow animations (used by Skeleton / status dots) ────── */
 	@keyframes pulse-glow-green {
 		0%,
 		100% {
-			box-shadow: 0 0 0 0 rgba(93, 211, 158, 0.4);
+			box-shadow: 0 0 0 0 rgba(74, 222, 128, 0.4);
 		}
 		50% {
-			box-shadow: 0 0 8px 2px rgba(93, 211, 158, 0.18);
+			box-shadow: 0 0 8px 2px rgba(74, 222, 128, 0.18);
 		}
 	}
 	@keyframes pulse-glow-red {
 		0%,
 		100% {
-			box-shadow: 0 0 0 0 rgba(255, 122, 122, 0.4);
+			box-shadow: 0 0 0 0 rgba(248, 113, 113, 0.4);
 		}
 		50% {
-			box-shadow: 0 0 8px 2px rgba(255, 122, 122, 0.18);
+			box-shadow: 0 0 8px 2px rgba(248, 113, 113, 0.18);
 		}
 	}
 	@keyframes pulse-glow-yellow {
 		0%,
 		100% {
-			box-shadow: 0 0 0 0 rgba(244, 195, 97, 0.4);
+			box-shadow: 0 0 0 0 rgba(251, 191, 36, 0.4);
 		}
 		50% {
-			box-shadow: 0 0 8px 2px rgba(244, 195, 97, 0.18);
+			box-shadow: 0 0 8px 2px rgba(251, 191, 36, 0.18);
 		}
 	}
 	.animate-glow-green {

@@ -130,7 +130,7 @@ export function ImportForm({ onImport, onCancel }: ImportFormProps) {
 			<button
 				type="submit"
 				disabled={loading}
-				className="w-full h-8 text-caption font-semibold uppercase tracking-wider bg-uranium hover:bg-uranium-dim disabled:opacity-30 text-uranium-ink rounded-sm transition-colors"
+				className="w-full h-8 text-caption font-semibold uppercase tracking-wider bg-uranium-dim hover:bg-uranium disabled:opacity-30 text-uranium-ink rounded-md transition-colors"
 			>
 				{loading ? "importing…" : "→ take over"}
 			</button>
