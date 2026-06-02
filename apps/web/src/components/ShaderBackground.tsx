@@ -1,10 +1,11 @@
 import { useEffect, useRef } from "react";
 
 /**
- * Full-bleed WebGL fragment shader painting a flowing warm-amber noise
- * field. Domain-warped FBM (a la Inigo Quilez) animated slowly, with a
- * subtle mouse parallax and a radial vignette so headline text sitting
- * on top stays legible.
+ * Full-bleed WebGL fragment shader painting a dark, gritty rust noise
+ * field. Domain-warped FBM (a la Inigo Quilez) animated very slowly,
+ * with a barely-there mouse parallax, a darkening vignette, and heavy
+ * film grain so it reads as recessed background texture — the brand
+ * orange survives only as a low ember, never bright peaks.
  *
  * Failure modes are silent: if WebGL is unavailable, the canvas stays
  * transparent and the parent's background-color shows through. If the
@@ -64,34 +65,39 @@ void main() {
   vec2 uv = gl_FragCoord.xy / u_resolution.xy;
   vec2 p = (gl_FragCoord.xy - 0.5 * u_resolution.xy) / u_resolution.y;
 
-  // Slow drift + a very subtle mouse parallax.
-  float t = u_time * 0.06;
-  p += (u_mouse - 0.5) * 0.2;
+  // Slower drift + a barely-there mouse parallax — the field should
+  // feel almost still, like a texture rather than an animation.
+  float t = u_time * 0.03;
+  p += (u_mouse - 0.5) * 0.07;
 
   // Single domain-warp pass (down from two) — visually nearly
   // identical and cuts per-pixel FBM calls from 5 to 3.
   vec2 q = vec2(fbm(p + t),
                 fbm(p + vec2(1.7, 9.2) - t));
-  // Gradient FBM peaks around ±0.5; remap to [0,1] so the color
-  // thresholds below actually trigger. Extra contrast push so the
-  // brand orange dominates.
+  // Gradient FBM peaks around ±0.5; remap to [0,1]. Low contrast so the
+  // field stays soft and recessed rather than slamming to bright peaks.
   float n = fbm(p + 2.0 * q);
-  n = clamp(0.5 + 0.85 * n, 0.0, 1.0);
+  n = clamp(0.5 + 0.5 * n, 0.0, 1.0);
 
-  vec3 col = vec3(0.012);
-  col = mix(col, vec3(0.32, 0.12, 0.03), smoothstep(0.0, 0.28, n));   // ember
-  col = mix(col, vec3(1.0, 0.36, 0.15),  smoothstep(0.28, 0.55, n));  // primary #FF5C26
-  col = mix(col, vec3(1.0, 0.78, 0.36),  smoothstep(0.55, 0.85, n));  // gold peaks
+  // Dark, muted rust ramp. The brand orange survives only as a low
+  // ember at the very brightest noise — no bright primary, no gold.
+  // Reads as gritty texture behind the content, not as the subject.
+  vec3 col = vec3(0.009, 0.008, 0.008);
+  col = mix(col, vec3(0.045, 0.020, 0.012), smoothstep(0.05, 0.45, n));  // deep ember
+  col = mix(col, vec3(0.130, 0.050, 0.022), smoothstep(0.45, 0.78, n));  // burnt rust
+  col = mix(col, vec3(0.260, 0.105, 0.045), smoothstep(0.80, 0.98, n));  // dim peak glow
 
-  // Very gentle vignette — just a touch of edge brightening, no
-  // center crush. The CSS overlay handles headline legibility.
+  // Darkening vignette — edges fall toward black so the field sinks
+  // behind the foreground content instead of competing with it.
   vec2 c = uv - 0.5;
-  float dist = length(c * vec2(1.0, 1.4));
-  col *= mix(0.85, 1.25, smoothstep(0.05, 0.65, dist));
+  float dist = length(c * vec2(1.0, 1.3));
+  col *= mix(1.0, 0.40, smoothstep(0.18, 0.95, dist));
 
-  // Cheap film grain so flat regions feel alive instead of banded.
-  float grain = (fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) - 0.5) * 0.022;
-  col += grain;
+  // Heavier film grain — the grit. Two frequencies so it reads as
+  // dirty texture, not a clean dither.
+  float g1 = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) - 0.5;
+  float g2 = fract(sin(dot(gl_FragCoord.xy, vec2(39.346, 11.135))) * 24634.6345) - 0.5;
+  col += (g1 * 0.045 + g2 * 0.025);
 
   gl_FragColor = vec4(col, 1.0);
 }`;
@@ -114,7 +120,7 @@ function compile(gl: WebGLRenderingContext, type: number, src: string): WebGLSha
 // or forever if WebGL isn't available. Approximates the shader's
 // average color so the transition is barely noticeable.
 const FALLBACK_GRADIENT =
-	"radial-gradient(ellipse 80% 60% at 50% 50%, #2b0d04 0%, #110402 55%, #030303 100%)";
+	"radial-gradient(ellipse 80% 60% at 50% 45%, #160703 0%, #0a0302 55%, #030303 100%)";
 
 export function ShaderBackground({ className = "" }: { className?: string }) {
 	const canvasRef = useRef<HTMLCanvasElement>(null);
