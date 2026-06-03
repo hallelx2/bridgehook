@@ -11,28 +11,33 @@ manifest, code, and /privacy page.
 
 **Summary** — `Forward webhooks from the cloud to your localhost — no CLI, no tunnel, no install.` (auto, from package)
 
+> ⚠️ **Rejected once (3 Jun 2026, "Yellow Argon" — Spam / excessive keywords).**
+> Cause: the old description listed many provider brand names
+> (Stripe, Paystack, GitHub, …), which Chrome reads as keyword stuffing.
+> The description below removes that list. Do **not** re-add a brand-name list.
+
 **Description** (max 16,000):
 
 ```
-BridgeHook delivers real webhooks from the public internet straight to a server running on your own machine — no CLI to install, no tunnel to babysit, no firewall changes.
+BridgeHook delivers real webhooks from the internet straight to a server running on your own machine — no CLI to install, no tunnel to keep running, no firewall changes.
 
-Point any provider (Stripe, Paystack, GitHub, Shopify, Twilio, Clerk…) at the unique URL BridgeHook gives you. We receive the webhook on our relay and the extension forwards it to your local development server (http://localhost:PORT) in milliseconds, then sends your server's response back to the provider. You develop and debug webhook integrations locally exactly as they'll behave in production.
+Point your webhook provider at the unique URL BridgeHook gives you. We receive the request on our relay and the extension forwards it to your local development server (http://localhost:PORT) in milliseconds, then sends your server's response back. You build and debug webhook integrations locally, exactly as they behave in production.
 
 WHY BRIDGEHOOK
 • Zero install friction — it's a browser extension, not a binary or a tunnel daemon.
-• Stable URL — your webhook URL stays the same across restarts, so you set it once in the provider dashboard.
-• Real-time — incoming events stream over a live connection and forward instantly.
-• Inspect & replay — see every request's method, headers, and body in the dashboard, and replay any event against your local server.
-• Multiple services at once — bridge several localhost ports in parallel.
+• Stable URL — your endpoint stays the same across restarts, so you set it once.
+• Real-time — incoming requests stream over a live connection and forward instantly.
+• Inspect and replay — see each request's method, headers, and body, and replay any one against your local server.
+• Multiple services at once — bridge several local ports in parallel.
 • Status at a glance — the toolbar badge shows active bridges, errors, and limits.
 
 HOW IT WORKS
-1. Sign in and create a channel — you get a stable public webhook URL.
+1. Sign in and create a channel — you get a stable public URL.
 2. Point your provider at that URL.
-3. Keep this extension running. Incoming webhooks are forwarded to your localhost and the response goes back to the provider.
+3. Keep the extension running. Incoming requests are forwarded to your local server and the response goes back to the sender.
 
 PRIVACY
-The extension only talks to two places: your own localhost (to forward the webhook) and the BridgeHook relay (to receive events and report responses). It does not read, modify, or inject into any website you browse. No analytics, no ad trackers, no fingerprinting. Full policy: https://bridgehook.dev/privacy
+The extension talks to only two places: your own localhost (to forward the request) and the BridgeHook relay (to receive events and report responses). It does not read, modify, or inject into any website you browse. No analytics and no ad trackers. Full policy: https://bridgehook-web.pages.dev/privacy
 ```
 
 **Category** — `Developer Tools`
