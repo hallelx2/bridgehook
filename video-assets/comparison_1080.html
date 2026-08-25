@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BridgeHook - Comparison Matrix Video Card</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Manrope:wght@400;600;800&display=swap" rel="stylesheet">
+  <style>
+    body {
+      font-family: 'Manrope', sans-serif;
+      background-color: #030303;
+    }
+    .mono {
+      font-family: 'JetBrains Mono', monospace;
+    }
+    /* Grid background */
+    .grid-bg {
+      background-image: 
+        linear-gradient(to right, rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+      background-size: 50px 50px;
+    }
+    /* Glowing radial gradients */
+    .glow-orange {
+      background: radial-gradient(circle, rgba(255, 92, 38, 0.1) 0%, transparent 70%);
+    }
+  </style>
+</head>
+<body class="w-[1920px] h-[1080px] overflow-hidden relative flex flex-col justify-between p-20 text-white border-8 border-[#1e1e22]">
+  <!-- Background patterns and glows -->
+  <div class="absolute inset-0 grid-bg z-0"></div>
+  <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[1000px] h-[700px] glow-orange z-0"></div>
+  
+  <!-- Header -->
+  <div class="flex justify-between items-center z-10">
+    <div class="flex items-center gap-4">
+      <div class="text-base font-bold uppercase tracking-widest text-[#FF5C26] bg-[#2a1208] border-2 border-[#FF5C26]/30 px-5 py-1.5 rounded-full">
+        Comparative Analysis
+      </div>
+      <h2 class="text-4xl font-extrabold tracking-tight">How BridgeHook Compares</h2>
+    </div>
+    
+    <div class="flex items-center gap-3 bg-[#0a0a0c] border-2 border-[#1e1e22] px-5 py-2.5 rounded-full text-base text-zinc-400 font-medium">
+      <span class="mono text-[#9093ff]">BridgeHook vs. The World</span>
+    </div>
+  </div>
+
+  <!-- Comparison Matrix -->
+  <div class="z-10 my-auto w-full px-12">
+    <div class="grid grid-cols-5 gap-5 text-center items-center">
+      
+      <!-- Row Header -->
+      <div class="text-left font-bold text-zinc-500 text-lg pl-6">Feature</div>
+      <div class="bg-[#2a1208]/90 border-2 border-[#FF5C26]/40 rounded-t-2xl py-5 text-[#FF5C26] font-black text-xl relative shadow-2xl">
+        <div class="absolute -top-4 left-1/2 -translate-x-1/2 bg-[#FF5C26] text-[11px] text-black uppercase font-black px-3 py-1 rounded-full tracking-wider">
+          Best Choice
+        </div>
+        BridgeHook
+      </div>
+      <div class="bg-[#0a0a0c]/80 border-2 border-[#1e1e22] rounded-t-2xl py-5 text-zinc-400 font-bold text-lg">smee.io</div>
+      <div class="bg-[#0a0a0c]/80 border-2 border-[#1e1e22] rounded-t-2xl py-5 text-zinc-400 font-bold text-lg">ngrok</div>
+      <div class="bg-[#0a0a0c]/80 border-2 border-[#1e1e22] rounded-t-2xl py-5 text-zinc-400 font-bold text-lg">cloudflared</div>
+
+      <!-- Feature 1: No Installation -->
+      <div class="text-left text-base font-semibold text-zinc-300 pl-6 py-4 border-b-2 border-[#1e1e22]/30">Local Install Required?</div>
+      <div class="bg-[#2a1208]/50 border-x-2 border-[#FF5C26]/20 py-5 text-emerald-400 font-extrabold text-base">❌ No (Browser Tab)</div>
+      <div class="bg-[#0a0a0c]/50 border-x-2 border-[#1e1e22] py-5 text-zinc-500 text-base">⚠️ Yes (CLI package)</div>
+      <div class="bg-[#0a0a0c]/50 border-x-2 border-[#1e1e22] py-5 text-zinc-500 text-base">⚠️ Yes (Binary file)</div>
+      <div class="bg-[#0a0a0c]/50 border-x-2 border-[#1e1e22] py-5 text-zinc-500 text-base">⚠️ Yes (Binary file)</div>
+
+      <!-- Feature 2: No Account Setup -->
+      <div class="text-left text-base font-semibold text-zinc-300 pl-6 py-4 border-b-2 border-[#1e1e22]/30">Account / Signup?</div>
+      <div class="bg-[#2a1208]/50 border-x-2 border-[#FF5C26]/20 py-5 text-emerald-400 font-extrabold text-base">❌ No</div>
+      <div class="bg-[#0a0a0c]/50 border-x-2 border-[#1e1e22] py-5 text-emerald-400 text-base">❌ No</div>
+      <div class="bg-[#0a0a0c]/50 border-x-2 border-[#1e1e22] py-5 text-rose-400 text-base">⚠️ Yes</div>
+      <div class="bg-[#0a0a0c]/50 border-x-2 border-[#1e1e22] py-5 text-rose-400 text-base">⚠️ Yes</div>
+
+      <!-- Feature 3: Webhook UI Inspector -->
+      <div class="text-left text-base font-semibold text-zinc-300 pl-6 py-4 border-b-2 border-[#1e1e22]/30">UI Inspector / Replay?</div>
+      <div class="bg-[#2a1208]/50 border-x-2 border-[#FF5C26]/20 py-5 text-emerald-400 font-extrabold text-base">✅ Full UI (Tab)</div>
+      <div class="bg-[#0a0a0c]/50 border-x-2 border-[#1e1e22] py-5 text-zinc-500 text-base">⚠️ Basic web view</div>
+      <div class="bg-[#0a0a0c]/50 border-x-2 border-[#1e1e22] py-5 text-zinc-500 text-base">⚠️ Local-only UI</div>
+      <div class="bg-[#0a0a0c]/50 border-x-2 border-[#1e1e22] py-5 text-base text-rose-500">❌ No UI</div>
+
+      <!-- Feature 4: Price -->
+      <div class="text-left text-base font-semibold text-zinc-300 pl-6 py-4 border-b-2 border-[#1e1e22]/30">Pricing / Limits</div>
+      <div class="bg-[#2a1208]/50 border-x-2 border-b-2 border-[#FF5C26]/20 rounded-b-2xl py-5 text-emerald-400 font-black text-base">Free (Unlimited)</div>
+      <div class="bg-[#0a0a0c]/50 border-x-2 border-b-2 border-[#1e1e22] rounded-b-2xl py-5 text-zinc-400 text-base">Free</div>
+      <div class="bg-[#0a0a0c]/50 border-x-2 border-b-2 border-[#1e1e22] rounded-b-2xl py-5 text-rose-400 text-base">Paid Tier Limits</div>
+      <div class="bg-[#0a0a0c]/50 border-x-2 border-b-2 border-[#1e1e22] rounded-b-2xl py-5 text-zinc-400 text-base">Free</div>
+
+    </div>
+  </div>
+
+  <!-- Footer/Annotation -->
+  <div class="flex justify-between items-center border-t-2 border-[#1e1e22]/55 pt-10 z-10">
+    <p class="text-xl text-zinc-400 max-w-[1200px] leading-relaxed">
+      BridgeHook removes the friction of developer tunnels. It combines the zero-setup advantage of <code class="mono text-zinc-300 bg-zinc-800 px-2 py-1 rounded text-base">smee.io</code> with the rich observability features of premium local inspectors—without making you install a thing.
+    </p>
+    
+    <div class="mono text-base text-zinc-500">
+      github.com/hallelx2/bridgehook
+    </div>
+  </div>
+</body>
+</html>

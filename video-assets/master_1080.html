@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BridgeHook - Master Video Card</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Manrope:wght@400;600;800&display=swap" rel="stylesheet">
+  <style>
+    body {
+      font-family: 'Manrope', sans-serif;
+      background-color: #030303;
+    }
+    .mono {
+      font-family: 'JetBrains Mono', monospace;
+    }
+    /* Grid background */
+    .grid-bg {
+      background-image: 
+        linear-gradient(to right, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+      background-size: 60px 60px;
+    }
+    /* Glowing radial gradients */
+    .glow-orange {
+      background: radial-gradient(circle, rgba(255, 92, 38, 0.18) 0%, transparent 70%);
+    }
+    .glow-purple {
+      background: radial-gradient(circle, rgba(144, 147, 255, 0.18) 0%, transparent 70%);
+    }
+  </style>
+</head>
+<body class="w-[1920px] h-[1080px] overflow-hidden relative flex flex-col justify-between p-24 text-white border-8 border-[#1e1e22]">
+  <!-- Background patterns and glows -->
+  <div class="absolute inset-0 grid-bg z-0"></div>
+  <div class="absolute -top-60 -left-60 w-[900px] h-[900px] glow-orange z-0"></div>
+  <div class="absolute -bottom-60 -right-60 w-[900px] h-[900px] glow-purple z-0"></div>
+  
+  <!-- Content Top: Logo and Username -->
+  <div class="flex justify-between items-center z-10">
+    <div class="flex items-center gap-4">
+      <!-- Logo SVG -->
+      <svg width="330" height="54" viewBox="0 0 360 48" fill="none" xmlns="http://www.w3.org/2000/svg" class="h-14">
+        <path d="M6 36V24C6 15.163 13.163 8 22 8C30.837 8 38 15.163 38 24V30" stroke="white" stroke-width="4.5" stroke-linecap="round"/>
+        <path d="M6 30V42" stroke="white" stroke-width="4.5" stroke-linecap="round"/>
+        <path d="M38 30V36C38 39.314 35.314 42 32 42H29" stroke="url(#readme-hook)" stroke-width="4.5" stroke-linecap="round"/>
+        <text x="52" y="37" font-family="system-ui,-apple-system,sans-serif" font-size="32" font-weight="800" letter-spacing="-1.2" fill="white">bridge</text>
+        <text x="166" y="37" font-family="system-ui,-apple-system,sans-serif" font-size="32" font-weight="800" letter-spacing="-1.2" fill="#9093ff">hook</text>
+        <defs>
+          <linearGradient id="readme-hook" x1="38" y1="30" x2="29" y2="42">
+            <stop stop-color="white"/>
+            <stop offset="1" stop-color="#9093ff"/>
+          </linearGradient>
+        </defs>
+      </svg>
+    </div>
+    
+    <div class="flex items-center gap-3 bg-[#0a0a0c] border-2 border-[#1e1e22] px-6 py-2.5 rounded-full text-xl text-zinc-400 font-medium z-10">
+      <span class="w-3 h-3 rounded-full bg-emerald-400 animate-pulse"></span>
+      <span>hallelx2</span>
+    </div>
+  </div>
+
+  <!-- Content Middle: Title and Tagline -->
+  <div class="flex flex-col gap-10 z-10 max-w-[1400px] my-auto">
+    <div class="inline-flex items-center gap-3 bg-gradient-to-r from-[#FF5C26]/20 to-[#9093ff]/20 border-2 border-[#FF5C26]/30 px-5 py-1.5 rounded-full text-lg font-semibold uppercase tracking-wider text-[#FF5C26] w-fit">
+      Project Showcase
+    </div>
+    <h1 class="text-9xl font-extrabold tracking-tight leading-[1.05] bg-gradient-to-r from-white via-white to-zinc-400 bg-clip-text text-transparent">
+      How I Built BridgeHook
+    </h1>
+    <p class="text-3xl text-zinc-400 leading-relaxed font-medium max-w-[1200px]">
+      A zero-install webhook observability tunnel. No CLI, no binary, no account. Your browser tab is the tunnel agent.
+    </p>
+    
+    <div class="flex gap-6 mt-4">
+      <div class="bg-[#0a0a0c] border-2 border-[#1e1e22] px-6 py-3.5 rounded-xl flex items-center gap-3 text-xl">
+        <span class="text-zinc-500 font-semibold text-lg">01</span>
+        <span class="text-zinc-200 font-bold">No Install</span>
+      </div>
+      <div class="bg-[#0a0a0c] border-2 border-[#1e1e22] px-6 py-3.5 rounded-xl flex items-center gap-3 text-xl">
+        <span class="text-zinc-500 font-semibold text-lg">02</span>
+        <span class="text-zinc-200 font-bold">Full Observability</span>
+      </div>
+      <div class="bg-[#0a0a0c] border-2 border-[#1e1e22] px-6 py-3.5 rounded-xl flex items-center gap-3 text-xl">
+        <span class="text-zinc-500 font-semibold text-lg">03</span>
+        <span class="text-[#FF5C26] font-bold">Edge-Native</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Content Bottom: Repository Link and Status -->
+  <div class="flex justify-between items-center border-t-2 border-[#1e1e22]/55 pt-10 z-10">
+    <div class="flex items-center gap-4 text-2xl text-zinc-400 font-medium">
+      <svg class="w-8 h-8 text-zinc-500" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+        <path fill-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clip-rule="evenodd" />
+      </svg>
+      <span class="mono text-[#9093ff] font-bold">github.com/hallelx2/bridgehook</span>
+    </div>
+    
+    <div class="text-zinc-500 text-lg font-medium uppercase tracking-widest">
+      BridgeHook Demo
+    </div>
+  </div>
+</body>
+</html>
