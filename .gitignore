@@ -39,3 +39,9 @@ relay/drizzle/.cache/
 # Misc
 *.log
 *.tsbuildinfo
+
+# LaTeX build artefacts
+paper/*.aux
+paper/*.bbl
+paper/*.blg
+paper/*.out

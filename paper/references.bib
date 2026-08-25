@@ -1,0 +1,189 @@
+@misc{smeeio,
+  author       = {{Probot}},
+  title        = {smee.io --- Webhook payload delivery service},
+  howpublished = {\url{https://github.com/probot/smee.io}},
+  year         = {2024},
+  note         = {Open-source webhook payload delivery service using Server-Sent Events; channels are unauthenticated and payloads are not stored. Accessed.},
+  url          = {https://github.com/probot/smee.io},
+  urldate      = {2026-06-13}
+}
+
+@misc{smeeclient,
+  author       = {{Probot}},
+  title        = {smee-client --- Receives payloads then sends them to your local server},
+  howpublished = {\url{https://github.com/probot/smee-client}},
+  year         = {2024},
+  note         = {Node CLI client that subscribes to a smee.io channel over SSE and re-POSTs payloads to a local URL.},
+  url          = {https://github.com/probot/smee-client},
+  urldate      = {2026-06-13}
+}
+
+@misc{gosmee,
+  author       = {Boudjnah, Chmouel},
+  title        = {gosmee --- Command line server and client for webhooks deliveries},
+  howpublished = {\url{https://github.com/chmouel/gosmee}},
+  year         = {2024},
+  note         = {Go implementation of a smee-style relay (server) and forwarding client; supports self-hosting the relay and replaying saved payloads.},
+  url          = {https://github.com/chmouel/gosmee},
+  urldate      = {2026-06-13}
+}
+
+@misc{ngrok,
+  author       = {{ngrok}},
+  title        = {ngrok --- Unified ingress platform / secure tunnels to localhost},
+  howpublished = {\url{https://ngrok.com/docs}},
+  year         = {2026},
+  note         = {Reverse-tunnel agent: a local daemon opens an outbound connection and exposes a public URL bound to a local port.},
+  url          = {https://ngrok.com/docs},
+  urldate      = {2026-06-13}
+}
+
+@misc{cloudflaretunnel,
+  author       = {{Cloudflare}},
+  title        = {Cloudflare Tunnel (\texttt{cloudflared})},
+  howpublished = {\url{https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/}},
+  year         = {2026},
+  note         = {Runs the \texttt{cloudflared} daemon locally to establish an outbound-only tunnel exposing local services through Cloudflare's network.},
+  url          = {https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/},
+  urldate      = {2026-06-13}
+}
+
+@misc{localtunnel,
+  author       = {{localtunnel}},
+  title        = {localtunnel --- expose your localhost to the world},
+  howpublished = {\url{https://github.com/localtunnel/localtunnel}},
+  year         = {2024},
+  note         = {Node client (\texttt{lt}) that tunnels a local port to a public \texttt{*.localtunnel.me} URL via a tunnel server.},
+  url          = {https://github.com/localtunnel/localtunnel},
+  urldate      = {2026-06-13}
+}
+
+@misc{pinggy,
+  author       = {{Pinggy}},
+  title        = {Pinggy --- Simple localhost tunnels over SSH},
+  howpublished = {\url{https://pinggy.io/docs/}},
+  year         = {2026},
+  note         = {Zero-install tunnel using the system SSH client and remote port forwarding (\texttt{ssh -p 443 -R0:localhost:PORT free.pinggy.io}); free tunnels time out after 60 minutes.},
+  url          = {https://pinggy.io/docs/},
+  urldate      = {2026-06-13}
+}
+
+@misc{svixcli,
+  author       = {{Svix}},
+  title        = {svix-cli --- A CLI for the Svix webhooks service (\texttt{svix listen})},
+  howpublished = {\url{https://github.com/svix/svix-webhooks/tree/main/svix-cli}},
+  year         = {2026},
+  note         = {The \texttt{listen} command acts as a proxy forwarding inbound requests to a local URL; the broader Svix server is an open-source (MIT) webhook-sending service.},
+  url          = {https://github.com/svix/svix-webhooks/tree/main/svix-cli},
+  urldate      = {2026-06-13}
+}
+
+@misc{hookdeck,
+  author       = {{Hookdeck}},
+  title        = {Hookdeck CLI --- forward webhooks to localhost},
+  howpublished = {\url{https://github.com/hookdeck/hookdeck-cli}},
+  year         = {2026},
+  note         = {\texttt{hookdeck listen} creates a permanent public URL that tunnels events to localhost through Hookdeck's event gateway, preserving event history across sessions.},
+  url          = {https://github.com/hookdeck/hookdeck-cli},
+  urldate      = {2026-06-13}
+}
+
+@misc{hookslocalhost,
+  author       = {Loewenstein, Moritz},
+  title        = {hooks-localhost --- forward webhooks to your localhost in the browser},
+  howpublished = {\url{https://github.com/MoritzLoewenstein/hooks-localhost}},
+  year         = {2023},
+  note         = {A relay that broadcasts received webhooks over WebSocket to an open browser tab, where page JavaScript re-issues the request to localhost; relies on the local server's CORS configuration and a kept-open tab.},
+  url          = {https://github.com/MoritzLoewenstein/hooks-localhost},
+  urldate      = {2026-06-13}
+}
+
+@misc{webhookrelay,
+  author       = {{Webhook Relay}},
+  title        = {Webhook Relay --- receive webhooks on localhost},
+  howpublished = {\url{https://webhookrelay.com/}},
+  year         = {2026},
+  note         = {Commercial webhook forwarding service; an agent (CLI or container) subscribes to a hosted bucket and relays events to a local endpoint.},
+  url          = {https://webhookrelay.com/},
+  urldate      = {2026-06-13}
+}
+
+@misc{pna,
+  author       = {Rigoudy, Titouan and West, Mike},
+  title        = {Private Network Access},
+  howpublished = {Draft Community Group Report, Web Platform Incubator Community Group (WICG)},
+  year         = {2024},
+  note         = {Specifies Fetch/HTML modifications restricting requests from public contexts to private/local network endpoints; formerly CORS-RFC1918.},
+  url          = {https://wicg.github.io/private-network-access/},
+  urldate      = {2026-06-13}
+}
+
+@misc{pnapreflight,
+  author       = {Rigoudy, Titouan},
+  title        = {Private Network Access: introducing preflights},
+  howpublished = {Chrome for Developers Blog},
+  year         = {2022},
+  note         = {Chrome sends a CORS preflight (\texttt{Access-Control-Request-Private-Network: true}) ahead of public-to-private subresource requests; the target must answer with \texttt{Access-Control-Allow-Private-Network: true}.},
+  url          = {https://developer.chrome.com/blog/private-network-access-preflight},
+  urldate      = {2026-06-13}
+}
+
+@misc{durableobjects,
+  author       = {{Cloudflare}},
+  title        = {What are Durable Objects?},
+  howpublished = {Cloudflare Durable Objects documentation},
+  year         = {2026},
+  note         = {A Durable Object is a single addressable instance combining compute and storage; all requests for a given ID route to the same instance, enabling coordinated in-memory state.},
+  url          = {https://developers.cloudflare.com/durable-objects/concepts/what-are-durable-objects/},
+  urldate      = {2026-06-13}
+}
+
+@misc{mv3swlifecycle,
+  author       = {{Google Chrome}},
+  title        = {The extension service worker lifecycle},
+  howpublished = {Chrome for Developers --- Extensions documentation},
+  year         = {2026},
+  note         = {Manifest V3 background logic runs in an event-driven service worker that terminates on inactivity; event listeners reset a 30-second idle timer.},
+  url          = {https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle},
+  urldate      = {2026-06-13}
+}
+
+@misc{htmlsse,
+  author       = {{WHATWG}},
+  title        = {HTML Living Standard --- Server-Sent Events},
+  howpublished = {WHATWG HTML Standard, \S~9.2},
+  year         = {2026},
+  note         = {Defines the \texttt{text/event-stream} format and the \texttt{EventSource} interface for server-pushed events over a long-lived HTTP response.},
+  url          = {https://html.spec.whatwg.org/multipage/server-sent-events.html},
+  urldate      = {2026-06-13}
+}
+
+@misc{mdnmixedcontent,
+  author       = {{MDN Web Docs}},
+  title        = {Mixed content},
+  howpublished = {MDN Web Docs},
+  year         = {2026},
+  note         = {Browsers block or upgrade HTTP subresources requested from an HTTPS page; an HTTPS page cannot issue a plain-HTTP \texttt{fetch}.},
+  url          = {https://developer.mozilla.org/en-US/docs/Web/Security/Mixed_content},
+  urldate      = {2026-06-13}
+}
+
+@misc{stripewebhooks,
+  author       = {{Stripe}},
+  title        = {Receive Stripe events in your webhook endpoint},
+  howpublished = {Stripe API documentation},
+  year         = {2026},
+  note         = {Stripe POSTs signed event payloads to a developer-configured HTTPS endpoint; signatures are verified with a per-endpoint secret.},
+  url          = {https://docs.stripe.com/webhooks},
+  urldate      = {2026-06-13}
+}
+
+@misc{githubwebhooks,
+  author       = {{GitHub}},
+  title        = {About webhooks},
+  howpublished = {GitHub Docs},
+  year         = {2026},
+  note         = {GitHub delivers event payloads via HTTP POST to a configured URL, with HMAC signatures over the body.},
+  url          = {https://docs.github.com/en/webhooks/about-webhooks},
+  urldate      = {2026-06-13}
+}
