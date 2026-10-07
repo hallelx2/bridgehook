@@ -1,5 +1,4 @@
 import { account, session, user, verification } from "@bridgehook/shared/db/schema";
-import { neon } from "@neondatabase/serverless";
 /**
  * Better-Auth factory.
  *
@@ -25,12 +24,12 @@ import { neon } from "@neondatabase/serverless";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { magicLink } from "better-auth/plugins";
-import { drizzle } from "drizzle-orm/neon-http";
+import { drizzle } from "drizzle-orm/d1";
 import { pickMailer } from "./email.js";
 import { hashPassword, verifyPassword } from "./password.js";
 
 export interface AuthEnv {
-	DATABASE_URL: string;
+	DB: D1Database;
 	BETTER_AUTH_SECRET?: string;
 	BETTER_AUTH_URL?: string;
 	AUTH_COOKIE_DOMAIN?: string;
@@ -93,8 +92,7 @@ export function createAuth(env: AuthEnv): Auth | null {
 		return cachedAuth;
 	}
 
-	const sql = neon(env.DATABASE_URL);
-	const db = drizzle(sql, { schema: { user, session, account, verification } });
+	const db = drizzle(env.DB, { schema: { user, session, account, verification } });
 	const mailer = pickMailer(env);
 
 	const trustedOrigins = (env.AUTH_TRUSTED_ORIGINS ?? "")
@@ -125,7 +123,7 @@ export function createAuth(env: AuthEnv): Auth | null {
 		baseURL: env.BETTER_AUTH_URL,
 		basePath: "/auth",
 		database: drizzleAdapter(db, {
-			provider: "pg",
+			provider: "sqlite",
 			schema: { user, session, account, verification },
 		}),
 		// Email+password is the launch path because it works without a sending

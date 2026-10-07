@@ -118,7 +118,7 @@ export function DataFlowDiagram() {
 					{
 						step: "2",
 						from: "Relay",
-						action: "Store in Neon → Push SSE",
+						action: "Store in D1 → Push SSE",
 						to: "Browser",
 						color: "#9093ff",
 					},
@@ -220,7 +220,7 @@ export function ResponsibilityDiagram() {
 					</div>
 					<div>
 						<div className="text-xs font-black text-primary font-headline">Server-Side</div>
-						<div className="text-[9px] text-zinc-600 font-label">Relay Worker + Neon DB</div>
+						<div className="text-[9px] text-zinc-600 font-label">Relay Worker + D1</div>
 					</div>
 				</div>
 				<ul className="space-y-2">

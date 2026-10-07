@@ -1,4 +1,4 @@
-DATABASE_URL=postgresql://user:password@host/database?sslmode=require
+# No database URL: the relay uses the D1 binding in wrangler.toml (local D1 in dev).
 
 # Hosted-mode auth (leave unset for self-host mode: no auth, any dashboard origin).
 # When BETTER_AUTH_SECRET is set, the dashboard origin MUST be trusted via

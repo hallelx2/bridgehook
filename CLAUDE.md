@@ -7,7 +7,7 @@ Zero-install webhook testing tool. Browser acts as the proxy between cloud relay
 - `packages/shared/` — TypeScript types, constants, Drizzle DB schema
 - `apps/web/` — Landing page + Dashboard (React + Vite + Tailwind)
 - `apps/desktop/` — System tray app (Tauri + Rust, Phase 2)
-- `relay/` — Cloudflare Worker with Neon PostgreSQL
+- `relay/` — Cloudflare Worker with Cloudflare D1 (SQLite)
 - `docs/` — Documentation site (React + Vite + Tailwind)
 
 ## Development
@@ -27,18 +27,22 @@ pnpm dev:web    # Vite dev server on :5173
 
 ## Database
 
-Neon PostgreSQL. Schema in `packages/shared/src/db/schema.ts`. Push with:
+Cloudflare D1 (binding `DB`, database `bridgehook`). Schema in `packages/shared/src/db/schema.ts`.
 ```bash
-cd relay && DATABASE_URL="..." npx drizzle-kit push
+cd relay
+pnpm db:generate          # schema change → new SQL in relay/migrations/
+pnpm db:migrate:local     # local D1 used by wrangler dev
+pnpm db:migrate:remote    # production, BEFORE deploying code that needs it
 ```
+D1 limits that shape queries: ≤100 bound parameters per statement (use subqueries, never inline id lists), no interactive transactions (use `db.batch`).
 
 ## How It Works
 
-1. Browser creates channel (relay stores in Neon)
+1. Browser creates channel (relay stores in D1)
 2. Browser connects SSE to relay
-3. External webhook hits relay → stored in Neon → pushed via SSE to browser
+3. External webhook hits relay → stored in D1 → pushed via SSE to browser
 4. Browser JS calls fetch() to localhost → captures response → sends back to relay
-5. Relay stores response in Neon and returns to webhook sender
+5. Relay stores response in D1 and returns to webhook sender
 
 ## Key Files
 

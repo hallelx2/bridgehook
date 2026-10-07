@@ -157,7 +157,7 @@ export function VsLocaltunnel() {
 					title="Event History"
 					other="None — fire and forget"
 					otherName="localtunnel"
-					bridgehook="24h persistent history in Neon"
+					bridgehook="Persistent history in D1"
 				/>
 			</div>
 

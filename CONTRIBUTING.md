@@ -13,7 +13,7 @@ pnpm install
 ## Development
 
 ```bash
-# Run relay server (needs DATABASE_URL in relay/.dev.vars)
+# Run relay server (local D1: run `pnpm --filter @bridgehook/relay db:migrate:local` once)
 pnpm dev:relay
 
 # Run web app
@@ -30,7 +30,7 @@ pnpm --filter @bridgehook/docs dev
 | `packages/shared` | Types, constants, DB schema | TypeScript, Drizzle |
 | `apps/web` | Landing page + Dashboard | React, Vite, Tailwind |
 | `apps/desktop` | System tray app (Phase 2) | Tauri, Rust, React |
-| `relay` | Webhook relay API | Cloudflare Workers, Neon |
+| `relay` | Webhook relay API | Cloudflare Workers, D1 |
 | `docs` | Documentation site | React, Vite, Tailwind |
 
 ## Commands
@@ -49,7 +49,7 @@ Schema is in `packages/shared/src/db/schema.ts`. After modifying:
 
 ```bash
 cd relay
-DATABASE_URL="your-url" npx drizzle-kit push
+pnpm db:generate && pnpm db:migrate:local
 ```
 
 ## Pull Requests

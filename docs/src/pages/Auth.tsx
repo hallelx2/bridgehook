@@ -144,7 +144,7 @@ AUTH_TRUSTED_ORIGINS=https://app.example.com,https://relay.example.com`}</code>
 						</td>
 						<td>
 							Pin the implicit self-host user to a specific id. Lets multiple relay instances share
-							one Neon DB without conflicting on <code>self-host@local</code>.
+							one D1 database without conflicting on <code>self-host@local</code>.
 						</td>
 					</tr>
 				</tbody>

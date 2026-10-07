@@ -197,7 +197,7 @@ function BillingView() {
 			)}
 
 			<p className="text-xs text-gray-500 max-w-2xl">
-				Or self-host BridgeHook for free — clone the repo, deploy your own Cloudflare Worker + Neon
+				Or self-host BridgeHook for free — clone the repo, deploy your own Cloudflare Worker + D1
 				DB, and you own the whole stack. MIT licensed; no quotas, no gates.
 			</p>
 		</div>

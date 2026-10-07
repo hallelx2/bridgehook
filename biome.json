@@ -32,6 +32,6 @@
 		}
 	},
 	"files": {
-		"ignore": ["node_modules", "dist", "target", ".tauri"]
+		"ignore": ["node_modules", "dist", "target", ".tauri", ".wrangler", "relay/migrations/meta"]
 	}
 }

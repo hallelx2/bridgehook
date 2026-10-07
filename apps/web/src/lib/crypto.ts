@@ -3,7 +3,7 @@
  *
  * Security model:
  *   - Client generates an ECDSA P-256 keypair on channel creation.
- *   - Public key is sent to the relay (stored in Neon).
+ *   - Public key is sent to the relay (stored in D1).
  *   - Private key is re-imported as *non-extractable* and stored in IndexedDB.
  *     Once re-imported, crypto.subtle.exportKey() will throw for it — not even
  *     same-origin JavaScript can read its bytes.

@@ -7,13 +7,12 @@ import {
 	TRIAL_DAYS,
 } from "@bridgehook/shared";
 import { events, channels, user as userTable } from "@bridgehook/shared/db/schema";
-import { neon } from "@neondatabase/serverless";
 import { and, asc, desc, eq, gt, inArray, isNull, lt, or, sql } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/neon-http";
 import { Hono } from "hono";
 import { checkChannelCreate, checkDailyEventCap, loadUserAccess } from "./access.js";
 import { createAuth, getAvailableAuthProviders, getSessionUser } from "./auth.js";
 import { createPolarClient } from "./billing.js";
+import { type DB, getDb } from "./db.js";
 import { getOrCreateSelfHostUser, resolveCaller, touchDevice } from "./identity.js";
 import { originPolicy } from "./origin-policy.js";
 import { buildAuthDeviceRoutes, cleanupExpiredDeviceCodes } from "./routes/auth-device.js";
@@ -35,7 +34,8 @@ export { ChannelDO } from "./channel-do.js";
 export { UserDO } from "./user-do.js";
 
 export interface Env {
-	DATABASE_URL: string;
+	/** Cloudflare D1: users, auth, channels, events, devices, billing. */
+	DB: D1Database;
 	CHANNEL: DurableObjectNamespace;
 	/** Per-user fan-out DO; absent in self-host mode (no auth = no concept of "me"). */
 	USER: DurableObjectNamespace;
@@ -93,19 +93,6 @@ const CLAIM_STALE_MS = 60_000;
 // ── Rate limit ────────────────────────────────────────────────────────────
 const RATE_LIMIT_WINDOW_SEC = 60;
 const RATE_LIMIT_MAX_PER_IP = 10;
-
-// ── Cached DB connection ──────────────────────────────────────────────────
-type DB = ReturnType<typeof drizzle>;
-let cachedDb: DB | undefined;
-let cachedDbUrl: string | undefined;
-
-function getDb(env: Env): DB {
-	if (cachedDb && cachedDbUrl === env.DATABASE_URL) return cachedDb;
-	const sql = neon(env.DATABASE_URL);
-	cachedDb = drizzle(sql);
-	cachedDbUrl = env.DATABASE_URL;
-	return cachedDb;
-}
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 function safeJsonParse<T>(raw: string | null | undefined, fallback: T): T {
@@ -782,9 +769,9 @@ app.get("/api/channels/:channelId/events", async (c) => {
 	// the browser was closed drains this in order before going live, so
 	// nothing that arrived offline is skipped or reordered.
 	if (c.req.query("pending") === "1") {
-		// Postgres keeps microseconds, JS Dates keep milliseconds: compare and
-		// order on the millisecond value so a cursor round-trips exactly.
-		const receivedMs = sql`date_trunc('milliseconds', ${events.receivedAt})`;
+		// received_at is integer milliseconds, the same precision as the
+		// cursor, so ordering and comparison round-trip exactly.
+		const receivedMs = events.receivedAt;
 		const cursor = parsePendingCursor(c.req.query("after") ?? null);
 		const conditions = [
 			eq(events.channelId, channelId),
@@ -795,7 +782,7 @@ app.get("/api/channels/:channelId/events", async (c) => {
 			conditions.push(
 				or(
 					gt(receivedMs, cursor.receivedAt),
-					and(sql`${receivedMs} = ${cursor.receivedAt}`, gt(events.id, cursor.id)),
+					and(eq(receivedMs, cursor.receivedAt), gt(events.id, cursor.id)),
 				)!,
 			);
 		}
@@ -1079,22 +1066,17 @@ async function retentionSweep(db: DB): Promise<void> {
 		if (!Number.isFinite(retention) || retention <= 0) continue;
 		const cutoff = new Date(Date.now() - retention * 86_400_000);
 
-		// Two-step: collect channel ids owned by users on this plan, then
-		// delete events on those channels older than the cutoff. A single
-		// JOIN-DELETE would be more efficient but Drizzle's neon-http
-		// adapter doesn't expose a clean DELETE-USING shape.
-		const ownedChannelRows = await db
+		// Channels owned by users on this plan, as a subquery: D1 caps bound
+		// parameters at 100, so the id list must never be inlined.
+		const planChannels = db
 			.select({ id: channels.id })
 			.from(channels)
 			.innerJoin(userTable, eq(channels.userId, userTable.id))
 			.where(eq(userTable.plan, planId));
 
-		if (ownedChannelRows.length === 0) continue;
-		const channelIds = ownedChannelRows.map((r) => r.id);
-
 		const deleted = await db
 			.delete(events)
-			.where(and(inArray(events.channelId, channelIds), lt(events.receivedAt, cutoff)))
+			.where(and(inArray(events.channelId, planChannels), lt(events.receivedAt, cutoff)))
 			.returning({ id: events.id });
 
 		if (deleted.length > 0) {
