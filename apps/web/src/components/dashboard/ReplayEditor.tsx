@@ -101,9 +101,7 @@ export function ReplayEditor({ event, onClose, onSubmit }: ReplayEditorProps) {
 						</div>
 						<div className="font-mono text-[12px] text-on-surface">
 							<span className="text-success font-bold">{event.method}</span>{" "}
-							<span className="text-on-surface-variant">
-								{event.path.replace(/^\/hook\/[a-z0-9]+/, "") || "/"}
-							</span>
+							<span className="text-on-surface-variant">{event.path || "/"}</span>
 						</div>
 					</div>
 					<button

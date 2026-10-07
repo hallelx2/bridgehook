@@ -13,7 +13,7 @@ interface EventRowProps {
  * underneath in the parent container.
  */
 export function EventRow({ event, expanded, onToggle }: EventRowProps) {
-	const path = event.path.replace(/^\/hook\/[a-z0-9]+/, "") || "/";
+	const path = event.path || "/";
 	const status = event.responseStatus;
 	const statusColor = event.error
 		? "text-danger"

@@ -25,10 +25,10 @@
  * the SW is alive.
  */
 
-const RELAY_URL = "https://bridgehook-relay.halleluyaholudele.workers.dev";
+const RELAY_URL = "https://relay.bridgehook.dev";
 /** Events fetched per page when draining a channel's delivery queue. */
 const PENDING_PAGE_SIZE = 100;
-const WEB_URL = "https://bridgehook-web.pages.dev";
+const WEB_URL = "https://app.bridgehook.dev";
 
 // ── Storage keys ─────────────────────────────────────────────────────
 
@@ -636,7 +636,17 @@ async function disconnectDevice() {
 
 async function forwardToLocalhost(event, port, servicePath) {
 	const start = performance.now();
-	const eventPath = event.path?.replace(/^\/hook\/[a-z0-9]+/, "") || servicePath || "/";
+	// The relay stores the path localhost should receive. Only rows written
+	// before it did still carry the legacy `/hook/<thisChannelId>` prefix;
+	// strip exactly that, never a real `/hook/...` route of the user's app.
+	const legacyPrefix = event.channelId ? `/hook/${event.channelId}` : null;
+	const rawPath = event.path || "";
+	const eventPath =
+		(legacyPrefix && (rawPath === legacyPrefix || rawPath.startsWith(`${legacyPrefix}/`))
+			? rawPath.slice(legacyPrefix.length)
+			: rawPath) ||
+		servicePath ||
+		"/";
 
 	const rawHeaders =
 		typeof event.requestHeaders === "string"

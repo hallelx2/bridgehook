@@ -11,7 +11,7 @@
  *     the next refresh (heartbeat alarm or this popup opening).
  */
 
-const RELAY_URL = "https://bridgehook-relay.halleluyaholudele.workers.dev";
+const RELAY_URL = "https://relay.bridgehook.dev";
 
 const $ = (id) => document.getElementById(id);
 

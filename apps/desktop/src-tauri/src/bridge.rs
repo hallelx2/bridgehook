@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 use tauri::{Emitter, Manager};
 use tokio::sync::Mutex;
 
-const RELAY_BASE_URL: &str = "https://bridgehook-relay.halleluyaholudele.workers.dev";
+const RELAY_BASE_URL: &str = "https://relay.bridgehook.dev";
 const POLL_INTERVAL_MS: u64 = 2000;
 const ERROR_BACKOFF_MS: u64 = 10000;
 const MAX_CONSECUTIVE_ERRORS: u32 = 3;
