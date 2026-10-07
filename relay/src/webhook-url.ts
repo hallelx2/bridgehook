@@ -86,6 +86,8 @@ export const RESERVED_LABELS = new Set([
 export type TunnelHost =
 	| { kind: "channel"; channelId: string }
 	| { kind: "reserved"; label: string }
+	/** Under TUNNEL_DOMAIN but neither a channel nor a reserved label. */
+	| { kind: "zone" }
 	| { kind: "other" };
 
 /**
@@ -93,8 +95,9 @@ export type TunnelHost =
  *
  *   "34565sdfq344s.bridgehook.dev"  → channel
  *   "relay.bridgehook.dev"          → reserved (the relay itself)
- *   "bridgehook.dev", "x.y.bridgehook.dev", other domains, or no
- *   TUNNEL_DOMAIN                   → other
+ *   "foo-bar.bridgehook.dev", "x.y.bridgehook.dev"
+ *                                   → zone (in the domain, not a channel)
+ *   "bridgehook.dev", other domains, or no TUNNEL_DOMAIN → other
  *
  * Ports and a trailing dot are ignored; comparison is case-insensitive.
  */
@@ -105,9 +108,9 @@ export function classifyHost(rawHost: string | null, tunnelDomain: string | unde
 	const apex = tunnelDomain.toLowerCase().replace(/\.$/, "");
 	if (!host.endsWith(`.${apex}`)) return { kind: "other" };
 	const label = host.slice(0, -apex.length - 1);
-	if (!label || label.includes(".")) return { kind: "other" };
+	if (!label || label.includes(".")) return { kind: "zone" };
 	if (RESERVED_LABELS.has(label)) return { kind: "reserved", label };
-	if (!CHANNEL_ID_RE.test(label)) return { kind: "other" };
+	if (!CHANNEL_ID_RE.test(label)) return { kind: "zone" };
 	return { kind: "channel", channelId: label };
 }
 

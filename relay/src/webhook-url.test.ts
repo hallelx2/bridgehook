@@ -24,14 +24,23 @@ describe("classifyHost", () => {
 		}
 	});
 
-	it("ignores the apex, nested labels, other domains and lookalikes", () => {
+	it("marks in-zone hosts that are not channels as zone", () => {
+		for (const h of [
+			"a.b.bridgehook.dev",
+			"bad_label.bridgehook.dev",
+			"foo-bar.bridgehook.dev",
+			`${"a".repeat(25)}.bridgehook.dev`,
+		]) {
+			expect(classifyHost(h, D)).toEqual({ kind: "zone" });
+		}
+	});
+
+	it("ignores the apex, other domains and lookalikes", () => {
 		for (const h of [
 			"bridgehook.dev",
-			"a.b.bridgehook.dev",
 			"abc.example.com",
 			"abc.evilbridgehook.dev",
 			"abc.bridgehook.dev.evil.com",
-			"bad_label.bridgehook.dev",
 		]) {
 			expect(classifyHost(h, D)).toEqual({ kind: "other" });
 		}

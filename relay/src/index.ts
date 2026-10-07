@@ -1111,6 +1111,26 @@ async function retentionSweep(db: DB): Promise<void> {
  * response carries credentials.
  */
 async function handleChannelHost(channelId: string, request: Request, env: Env): Promise<Response> {
+	let res: Response;
+	try {
+		res = await channelHostResponse(channelId, request, env);
+	} catch (err) {
+		// Outside Hono, so app.onError never sees this; answer the same way.
+		console.error("Channel host error:", err);
+		res = jsonResponse(500, { error: "Internal Server Error" });
+	}
+	// Browser senders (the dashboard's test button, any page posting a test
+	// webhook) need to read the answer. Never with credentials.
+	const out = new Response(res.body, res);
+	out.headers.set("Access-Control-Allow-Origin", "*");
+	return out;
+}
+
+async function channelHostResponse(
+	channelId: string,
+	request: Request,
+	env: Env,
+): Promise<Response> {
 	const url = new URL(request.url);
 	const method = request.method.toUpperCase();
 	if (isWebhookMethod(method)) {
@@ -1156,9 +1176,10 @@ export default {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
 		const host = classifyHost(request.headers.get("host"), env.TUNNEL_DOMAIN);
 		if (host.kind === "channel") return handleChannelHost(host.channelId, request, env);
-		// Reserved labels other than the relay itself (www, api, …) are not
-		// served by the relay; app/docs never reach it (Pages, excluded routes).
-		if (host.kind === "reserved" && host.label !== "relay") {
+		// Only relay.<TUNNEL_DOMAIN> serves the API, auth and executor endpoints.
+		// Every other in-zone host (www, api, foo-bar, a.b, …) is a 404;
+		// app/docs never reach the Worker (Pages, script-less routes).
+		if ((host.kind === "reserved" && host.label !== "relay") || host.kind === "zone") {
 			return jsonResponse(404, { error: "Not Found" });
 		}
 		return app.fetch(request, env, ctx);
