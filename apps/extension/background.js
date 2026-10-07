@@ -28,6 +28,14 @@
 const RELAY_URL = "https://relay.bridgehook.dev";
 /** Events fetched per page when draining a channel's delivery queue. */
 const PENDING_PAGE_SIZE = 100;
+/**
+ * Longest a local handler may take before the attempt counts as failed.
+ * Generous on purpose: stepping through a handler on a breakpoint must not
+ * fail the webhook (the claim heartbeat keeps it ours meanwhile), but a
+ * handler that never answers must not hold the queue forever. Three such
+ * timeouts skip the event (see MAX_FORWARD_ATTEMPTS).
+ */
+const LOCALHOST_TIMEOUT_MS = 5 * 60 * 1000;
 const WEB_URL = "https://app.bridgehook.dev";
 
 // ── Storage keys ─────────────────────────────────────────────────────
@@ -677,7 +685,12 @@ async function forwardToLocalhost(event, port, servicePath) {
 	const url = `http://localhost:${port}${eventPath}`;
 
 	try {
-		const response = await fetch(url, { method, headers, body });
+		const response = await fetch(url, {
+			method,
+			headers,
+			body,
+			signal: AbortSignal.timeout(LOCALHOST_TIMEOUT_MS),
+		});
 		const latencyMs = Math.round(performance.now() - start);
 		const respBody = await response.text();
 		const respHeaders = {};
@@ -693,9 +706,12 @@ async function forwardToLocalhost(event, port, servicePath) {
 		};
 	} catch (err) {
 		const latencyMs = Math.round(performance.now() - start);
-		const msg = err.message?.includes("Failed to fetch")
-			? `Connection refused — is localhost:${port} running?`
-			: err.message;
+		const msg =
+			err?.name === "TimeoutError"
+				? `localhost:${port} did not respond within ${LOCALHOST_TIMEOUT_MS / 60000} minutes.`
+				: err.message?.includes("Failed to fetch")
+					? `Connection refused — is localhost:${port} running?`
+					: err.message;
 		return { status: 0, headers: {}, body: "", latencyMs, error: msg };
 	}
 }
