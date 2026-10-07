@@ -132,6 +132,13 @@ async function sha256Hex(input: string): Promise<string> {
 	return toHex(buf);
 }
 
+const utf8 = new TextEncoder();
+
+/** Encoded size in bytes; `.length` counts UTF-16 code units and undercounts. */
+function byteLength(s: string): number {
+	return utf8.encode(s).byteLength;
+}
+
 function isHex(s: string, len?: number): boolean {
 	if (len !== undefined && s.length !== len) return false;
 	return /^[0-9a-f]+$/i.test(s);
@@ -310,7 +317,7 @@ async function handleWebhookIntake(
 	const headers: Record<string, string> = {};
 	let headersBytes = 0;
 	request.headers.forEach((value, key) => {
-		headersBytes += key.length + value.length + 4;
+		headersBytes += byteLength(key) + byteLength(value) + 4;
 		headers[key] = value;
 	});
 	if (headersBytes > MAX_HEADERS_BYTES) {
@@ -318,7 +325,7 @@ async function handleWebhookIntake(
 	}
 
 	const body = await request.text();
-	if (body.length > MAX_BODY_SIZE_BYTES) {
+	if (byteLength(body) > MAX_BODY_SIZE_BYTES) {
 		return jsonResponse(413, { error: "Body too large" });
 	}
 
@@ -980,7 +987,7 @@ app.post("/hook/:channelId/response", async (c) => {
 	if (parsed.headers && typeof parsed.headers === "object" && !Array.isArray(parsed.headers)) {
 		for (const [k, v] of Object.entries(parsed.headers as Record<string, unknown>)) {
 			if (typeof v !== "string") continue;
-			respHeadersBytes += k.length + v.length + 4;
+			respHeadersBytes += byteLength(k) + byteLength(v) + 4;
 			respHeaders[k] = v;
 		}
 	}
@@ -988,7 +995,7 @@ app.post("/hook/:channelId/response", async (c) => {
 		return c.json({ error: "Headers too large" }, 431);
 	}
 	const respBody = typeof parsed.body === "string" ? parsed.body : "";
-	if (respBody.length > MAX_BODY_SIZE_BYTES) {
+	if (byteLength(respBody) > MAX_BODY_SIZE_BYTES) {
 		return c.json({ error: "Body too large" }, 413);
 	}
 	const latencyMs =
