@@ -19,8 +19,10 @@ export function ImportForm({ onImport, onCancel }: ImportFormProps) {
 
 	const handleSubmit = async (e: React.FormEvent) => {
 		e.preventDefault();
-		if (!webhookUrl.includes("/hook/")) {
-			setError("Paste webhook URL from extension");
+		if (!/^https?:\/\/[^/]+\/(hook\/)?[a-z0-9]{1,24}\/?$/.test(webhookUrl.trim())) {
+			setError(
+				"Paste the webhook URL from the extension, e.g. https://relay.bridgehook.dev/abc123",
+			);
 			return;
 		}
 		if (!name.trim()) {
@@ -67,7 +69,7 @@ export function ImportForm({ onImport, onCancel }: ImportFormProps) {
 					type="text"
 					value={webhookUrl}
 					onChange={(e) => setWebhookUrl(e.target.value)}
-					placeholder="https://…/hook/abc123"
+					placeholder="https://relay.bridgehook.dev/abc123"
 					className={`${inputCls} text-uranium`}
 				/>
 			</div>

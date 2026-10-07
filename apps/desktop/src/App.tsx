@@ -701,7 +701,7 @@ function RailButton({
 /* ─── Sidebar service row ──────────────────────────────────────────── */
 
 function webhookUrlFor(service: Service): string {
-	return `https://bridgehook-relay.halleluyaholudele.workers.dev/hook/${service.channel_id}`;
+	return `https://relay.bridgehook.dev/${service.channel_id}`;
 }
 
 function SidebarService({

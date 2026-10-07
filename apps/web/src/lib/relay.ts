@@ -304,7 +304,14 @@ export async function forwardToLocalhost(
 ): Promise<{ status: number; headers: Record<string, string>; body: string; latencyMs: number }> {
 	const start = performance.now();
 
-	const eventPath = event.path.replace(/^\/hook\/[a-z0-9]+/, "") || "/";
+	// The relay stores the path localhost should receive. Only rows written
+	// before it did still carry the legacy `/hook/<thisChannelId>` prefix;
+	// strip exactly that, never a real `/hook/...` route of the user's app.
+	const legacyPrefix = `/hook/${event.channelId}`;
+	const eventPath =
+		(event.path === legacyPrefix || event.path.startsWith(`${legacyPrefix}/`)
+			? event.path.slice(legacyPrefix.length)
+			: event.path) || "/";
 
 	const rawHeaders: Record<string, string> =
 		"requestHeaders" in event

@@ -22,7 +22,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @bridgehook/web build
         env:
-          VITE_RELAY_URL: https://bridgehook-relay.halleluyaholudele.workers.dev
+          VITE_RELAY_URL: https://relay.bridgehook.dev
       - run: npx wrangler pages deploy apps/web/dist --project-name=bridgehook-web
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}

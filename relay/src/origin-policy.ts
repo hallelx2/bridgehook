@@ -26,6 +26,7 @@
  * origin gets credentialed CORS there and the guard never fires.
  */
 import type { MiddlewareHandler } from "hono";
+import { parseChannelPath } from "./webhook-url.js";
 
 export interface OriginPolicyEnv {
 	BETTER_AUTH_SECRET?: string;
@@ -40,9 +41,9 @@ const MAX_AGE = "86400";
 const UNSAFE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 /**
- * Paths that never act on the session: public webhook intake (and its
- * ECDSA-signed claim/response siblings) and the signature-verified Polar
- * webhook. Browsers posting test webhooks from arbitrary pages must not be
+ * Paths that never act on the session: public webhook intake (`/<channelId>`
+ * and `/hook/*`, including the ECDSA-signed claim/response siblings) and the
+ * signature-verified Polar webhook. Browsers posting test webhooks from arbitrary pages must not be
  * refused just because the user also happens to hold a relay cookie.
  */
 const GUARD_EXEMPT_PREFIXES = ["/hook/", "/api/billing/webhook"];
@@ -142,6 +143,7 @@ export function checkOrigin(
 	if (trusted.any) return { ok: true };
 	if (!UNSAFE_METHODS.has(req.method.toUpperCase())) return { ok: true };
 	if (GUARD_EXEMPT_PREFIXES.some((p) => req.path.startsWith(p))) return { ok: true };
+	if (parseChannelPath(req.path)) return { ok: true };
 	if (!req.cookie || !SESSION_COOKIE_RE.test(req.cookie)) return { ok: true };
 	// Modern browsers send Origin on every cross-origin unsafe request, so a
 	// missing Origin means a non-browser client presenting its own cookie.

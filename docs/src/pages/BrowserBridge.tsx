@@ -15,7 +15,7 @@ export function BrowserBridge() {
 			</p>
 			<pre>
 				<code>{`// Same browser tab, same JavaScript:
-fetch("https://bridgehook-relay.halleluyaholudele.workers.dev/...")  // ✓ reaches the internet
+fetch("https://relay.bridgehook.dev/...")  // ✓ reaches the internet
 fetch("http://localhost:3000/...")          // ✓ reaches your machine`}</code>
 			</pre>
 

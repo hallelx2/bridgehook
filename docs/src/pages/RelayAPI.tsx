@@ -22,10 +22,10 @@ Content-Type: application/json
 
 → 201 Created
 {
-  "channelId": "ch_9x4kf2m",
+  "channelId": "2324radf23r",
   "port": 3000,
   "expiresAt": "2026-04-10T22:30:34Z",
-  "webhookUrl": "https://bridgehook-relay.halleluyaholudele.workers.dev/hook/ch_9x4kf2m"
+  "webhookUrl": "https://relay.bridgehook.dev/2324radf23r"
 }`}</code>
 			</pre>
 
@@ -35,12 +35,12 @@ Content-Type: application/json
 
 → 200 OK
 {
-  "id": "ch_9x4kf2m",
+  "id": "2324radf23r",
   "port": 3000,
   "allowedPaths": ["/webhook/stripe"],
   "createdAt": "2026-04-09T22:30:34Z",
   "expiresAt": "2026-04-10T22:30:34Z",
-  "webhookUrl": "https://bridgehook-relay.halleluyaholudele.workers.dev/hook/ch_9x4kf2m"
+  "webhookUrl": "https://relay.bridgehook.dev/2324radf23r"
 }`}</code>
 			</pre>
 
@@ -62,9 +62,9 @@ Content-Type: application/json
 [
   {
     "id": "evt_abc123",
-    "channelId": "ch_9x4kf2m",
+    "channelId": "2324radf23r",
     "method": "POST",
-    "path": "/hook/ch_9x4kf2m",
+    "path": "/webhook/stripe",
     "requestHeaders": "{\\"content-type\\":\\"application/json\\"}",
     "requestBody": "{\\"type\\":\\"checkout.session.completed\\"}",
     "responseStatus": 200,
@@ -75,17 +75,40 @@ Content-Type: application/json
 ]`}</code>
 			</pre>
 
+			<h3>Delivery Queue</h3>
+			<p>
+				Unanswered events, oldest first, paged with an opaque cursor. Executors drain this on start,
+				so webhooks that arrived while the browser was closed are delivered in order.
+			</p>
+			<pre>
+				<code>{`GET /api/channels/:channelId/events?pending=1&limit=100&after=<cursor>
+
+→ 200 OK
+{
+  "events": [ { "id": "evt_abc123", "method": "POST", "path": "/webhook/stripe", ... } ],
+  "nextCursor": "eyJ0cyI6..."   // null when the queue is drained
+}`}</code>
+			</pre>
+
 			<h2>Webhooks</h2>
 
 			<h3>Receive Webhook (external senders hit this)</h3>
+			<p>
+				The webhook URL is the relay origin plus the channel id. Anything after the id, query string
+				included, is the path your local server receives. <code>/hook/:channelId</code> still works
+				for URLs issued before this form.
+			</p>
 			<pre>
-				<code>{`POST /hook/:channelId
+				<code>{`POST https://relay.bridgehook.dev/2324radf23r/webhook/stripe
 Content-Type: application/json
 
 { "type": "checkout.session.completed", ... }
 
 → 202 Accepted
-{ "received": true, "eventId": "evt_abc123", "channelId": "ch_9x4kf2m" }`}</code>
+{ "received": true, "eventId": "evt_abc123", "channelId": "2324radf23r" }
+
+# forwarded to http://localhost:<port>/webhook/stripe
+# accepted methods: POST, PUT, PATCH, DELETE`}</code>
 			</pre>
 
 			<h3>Send Response (browser sends local response back)</h3>

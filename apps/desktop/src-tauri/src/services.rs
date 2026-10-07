@@ -5,7 +5,7 @@ use crate::state::AppState;
 use serde::Deserialize;
 use std::collections::HashMap;
 
-const RELAY_BASE_URL: &str = "https://bridgehook-relay.halleluyaholudele.workers.dev";
+const RELAY_BASE_URL: &str = "https://relay.bridgehook.dev";
 
 /// Result of creating a new channel: the relay-assigned id plus the
 /// PKCS#8-serialized private key the caller MUST persist for the bridge
