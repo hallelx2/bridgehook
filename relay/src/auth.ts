@@ -193,7 +193,13 @@ export function createAuth(env: AuthEnv): Auth | null {
 		//     wired for when AUTH_COOKIE_DOMAIN lands.
 		advanced: {
 			useSecureCookies: true,
-			defaultCookieAttributes: { sameSite: "none", secure: true },
+			// Same-site deployments (shared AUTH_COOKIE_DOMAIN) get Lax, which
+			// stops browsers attaching the cookie to third-party requests at all.
+			// Split-site deployments still need None; ./origin-policy.ts guards those.
+			defaultCookieAttributes: {
+				sameSite: env.AUTH_COOKIE_DOMAIN ? "lax" : "none",
+				secure: true,
+			},
 			...(env.AUTH_COOKIE_DOMAIN
 				? {
 						crossSubDomainCookies: {
