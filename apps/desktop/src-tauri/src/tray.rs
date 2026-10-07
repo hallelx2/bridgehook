@@ -91,7 +91,7 @@ fn handle_menu(app: &AppHandle, id: &str) {
                         .filter(|s| s.active)
                         .map(|s| {
                             format!(
-                                "{}: https://relay.bridgehook.dev/{}",
+                                "{}: https://{}.bridgehook.dev",
                                 s.name, s.channel_id
                             )
                         })

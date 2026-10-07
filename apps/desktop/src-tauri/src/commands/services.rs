@@ -270,11 +270,21 @@ pub async fn update_service(
     Ok(service)
 }
 
-/// Channel id from a webhook URL: `https://<relay>/<id>` or the legacy
-/// `https://<relay>/hook/<id>`. Mirrors `parseChannelPath` in the relay.
+/// Channel id from a webhook URL, in any form the relay has handed out:
+/// `https://<id>.bridgehook.dev[/path]` (current), `https://<relay>/<id>`, or
+/// the legacy `https://<relay>/hook/<id>`. Mirrors `classifyHost` and
+/// `parseChannelPath` in the relay.
 fn channel_id_from_webhook_url(url: &str) -> Option<String> {
     let after_scheme = url.trim().split_once("://").map(|(_, rest)| rest)?;
-    let path = after_scheme.split_once('/').map(|(_, p)| p).unwrap_or("");
+    let (host, path) = after_scheme.split_once('/').unwrap_or((after_scheme, ""));
+    let host = host.split(':').next().unwrap_or("").to_ascii_lowercase();
+
+    if let Some(label) = host.strip_suffix(".bridgehook.dev") {
+        if !label.contains('.') && is_channel_id(label) && !is_reserved_label(label) {
+            return Some(label.to_string());
+        }
+    }
+
     let path = path.split(['?', '#']).next().unwrap_or("");
     let mut segments = path.split('/').filter(|s| !s.is_empty());
     let first = segments.next()?;
@@ -282,11 +292,19 @@ fn channel_id_from_webhook_url(url: &str) -> Option<String> {
     if segments.next().is_some() {
         return None;
     }
-    let valid = !id.is_empty()
-        && id.len() <= 24
-        && id.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
-        && !matches!(id, "api" | "auth" | "hook" | "health");
+    let valid = is_channel_id(id) && !matches!(id, "api" | "auth" | "hook" | "health");
     valid.then(|| id.to_string())
+}
+
+fn is_channel_id(s: &str) -> bool {
+    !s.is_empty() && s.len() <= 24 && s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+}
+
+fn is_reserved_label(s: &str) -> bool {
+    matches!(
+        s,
+        "relay" | "app" | "docs" | "www" | "api" | "admin" | "status" | "blog" | "mail" | "support" | "help"
+    )
 }
 
 #[cfg(test)]
@@ -294,7 +312,9 @@ mod tests {
     use super::channel_id_from_webhook_url as parse;
 
     #[test]
-    fn parses_both_url_shapes() {
+    fn parses_every_url_shape() {
+        assert_eq!(parse("https://34565sdfq344s.bridgehook.dev").as_deref(), Some("34565sdfq344s"));
+        assert_eq!(parse("https://34565sdfq344s.bridgehook.dev/stripe/webhook?x=1").as_deref(), Some("34565sdfq344s"));
         assert_eq!(parse("https://relay.bridgehook.dev/2324radf23r").as_deref(), Some("2324radf23r"));
         assert_eq!(parse("https://relay.bridgehook.dev/2324radf23r/").as_deref(), Some("2324radf23r"));
         assert_eq!(parse("https://x.workers.dev/hook/abc123").as_deref(), Some("abc123"));
@@ -307,6 +327,8 @@ mod tests {
             "https://relay.bridgehook.dev/api/channels",
             "https://relay.bridgehook.dev/hook/abc/claim",
             "https://relay.bridgehook.dev/ABC",
+            "https://app.bridgehook.dev/",
+            "https://a.b.bridgehook.dev/",
             "not a url",
         ] {
             assert_eq!(parse(u), None, "{u}");

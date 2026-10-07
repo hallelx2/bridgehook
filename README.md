@@ -107,7 +107,7 @@ Paths: /webhook/stripe
 **3. Copy your webhook URL**
 
 ```
-https://relay.bridgehook.dev/2324radf23r
+https://2324radf23r.bridgehook.dev
 ```
 
 **4. Paste it into Stripe / GitHub / Twilio.** Webhooks flow to your localhost in real time.

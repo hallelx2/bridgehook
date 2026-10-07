@@ -24,9 +24,11 @@ import {
 	CHANNEL_ID_RE,
 	WEBHOOK_METHODS,
 	buildWebhookUrl,
+	classifyHost,
 	isPathAllowed,
 	isWebhookMethod,
 	parseChannelPath,
+	stripOwnCookies,
 } from "./webhook-url.js";
 
 export { ChannelDO } from "./channel-do.js";
@@ -50,6 +52,14 @@ export interface Env {
 	WEB_URL?: string;
 	/** Self-host: auto-attach all channels to this user id (or auto-created self-host user). */
 	SELF_HOST_USER_ID?: string;
+	/**
+	 * Apex for channel hosts, e.g. "bridgehook.dev": webhooks to
+	 * `<channelId>.<TUNNEL_DOMAIN>` are intake, and channel webhook URLs are
+	 * shown in that form. Needs a proxied wildcard DNS record and a Worker
+	 * route `*.<TUNNEL_DOMAIN>/*`. Unset (self-host without wildcard DNS):
+	 * URLs use the path form on the relay host.
+	 */
+	TUNNEL_DOMAIN?: string;
 	/** Polar billing — when unset, /api/me/billing/* returns 503 and webhooks 404. */
 	POLAR_ACCESS_TOKEN?: string;
 	POLAR_WEBHOOK_SECRET?: string;
@@ -74,6 +84,9 @@ const PUBLIC_KEY_HEX_LEN = 130;
 const SIGNATURE_HEX_LEN = 128;
 /** Acceptable clock skew for signed requests. */
 const SIGNATURE_MAX_SKEW_MS = 60_000;
+/** What a webhook URL says when opened in a browser. */
+const CHANNEL_URL_MESSAGE =
+	"This is a BridgeHook webhook URL. Point your provider at it; requests are queued and forwarded to your local server by the BridgeHook extension or dashboard, including any that arrive while your browser is closed.";
 /** An unanswered claim older than this can be taken over by another executor. */
 const CLAIM_STALE_MS = 60_000;
 
@@ -238,6 +251,11 @@ async function handleWebhookIntake(
 	let headersBytes = 0;
 	request.headers.forEach((value, key) => {
 		headersBytes += byteLength(key) + byteLength(value) + 4;
+		if (key === "cookie") {
+			const kept = stripOwnCookies(value);
+			if (kept) headers[key] = kept;
+			return;
+		}
 		headers[key] = value;
 	});
 	if (headersBytes > MAX_HEADERS_BYTES) {
@@ -473,6 +491,7 @@ app.route(
 				getChannelDO: (channelId: string) => getChannelDO(env, channelId),
 				notifyUser: (userId: string | null, payload: string) => notifyUserDO(env, userId, payload),
 			},
+			tunnelDomain: env.TUNNEL_DOMAIN ?? null,
 		};
 	}),
 );
@@ -679,7 +698,7 @@ app.post("/api/channels", async (c) => {
 			userId: channel.userId,
 			deviceId: channel.deviceId,
 			expiresAt: channel.expiresAt?.toISOString() ?? null,
-			webhookUrl: buildWebhookUrl(channel.id, url),
+			webhookUrl: buildWebhookUrl(channel.id, url, c.env.TUNNEL_DOMAIN),
 			authScheme: "ecdsa",
 		},
 		201,
@@ -705,7 +724,7 @@ app.get("/api/channels/:channelId", async (c) => {
 		allowedPaths: safeJsonParse<string[]>(channel.allowedPaths, []),
 		createdAt: channel.createdAt.toISOString(),
 		expiresAt: channel.expiresAt?.toISOString() ?? null,
-		webhookUrl: buildWebhookUrl(channel.id, url),
+		webhookUrl: buildWebhookUrl(channel.id, url, c.env.TUNNEL_DOMAIN),
 		authScheme: "ecdsa",
 	});
 });
@@ -1035,10 +1054,9 @@ app.all("*", async (c, next) => {
 		if (!channel) return c.json({ error: "Channel not found" }, 404);
 		return c.json({
 			channelId: channel.id,
-			webhookUrl: buildWebhookUrl(channel.id, new URL(c.req.url)),
+			webhookUrl: buildWebhookUrl(channel.id, new URL(c.req.url), c.env.TUNNEL_DOMAIN),
 			accepts: WEBHOOK_METHODS,
-			message:
-				"This is a BridgeHook webhook URL. Point your provider at it; requests are queued and forwarded to your local server by the BridgeHook extension or dashboard, including any that arrive while your browser is closed.",
+			message: CHANNEL_URL_MESSAGE,
 		});
 	}
 	return c.json({ error: "Method not allowed" }, 405, {
@@ -1087,9 +1105,62 @@ async function retentionSweep(db: DB): Promise<void> {
 	}
 }
 
+/**
+ * A request to `<channelId>.<TUNNEL_DOMAIN>`: webhook intake only. The API,
+ * auth and the executor endpoints are not reachable on channel hosts, and no
+ * response carries credentials.
+ */
+async function handleChannelHost(channelId: string, request: Request, env: Env): Promise<Response> {
+	const url = new URL(request.url);
+	const method = request.method.toUpperCase();
+	if (isWebhookMethod(method)) {
+		return handleWebhookIntake(channelId, url.pathname || "/", request, env);
+	}
+	if (method === "OPTIONS") {
+		return new Response(null, {
+			status: 204,
+			headers: {
+				"Access-Control-Allow-Origin": "*",
+				"Access-Control-Allow-Methods": [...WEBHOOK_METHODS, "OPTIONS"].join(", "),
+				"Access-Control-Allow-Headers":
+					request.headers.get("access-control-request-headers") ?? "Content-Type",
+				"Access-Control-Max-Age": "86400",
+			},
+		});
+	}
+	if (method === "GET" || method === "HEAD") {
+		const [channel] = await getDb(env)
+			.select({ id: channels.id })
+			.from(channels)
+			.where(eq(channels.id, channelId))
+			.limit(1);
+		if (!channel) return jsonResponse(404, { error: "Channel not found" });
+		return jsonResponse(200, {
+			channelId: channel.id,
+			webhookUrl: buildWebhookUrl(channel.id, url, env.TUNNEL_DOMAIN),
+			accepts: WEBHOOK_METHODS,
+			message: CHANNEL_URL_MESSAGE,
+		});
+	}
+	return new Response(JSON.stringify({ error: "Method not allowed" }), {
+		status: 405,
+		headers: {
+			"Content-Type": "application/json",
+			Allow: [...WEBHOOK_METHODS, "GET", "OPTIONS"].join(", "),
+		},
+	});
+}
+
 // ── Worker export ──
 export default {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+		const host = classifyHost(request.headers.get("host"), env.TUNNEL_DOMAIN);
+		if (host.kind === "channel") return handleChannelHost(host.channelId, request, env);
+		// Reserved labels other than the relay itself (www, api, …) are not
+		// served by the relay; app/docs never reach it (Pages, excluded routes).
+		if (host.kind === "reserved" && host.label !== "relay") {
+			return jsonResponse(404, { error: "Not Found" });
+		}
 		return app.fetch(request, env, ctx);
 	},
 	/**

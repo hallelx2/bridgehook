@@ -3,6 +3,22 @@ main = "src/index.ts"
 compatibility_date = "2025-01-01"
 compatibility_flags = ["nodejs_compat"]
 
+# ── Hosts (hosted bridgehook.dev deployment) ──────────────────────────────
+# relay.bridgehook.dev  internal API, claims, responses, live stream
+# <id>.bridgehook.dev   the webhook URL people paste (src/webhook-url.ts)
+# DNS: a proxied wildcard `*` record; relay/app/docs have their own records,
+# which take precedence. app./docs. are Pages and are kept off this Worker
+# by script-less zone routes (app.bridgehook.dev/*, docs.bridgehook.dev/*).
+# Self-hosters: replace these with your own hostnames, or drop the wildcard
+# route and TUNNEL_DOMAIN to use path URLs on the relay host.
+routes = [
+	{ pattern = "relay.bridgehook.dev", custom_domain = true },
+	{ pattern = "*.bridgehook.dev/*", zone_name = "bridgehook.dev" },
+]
+
+[vars]
+TUNNEL_DOMAIN = "bridgehook.dev"
+
 [durable_objects]
 bindings = [
   { name = "CHANNEL", class_name = "ChannelDO" },
@@ -61,7 +77,11 @@ id = "647c7df6a0e64bf3882738057ad42f38"
 #   POLAR_PRODUCT_ID_PRO   — Polar product id for the Pro tier
 #   POLAR_PRODUCT_ID_TEAM  — Polar product id for the Team tier
 #
-# Webhook URLs are `https://<relay host>/<channelId>[/path]` (src/webhook-url.ts);
-# no DNS beyond the relay's own hostname is needed.
+# TUNNEL_DOMAIN (in [vars] above) makes `<channelId>.<TUNNEL_DOMAIN>` the
+# webhook URL. Without it the relay hands out `https://<relay host>/<id>`.
+#
+# Never set AUTH_COOKIE_DOMAIN to the TUNNEL_DOMAIN apex: the session cookie
+# would then reach every channel host and could be captured in a channel
+# owner's stored headers.
 #
 # Non-secret defaults can also live under [vars] block if needed.
