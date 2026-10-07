@@ -812,46 +812,125 @@ function stopUserStream() {
 //
 // Each event is claimed before forwarding, so with several executors on one
 // channel (extension, dashboard tab, desktop app) exactly one forwards it.
-// When localhost refuses the connection the drain stops at that event and
-// retries it on the next pass: nothing later is delivered ahead of it, and
-// nothing is dropped.
+// The claim is refreshed every CLAIM_HEARTBEAT_MS while localhost works on
+// it, so a slow handler (or one paused on a breakpoint) is not handed to a
+// second executor by the relay's 60s stale-claim takeover.
+//
+// When forwarding fails the drain stops at that event, so nothing later is
+// delivered ahead of it:
+//   • localhost down (a liveness probe fails): wait and retry; outages do
+//     not count against the event, however long they last
+//   • localhost up but this event keeps failing: after MAX_FORWARD_ATTEMPTS
+//     the failure is recorded on the relay (status 0) and the drain moves on,
+//     so one payload that crashes the handler cannot hold the queue forever
+
+const MAX_FORWARD_ATTEMPTS = 3;
+const CLAIM_HEARTBEAT_MS = 20000;
+
+/** True when something is listening on localhost:<port> (any HTTP answer). */
+async function localhostReachable(port) {
+	try {
+		await fetch(`http://localhost:${port}/`, {
+			method: "HEAD",
+			signal: AbortSignal.timeout(3000),
+		});
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+function noteLocalhostDown(service, message) {
+	if (!service._localhostDown) {
+		service._localhostDown = true;
+		chrome.notifications.create({
+			type: "basic",
+			iconUrl: "icons/icon-128.png",
+			title: "BridgeHook",
+			message: `${service.name}: ${message} Webhooks are queued and will be delivered when it is back.`,
+		});
+	}
+	service.status = "error";
+	service.error = message;
+	broadcastStatus();
+}
 
 /**
  * Forward one queued event. Returns:
- *   "done"        — forwarded and answered (any HTTP status)
- *   "skipped"     — another executor owns it, or it is already handled
- *   "retry-later" — localhost unreachable; leave it queued, stop this pass
+ *   "done"        — answered (forwarded, or given up on and recorded)
+ *   "skipped"     — another executor holds it right now, or already handled
+ *   "retry-later" — leave it queued and stop this pass
  */
 async function forwardEventThroughBridge(service, evt) {
 	if (!service.active) return "skipped";
 	if (!service._handled) service._handled = new Set();
+	if (!service._attempts) service._attempts = new Map();
 	if (service._handled.has(evt.id)) return "skipped";
 
-	if (!(await claimEvent(service.channelId, evt.id))) {
-		service._handled.add(evt.id);
-		return "skipped";
+	const attempts = service._attempts.get(evt.id) ?? 0;
+	// On a retry, check the server is up before re-sending: an outage should
+	// not burn the event's attempts, and nothing should be sent into it.
+	if (attempts > 0 || service._localhostDown) {
+		if (!(await localhostReachable(service.port))) {
+			noteLocalhostDown(service, `Connection refused — is localhost:${service.port} running?`);
+			return "retry-later";
+		}
 	}
 
-	const result = await forwardToLocalhost(evt, service.port, service.path);
+	// Not added to _handled when another executor holds it: if that claim goes
+	// stale (tab closed, its forward failed) a later pass takes it over.
+	if (!(await claimEvent(service.channelId, evt.id))) return "skipped";
+
+	const heartbeat = setInterval(() => {
+		claimEvent(service.channelId, evt.id).catch(() => {});
+	}, CLAIM_HEARTBEAT_MS);
+	let result;
+	try {
+		result = await forwardToLocalhost(evt, service.port, service.path);
+	} finally {
+		clearInterval(heartbeat);
+	}
+
 	if (result.error) {
-		// Localhost down: keep the event queued (no response recorded) and
-		// tell the user once per outage rather than once per webhook.
-		if (!service._localhostDown) {
-			service._localhostDown = true;
-			chrome.notifications.create({
-				type: "basic",
-				iconUrl: "icons/icon-128.png",
-				title: "BridgeHook",
-				message: `${service.name}: ${result.error} Webhooks are queued and will be delivered when it is back.`,
-			});
+		if (!(await localhostReachable(service.port))) {
+			noteLocalhostDown(service, result.error);
+			return "retry-later";
 		}
-		service.status = "error";
-		service.error = result.error;
+		const tries = attempts + 1;
+		if (tries < MAX_FORWARD_ATTEMPTS) {
+			service._attempts.set(evt.id, tries);
+			service.status = "error";
+			service.error = `${result.error} (attempt ${tries} of ${MAX_FORWARD_ATTEMPTS})`;
+			broadcastStatus();
+			return "retry-later";
+		}
+		// Localhost is up but this event fails every time: record it and move
+		// on rather than block every newer webhook behind it.
+		service._attempts.delete(evt.id);
+		service._handled.add(evt.id);
+		service.errorCount = (service.errorCount || 0) + 1;
+		chrome.notifications.create({
+			type: "basic",
+			iconUrl: "icons/icon-128.png",
+			title: "BridgeHook",
+			message: `${service.name}: a ${evt.method || "POST"} ${evt.path || "/"} webhook failed ${MAX_FORWARD_ATTEMPTS} times while localhost:${service.port} was up; skipped it. Replay it from the dashboard.`,
+		});
+		try {
+			await sendResponseToRelay(service.channelId, evt.id, {
+				status: 0,
+				headers: {},
+				body: `BridgeHook: forwarding failed ${MAX_FORWARD_ATTEMPTS} times while localhost:${service.port} was reachable. Last error: ${result.error}`,
+				latencyMs: result.latencyMs,
+			});
+		} catch (err) {
+			console.warn(`[BridgeHook] failure upload failed for ${evt.id}:`, err);
+		}
 		broadcastStatus();
-		return "retry-later";
+		return "done";
 	}
 
 	service._localhostDown = false;
+	service._attempts.delete(evt.id);
 	service._handled.add(evt.id);
 	service.eventCount = (service.eventCount || 0) + 1;
 	if (result.status >= 400) service.errorCount = (service.errorCount || 0) + 1;
