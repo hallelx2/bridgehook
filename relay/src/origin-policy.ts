@@ -19,11 +19,16 @@
  *      browser extension, whose access is governed by its host permissions).
  *
  * Trusted origins = `AUTH_TRUSTED_ORIGINS` (comma-separated) plus the origins
- * of `WEB_URL` and `BETTER_AUTH_URL`.
+ * of `WEB_URL` and `BETTER_AUTH_URL`. An entry may use one leading wildcard
+ * label, e.g. `https://*.bridgehook-web.pages.dev` for Pages previews.
+ *
+ * Self-host mode (no `BETTER_AUTH_SECRET`) has no session to protect, so any
+ * origin gets credentialed CORS there and the guard never fires.
  */
 import type { MiddlewareHandler } from "hono";
 
 export interface OriginPolicyEnv {
+	BETTER_AUTH_SECRET?: string;
 	AUTH_TRUSTED_ORIGINS?: string;
 	WEB_URL?: string;
 	BETTER_AUTH_URL?: string;
@@ -55,19 +60,54 @@ function toOrigin(raw: string): string | null {
 	}
 }
 
-export function trustedOrigins(env: OriginPolicyEnv): Set<string> {
-	const out = new Set<string>();
+/** Exact origins plus `scheme://*.suffix` patterns; `any` trusts everything. */
+export interface TrustedOrigins {
+	any: boolean;
+	exact: Set<string>;
+	wildcards: { scheme: string; suffix: string }[];
+	has(origin: string): boolean;
+}
+
+const WILDCARD_RE = /^(https?):\/\/\*\.([a-z0-9.-]+?)\/?$/i;
+
+export function trustedOrigins(env: OriginPolicyEnv): TrustedOrigins {
+	const any = !env.BETTER_AUTH_SECRET;
+	const exact = new Set<string>();
+	const wildcards: { scheme: string; suffix: string }[] = [];
 	for (const raw of (env.AUTH_TRUSTED_ORIGINS ?? "").split(",")) {
-		if (!raw.trim()) continue;
-		const o = toOrigin(raw);
-		if (o) out.add(o);
+		const entry = raw.trim();
+		if (!entry) continue;
+		const w = entry.match(WILDCARD_RE);
+		if (w) {
+			wildcards.push({ scheme: w[1].toLowerCase(), suffix: `.${w[2].toLowerCase()}` });
+			continue;
+		}
+		const o = toOrigin(entry);
+		if (o) exact.add(o);
 	}
 	for (const raw of [env.WEB_URL, env.BETTER_AUTH_URL]) {
 		if (!raw) continue;
 		const o = toOrigin(raw);
-		if (o) out.add(o);
+		if (o) exact.add(o);
 	}
-	return out;
+	return {
+		any,
+		exact,
+		wildcards,
+		has(origin: string): boolean {
+			if (exact.has(origin)) return true;
+			const o = toOrigin(origin);
+			if (!o || o !== origin) return false;
+			const u = new URL(o);
+			const scheme = u.protocol.slice(0, -1);
+			return wildcards.some((w) => {
+				if (w.scheme !== scheme || !u.hostname.endsWith(w.suffix)) return false;
+				// Exactly one extra label: `*.x.dev` matches `a.x.dev`, not `a.b.x.dev`.
+				const label = u.hostname.slice(0, -w.suffix.length);
+				return label.length > 0 && !label.includes(".");
+			});
+		},
+	};
 }
 
 export function isExtensionOrigin(origin: string): boolean {
@@ -75,8 +115,11 @@ export function isExtensionOrigin(origin: string): boolean {
 }
 
 /** Headers for a response to `origin`; `null` origin means non-browser caller. */
-export function corsHeaders(origin: string | null, trusted: Set<string>): Record<string, string> {
-	if (origin && trusted.has(origin)) {
+export function corsHeaders(
+	origin: string | null,
+	trusted: TrustedOrigins,
+): Record<string, string> {
+	if (origin && (trusted.any || trusted.has(origin))) {
 		return {
 			"Access-Control-Allow-Origin": origin,
 			"Access-Control-Allow-Credentials": "true",
@@ -94,8 +137,9 @@ export type GuardVerdict = { ok: true } | { ok: false; reason: string };
  */
 export function checkOrigin(
 	req: { method: string; path: string; origin: string | null; cookie: string | null },
-	trusted: Set<string>,
+	trusted: TrustedOrigins,
 ): GuardVerdict {
+	if (trusted.any) return { ok: true };
 	if (!UNSAFE_METHODS.has(req.method.toUpperCase())) return { ok: true };
 	if (GUARD_EXEMPT_PREFIXES.some((p) => req.path.startsWith(p))) return { ok: true };
 	if (!req.cookie || !SESSION_COOKIE_RE.test(req.cookie)) return { ok: true };

@@ -42,7 +42,12 @@ id = "647c7df6a0e64bf3882738057ad42f38"
 #
 # Optional:
 #   AUTH_COOKIE_DOMAIN   — e.g. ".bridgehook.dev" for cross-subdomain cookies
-#   AUTH_TRUSTED_ORIGINS — comma-separated allowlist for Better-Auth CSRF
+#   AUTH_TRUSTED_ORIGINS — comma-separated dashboard origins. Used for Better-Auth
+#                          CSRF and for credentialed CORS (src/origin-policy.ts):
+#                          in hosted mode, only these + WEB_URL + BETTER_AUTH_URL
+#                          origins may call the relay with the session cookie.
+#                          One leading wildcard label is allowed, e.g.
+#                          https://*.bridgehook-web.pages.dev for Pages previews.
 #   WEB_URL              — base URL of the dashboard (e.g. https://app.bridgehook.dev),
 #                          used to build the verificationUrl during device pairing
 #   RESEND_API_KEY       — magic-link delivery (falls back to console mailer)

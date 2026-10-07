@@ -9,7 +9,9 @@ import {
 } from "./origin-policy.js";
 
 const ENV: OriginPolicyEnv = {
-	AUTH_TRUSTED_ORIGINS: "https://bridgehook-web.pages.dev, https://app.bridgehook.dev/ ,junk",
+	BETTER_AUTH_SECRET: "test-secret",
+	AUTH_TRUSTED_ORIGINS:
+		"https://bridgehook-web.pages.dev, https://app.bridgehook.dev/ ,junk, https://*.bridgehook-web.pages.dev",
 	WEB_URL: "https://bridgehook-web.pages.dev/dashboard",
 	BETTER_AUTH_URL: "https://relay.bridgehook.dev",
 };
@@ -19,15 +21,45 @@ const SESSION = "__Secure-better-auth.session_token=abc.def; theme=dark";
 
 describe("trustedOrigins", () => {
 	it("normalises the env list and WEB_URL/BETTER_AUTH_URL to origins, dropping junk", () => {
-		expect([...trustedOrigins(ENV)].sort()).toEqual([
+		expect([...trustedOrigins(ENV).exact].sort()).toEqual([
 			"https://app.bridgehook.dev",
 			"https://bridgehook-web.pages.dev",
 			"https://relay.bridgehook.dev",
 		]);
 	});
 
-	it("is empty when nothing is configured", () => {
-		expect(trustedOrigins({}).size).toBe(0);
+	it("trusts nothing extra in hosted mode with no origins configured", () => {
+		const t = trustedOrigins({ BETTER_AUTH_SECRET: "s" });
+		expect(t.any).toBe(false);
+		expect(t.has("http://localhost:5173")).toBe(false);
+	});
+
+	it("matches exactly one wildcard label, same scheme only", () => {
+		const t = trustedOrigins(ENV);
+		expect(t.has("https://abc123.bridgehook-web.pages.dev")).toBe(true);
+		expect(t.has("https://a.b.bridgehook-web.pages.dev")).toBe(false);
+		expect(t.has("http://abc123.bridgehook-web.pages.dev")).toBe(false);
+		expect(t.has("https://evilbridgehook-web.pages.dev")).toBe(false);
+		expect(t.has("https://abc123.bridgehook-web.pages.dev.evil.example")).toBe(false);
+	});
+});
+
+describe("self-host mode (no BETTER_AUTH_SECRET)", () => {
+	const t = trustedOrigins({});
+
+	it("gives any dashboard origin credentialed CORS, as before", () => {
+		expect(corsHeaders("http://localhost:5173", t)).toMatchObject({
+			"Access-Control-Allow-Origin": "http://localhost:5173",
+			"Access-Control-Allow-Credentials": "true",
+		});
+	});
+
+	it("never fires the guard: there is no session to protect", () => {
+		const verdict = checkOrigin(
+			{ method: "POST", path: "/api/channels", origin: EVIL, cookie: SESSION },
+			t,
+		);
+		expect(verdict.ok).toBe(true);
 	});
 });
 

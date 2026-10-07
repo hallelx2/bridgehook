@@ -1,1 +1,9 @@
 DATABASE_URL=postgresql://user:password@host/database?sslmode=require
+
+# Hosted-mode auth (leave unset for self-host mode: no auth, any dashboard origin).
+# When BETTER_AUTH_SECRET is set, the dashboard origin MUST be trusted via
+# WEB_URL or AUTH_TRUSTED_ORIGINS, or its credentialed requests are refused.
+# BETTER_AUTH_SECRET=
+# BETTER_AUTH_URL=http://localhost:8787
+# WEB_URL=http://localhost:5173
+# AUTH_TRUSTED_ORIGINS=http://localhost:5173
