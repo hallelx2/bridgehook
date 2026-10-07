@@ -1,5 +1,21 @@
 import { useId, useState } from "react";
 
+/** Mirrors RESERVED_LABELS in relay/src/webhook-url.ts. */
+const RESERVED_LABELS = new Set([
+	"relay",
+	"app",
+	"docs",
+	"www",
+	"api",
+	"admin",
+	"status",
+	"blog",
+	"mail",
+	"support",
+	"help",
+	"cf-bounce",
+]);
+
 interface ImportFormProps {
 	onImport: (webhookUrl: string, name: string, port: number, path: string) => Promise<void>;
 	onCancel: () => void;
@@ -20,10 +36,10 @@ export function ImportForm({ onImport, onCancel }: ImportFormProps) {
 	const handleSubmit = async (e: React.FormEvent) => {
 		e.preventDefault();
 		const trimmed = webhookUrl.trim();
-		if (
-			!/^https:\/\/[a-z0-9]{1,24}\.bridgehook\.dev(\/.*)?$/i.test(trimmed) &&
-			!/^https?:\/\/[^/]+\/(hook\/)?[a-z0-9]{1,24}\/?$/.test(trimmed)
-		) {
+		const label = /^https:\/\/([a-z0-9]{1,24})\.bridgehook\.dev(\/.*)?$/i.exec(trimmed)?.[1];
+		// First-party hosts (relay., app., docs., …) are never channel URLs.
+		const isChannelHost = label !== undefined && !RESERVED_LABELS.has(label.toLowerCase());
+		if (!isChannelHost && !/^https?:\/\/[^/]+\/(hook\/)?[a-z0-9]{1,24}\/?$/.test(trimmed)) {
 			setError("Paste the webhook URL from the extension, e.g. https://abc123.bridgehook.dev");
 			return;
 		}
