@@ -9,21 +9,7 @@ import { TRIAL_DAYS } from "@bridgehook/shared";
  * stay in src/index.ts since they have a different auth model entirely.
  */
 import { events, channels, devices, user } from "@bridgehook/shared/db/schema";
-import {
-	and,
-	count,
-	desc,
-	eq,
-	gt,
-	gte,
-	inArray,
-	isNull,
-	like,
-	lt,
-	lte,
-	or,
-	sql,
-} from "drizzle-orm";
+import { and, count, desc, eq, gt, gte, inArray, isNull, lt, lte, or, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { checkReplay, finiteOrNull, loadDailyEventCount, loadUserAccess } from "../access.js";
 import { type Auth, getSessionUser } from "../auth.js";
@@ -389,11 +375,14 @@ export function buildMeRoutes(getDeps: (c: { env: unknown }) => MeEnv | null) {
 			if (cond) conditions.push(cond);
 		}
 
-		// Filter: q (path substring)
+		// Filter: q (path substring). SQLite only honours a backslash escape
+		// with an explicit ESCAPE clause; without it `stripe_webhook` would
+		// search for a literal backslash. SQLite's LIKE ignores ASCII case,
+		// which suits a path search box.
 		const q = url.searchParams.get("q");
 		if (q && q.trim().length > 0) {
-			const pattern = `%${q.trim().replace(/[%_]/g, (s) => `\\${s}`)}%`;
-			conditions.push(like(events.path, pattern));
+			const pattern = `%${q.trim().replace(/[%_\\]/g, (s) => `\\${s}`)}%`;
+			conditions.push(sql`${events.path} LIKE ${pattern} ESCAPE '\\'`);
 		}
 
 		// Filter: time range

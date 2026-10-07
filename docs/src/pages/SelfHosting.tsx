@@ -75,6 +75,13 @@ pnpm db:migrate:remote   # your Cloudflare D1, before deploying`}</code>
 				commits; already-applied migrations are skipped.
 			</p>
 
+			<p>
+				<strong>Upgrading a relay that ran on Neon/Postgres?</strong> Export your data with{" "}
+				<code>DATABASE_URL=… python3 relay/scripts/neon-to-d1.py out.sql</code>, apply the schema
+				with <code>pnpm db:migrate:remote</code>, then load it with{" "}
+				<code>npx wrangler d1 execute bridgehook --remote --file out.sql</code> before deploying.
+			</p>
+
 			<h3>4. Configure the relay</h3>
 			<p>
 				Create <code>relay/.dev.vars</code>:
