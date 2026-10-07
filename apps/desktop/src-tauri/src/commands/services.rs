@@ -279,9 +279,12 @@ fn channel_id_from_webhook_url(url: &str) -> Option<String> {
     let (host, path) = after_scheme.split_once('/').unwrap_or((after_scheme, ""));
     let host = host.split(':').next().unwrap_or("").to_ascii_lowercase();
 
+    // On bridgehook.dev only a channel host or the relay host carries a
+    // channel: app., docs. and other first-party hosts never do.
     if let Some(label) = host.strip_suffix(".bridgehook.dev") {
-        if !label.contains('.') && is_channel_id(label) && !is_reserved_label(label) {
-            return Some(label.to_string());
+        if label != "relay" {
+            let ok = !label.contains('.') && is_channel_id(label) && !is_reserved_label(label);
+            return ok.then(|| label.to_string());
         }
     }
 
@@ -328,6 +331,8 @@ mod tests {
             "https://relay.bridgehook.dev/hook/abc/claim",
             "https://relay.bridgehook.dev/ABC",
             "https://app.bridgehook.dev/",
+            "https://app.bridgehook.dev/hook/abc123",
+            "https://docs.bridgehook.dev/abc123",
             "https://a.b.bridgehook.dev/",
             "not a url",
         ] {

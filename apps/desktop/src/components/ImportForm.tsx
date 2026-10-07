@@ -16,6 +16,33 @@ const RESERVED_LABELS = new Set([
 	"cf-bounce",
 ]);
 
+const CHANNEL_ID = /^[a-z0-9]{1,24}$/;
+const PATH_FORM = /^\/(hook\/)?[a-z0-9]{1,24}\/?$/;
+
+/**
+ * A URL the relay hands out for a channel:
+ *   https://<id>.bridgehook.dev[/path]    channel host (current)
+ *   https://relay.bridgehook.dev/<id>     path form on the relay host
+ *   https://<other host>/[hook/]<id>      path form on a self-hosted relay
+ * Other bridgehook.dev hosts (app., docs., …) never carry either form.
+ */
+function isWebhookUrl(raw: string): boolean {
+	let u: URL;
+	try {
+		u = new URL(raw);
+	} catch {
+		return false;
+	}
+	if (u.protocol !== "https:" && u.protocol !== "http:") return false;
+	const host = u.hostname.toLowerCase();
+	if (host.endsWith(".bridgehook.dev")) {
+		const label = host.slice(0, -".bridgehook.dev".length);
+		if (label === "relay") return PATH_FORM.test(u.pathname);
+		return u.protocol === "https:" && CHANNEL_ID.test(label) && !RESERVED_LABELS.has(label);
+	}
+	return PATH_FORM.test(u.pathname);
+}
+
 interface ImportFormProps {
 	onImport: (webhookUrl: string, name: string, port: number, path: string) => Promise<void>;
 	onCancel: () => void;
@@ -35,11 +62,7 @@ export function ImportForm({ onImport, onCancel }: ImportFormProps) {
 
 	const handleSubmit = async (e: React.FormEvent) => {
 		e.preventDefault();
-		const trimmed = webhookUrl.trim();
-		const label = /^https:\/\/([a-z0-9]{1,24})\.bridgehook\.dev(\/.*)?$/i.exec(trimmed)?.[1];
-		// First-party hosts (relay., app., docs., …) are never channel URLs.
-		const isChannelHost = label !== undefined && !RESERVED_LABELS.has(label.toLowerCase());
-		if (!isChannelHost && !/^https?:\/\/[^/]+\/(hook\/)?[a-z0-9]{1,24}\/?$/.test(trimmed)) {
+		if (!isWebhookUrl(webhookUrl.trim())) {
 			setError("Paste the webhook URL from the extension, e.g. https://abc123.bridgehook.dev");
 			return;
 		}
