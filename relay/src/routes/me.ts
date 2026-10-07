@@ -58,6 +58,8 @@ export interface MeEnv {
 	auth: Auth;
 	db: DB;
 	notifier: ChannelNotifier;
+	/** Apex for channel-host webhook URLs; null shows the path form. */
+	tunnelDomain: string | null;
 }
 
 /**
@@ -185,7 +187,7 @@ export function buildMeRoutes(getDeps: (c: { env: unknown }) => MeEnv | null) {
 				allowedPaths: safeJsonArray(r.allowedPaths),
 				createdAt: r.createdAt.toISOString(),
 				expiresAt: r.expiresAt?.toISOString() ?? null,
-				webhookUrl: buildWebhookUrl(r.id, url),
+				webhookUrl: buildWebhookUrl(r.id, url, deps.tunnelDomain),
 				device: r.deviceId ? { id: r.deviceId, label: r.deviceLabel, kind: r.deviceKind } : null,
 				stats: {
 					count24h: stat?.count24h ?? 0,

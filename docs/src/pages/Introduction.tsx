@@ -81,7 +81,7 @@ export function Introduction() {
 					{
 						title: "Copy your webhook URL",
 						desc: "Get a unique URL. Paste it into Stripe, GitHub, or any provider.",
-						code: "relay.bridgehook.dev/2324radf23r",
+						code: "2324radf23r.bridgehook.dev",
 						color: "#FF5C26",
 					},
 					{

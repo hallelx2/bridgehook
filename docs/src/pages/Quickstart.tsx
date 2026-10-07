@@ -28,7 +28,7 @@ export function Quickstart() {
 					{
 						title: "Copy Your Webhook URL",
 						desc: "Paste this URL into your webhook provider's dashboard (Stripe, GitHub, Twilio, etc.).",
-						code: "relay.bridgehook.dev/2324radf23r",
+						code: "2324radf23r.bridgehook.dev",
 						color: "#fcd34d",
 					},
 					{
@@ -49,7 +49,7 @@ export function Quickstart() {
 			<h2>Testing Manually</h2>
 			<p>You can test your setup without a webhook provider using cURL:</p>
 			<pre>
-				<code>{`curl -X POST https://relay.bridgehook.dev/2324radf23r \\
+				<code>{`curl -X POST https://2324radf23r.bridgehook.dev \\
   -H "Content-Type: application/json" \\
   -d '{"test": true, "event": "checkout.session.completed"}'`}</code>
 			</pre>

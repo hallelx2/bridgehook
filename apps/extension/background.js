@@ -26,6 +26,12 @@
  */
 
 const RELAY_URL = "https://relay.bridgehook.dev";
+/**
+ * Apex for channel webhook URLs (`https://<channelId>.bridgehook.dev`). The
+ * relay host above is internal plumbing and is never shown as a webhook URL.
+ */
+const WEBHOOK_DOMAIN = "bridgehook.dev";
+const channelWebhookUrl = (channelId) => `https://${channelId}.${WEBHOOK_DOMAIN}`;
 /** Events fetched per page when draining a channel's delivery queue. */
 const PENDING_PAGE_SIZE = 100;
 /**
@@ -1082,6 +1088,7 @@ async function addService(name, port, path) {
 		port,
 		path,
 		channelId: created.channelId,
+		webhookUrl: created.webhookUrl || channelWebhookUrl(created.channelId),
 		active: true,
 		createdAt: new Date().toISOString(),
 		status: "disconnected",
@@ -1094,7 +1101,7 @@ async function addService(name, port, path) {
 	await saveServices(services);
 	activeBridges.set(service.id, service);
 	startBridge(service);
-	return { service, webhookUrl: created.webhookUrl || `${RELAY_URL}/${created.channelId}` };
+	return { service, webhookUrl: service.webhookUrl };
 }
 
 async function removeService(serviceId) {
@@ -1136,7 +1143,12 @@ function serializeService(s) {
 		error: s.error,
 		eventCount: s.eventCount || 0,
 		errorCount: s.errorCount || 0,
-		webhookUrl: `${RELAY_URL}/${s.channelId}`,
+		// Services stored before the URL was kept, or that saved a relay-host
+		// URL, show the channel host.
+		webhookUrl:
+			s.webhookUrl && !s.webhookUrl.startsWith(RELAY_URL)
+				? s.webhookUrl
+				: channelWebhookUrl(s.channelId),
 	};
 }
 

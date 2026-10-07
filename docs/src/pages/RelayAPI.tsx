@@ -25,7 +25,7 @@ Content-Type: application/json
   "channelId": "2324radf23r",
   "port": 3000,
   "expiresAt": "2026-04-10T22:30:34Z",
-  "webhookUrl": "https://relay.bridgehook.dev/2324radf23r"
+  "webhookUrl": "https://2324radf23r.bridgehook.dev"
 }`}</code>
 			</pre>
 
@@ -40,7 +40,7 @@ Content-Type: application/json
   "allowedPaths": ["/webhook/stripe"],
   "createdAt": "2026-04-09T22:30:34Z",
   "expiresAt": "2026-04-10T22:30:34Z",
-  "webhookUrl": "https://relay.bridgehook.dev/2324radf23r"
+  "webhookUrl": "https://2324radf23r.bridgehook.dev"
 }`}</code>
 			</pre>
 
@@ -94,12 +94,13 @@ Content-Type: application/json
 
 			<h3>Receive Webhook (external senders hit this)</h3>
 			<p>
-				The webhook URL is the relay origin plus the channel id. Anything after the id, query string
-				included, is the path your local server receives. <code>/hook/:channelId</code> still works
-				for URLs issued before this form.
+				Every channel has its own host, <code>&lt;channelId&gt;.bridgehook.dev</code>. The path and
+				query string are exactly what your local server receives. The relay host also accepts{" "}
+				<code>/&lt;channelId&gt;[/path]</code> and <code>/hook/:channelId</code>, for URLs issued
+				before channel hosts and for self-hosted relays without wildcard DNS.
 			</p>
 			<pre>
-				<code>{`POST https://relay.bridgehook.dev/2324radf23r/webhook/stripe
+				<code>{`POST https://2324radf23r.bridgehook.dev/webhook/stripe
 Content-Type: application/json
 
 { "type": "checkout.session.completed", ... }
