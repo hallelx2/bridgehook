@@ -137,16 +137,9 @@ pub async fn import_from_extension(
     port: u16,
     path: String,
 ) -> Result<Service, String> {
-    // Extract channel ID from URL like: https://relay.../hook/f1586acae33f
-    let channel_id = webhook_url
-        .split("/hook/")
-        .nth(1)
-        .map(|s| s.trim_end_matches('/').to_string())
-        .ok_or_else(|| "Invalid webhook URL — expected .../hook/<channelId>".to_string())?;
-
-    if channel_id.is_empty() || !channel_id.chars().all(|c| c.is_ascii_alphanumeric()) {
-        return Err("Invalid channel ID in URL".to_string());
-    }
+    let channel_id = channel_id_from_webhook_url(&webhook_url).ok_or_else(|| {
+        "Invalid webhook URL — expected https://relay.bridgehook.dev/<channelId>".to_string()
+    })?;
 
     // Imported from extension: we don't have the extension's private key, so
     // this service has no signing credential. The bridge will fail-fast with
@@ -275,4 +268,48 @@ pub async fn update_service(
     }
     tray::refresh_tray(&app_handle).await;
     Ok(service)
+}
+
+/// Channel id from a webhook URL: `https://<relay>/<id>` or the legacy
+/// `https://<relay>/hook/<id>`. Mirrors `parseChannelPath` in the relay.
+fn channel_id_from_webhook_url(url: &str) -> Option<String> {
+    let after_scheme = url.trim().split_once("://").map(|(_, rest)| rest)?;
+    let path = after_scheme.split_once('/').map(|(_, p)| p).unwrap_or("");
+    let path = path.split(['?', '#']).next().unwrap_or("");
+    let mut segments = path.split('/').filter(|s| !s.is_empty());
+    let first = segments.next()?;
+    let id = if first == "hook" { segments.next()? } else { first };
+    if segments.next().is_some() {
+        return None;
+    }
+    let valid = !id.is_empty()
+        && id.len() <= 24
+        && id.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+        && !matches!(id, "api" | "auth" | "hook" | "health");
+    valid.then(|| id.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::channel_id_from_webhook_url as parse;
+
+    #[test]
+    fn parses_both_url_shapes() {
+        assert_eq!(parse("https://relay.bridgehook.dev/2324radf23r").as_deref(), Some("2324radf23r"));
+        assert_eq!(parse("https://relay.bridgehook.dev/2324radf23r/").as_deref(), Some("2324radf23r"));
+        assert_eq!(parse("https://x.workers.dev/hook/abc123").as_deref(), Some("abc123"));
+    }
+
+    #[test]
+    fn rejects_non_channel_urls() {
+        for u in [
+            "https://relay.bridgehook.dev/",
+            "https://relay.bridgehook.dev/api/channels",
+            "https://relay.bridgehook.dev/hook/abc/claim",
+            "https://relay.bridgehook.dev/ABC",
+            "not a url",
+        ] {
+            assert_eq!(parse(u), None, "{u}");
+        }
+    }
 }

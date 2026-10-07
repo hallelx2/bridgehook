@@ -111,7 +111,7 @@ export function DataFlowDiagram() {
 					{
 						step: "1",
 						from: "Stripe",
-						action: "POST /hook/ch_9x4kf2m",
+						action: "POST /2324radf23r",
 						to: "Relay",
 						color: "#ffb0cd",
 					},

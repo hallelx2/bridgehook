@@ -28,6 +28,8 @@ import type { drizzle } from "drizzle-orm/neon-http";
 import { Hono } from "hono";
 import { checkReplay, finiteOrNull, loadDailyEventCount, loadUserAccess } from "../access.js";
 import { type Auth, getSessionUser } from "../auth.js";
+import { resolveCaller } from "../identity.js";
+import { buildWebhookUrl } from "../webhook-url.js";
 
 type DB = ReturnType<typeof drizzle>;
 
@@ -56,26 +58,17 @@ export interface MeEnv {
 	auth: Auth;
 	db: DB;
 	notifier: ChannelNotifier;
-	/**
-	 * Apex domain for wildcard webhook URLs. When set, the listed
-	 * `webhookUrl` reads as `https://<channelId>.<tunnelDomain>` so the
-	 * dashboard surfaces the canonical "no path needed" URL instead of the
-	 * legacy `/hook/<id>` one. `null` falls back to the path-based form.
-	 */
-	tunnelDomain: string | null;
 }
 
 /**
- * Build a channel's canonical webhook URL — subdomain shape when
- * tunnelDomain is set and the relay was reached over HTTPS, legacy path
- * shape otherwise. Mirrors `buildWebhookUrl` in src/index.ts so dashboard
- * and channel-create responses agree.
+ * Caller for read endpoints: a device token (`Authorization: Bearer dvc_…`)
+ * or the session cookie. A paired extension has to work with no dashboard
+ * session at all, and it reads identity, plan, usage and its channels here.
+ * Mutations (channel edits, key rotation, replays, deletes) stay session-only.
  */
-function buildWebhookUrl(channelId: string, requestUrl: URL, tunnelDomain: string | null): string {
-	if (tunnelDomain && requestUrl.protocol === "https:") {
-		return `https://${channelId}.${tunnelDomain}`;
-	}
-	return `${requestUrl.origin}/hook/${channelId}`;
+async function resolveReader(deps: MeEnv, request: Request): Promise<{ id: string } | null> {
+	const caller = await resolveCaller(deps.auth, deps.db, request);
+	return caller ? { id: caller.userId } : null;
 }
 
 export function buildMeRoutes(getDeps: (c: { env: unknown }) => MeEnv | null) {
@@ -86,7 +79,7 @@ export function buildMeRoutes(getDeps: (c: { env: unknown }) => MeEnv | null) {
 		const deps = getDeps(c);
 		if (!deps) return c.json({ error: "Auth not configured" }, 404);
 
-		const sessionUser = await getSessionUser(deps.auth, c.req.raw);
+		const sessionUser = await resolveReader(deps, c.req.raw);
 		if (!sessionUser) return c.json({ error: "Not signed in" }, 401);
 
 		const [u] = await deps.db
@@ -141,7 +134,7 @@ export function buildMeRoutes(getDeps: (c: { env: unknown }) => MeEnv | null) {
 		const deps = getDeps(c);
 		if (!deps) return c.json({ error: "Auth not configured" }, 404);
 
-		const sessionUser = await getSessionUser(deps.auth, c.req.raw);
+		const sessionUser = await resolveReader(deps, c.req.raw);
 		if (!sessionUser) return c.json({ error: "Not signed in" }, 401);
 
 		const url = new URL(c.req.url);
@@ -192,7 +185,7 @@ export function buildMeRoutes(getDeps: (c: { env: unknown }) => MeEnv | null) {
 				allowedPaths: safeJsonArray(r.allowedPaths),
 				createdAt: r.createdAt.toISOString(),
 				expiresAt: r.expiresAt?.toISOString() ?? null,
-				webhookUrl: buildWebhookUrl(r.id, url, deps.tunnelDomain),
+				webhookUrl: buildWebhookUrl(r.id, url),
 				device: r.deviceId ? { id: r.deviceId, label: r.deviceLabel, kind: r.deviceKind } : null,
 				stats: {
 					count24h: stat?.count24h ?? 0,
@@ -344,7 +337,7 @@ export function buildMeRoutes(getDeps: (c: { env: unknown }) => MeEnv | null) {
 		const deps = getDeps(c);
 		if (!deps) return c.json({ error: "Auth not configured" }, 404);
 
-		const sessionUser = await getSessionUser(deps.auth, c.req.raw);
+		const sessionUser = await resolveReader(deps, c.req.raw);
 		if (!sessionUser) return c.json({ error: "Not signed in" }, 401);
 
 		const url = new URL(c.req.url);
@@ -468,7 +461,7 @@ export function buildMeRoutes(getDeps: (c: { env: unknown }) => MeEnv | null) {
 		const deps = getDeps(c);
 		if (!deps) return c.json({ error: "Auth not configured" }, 404);
 
-		const sessionUser = await getSessionUser(deps.auth, c.req.raw);
+		const sessionUser = await resolveReader(deps, c.req.raw);
 		if (!sessionUser) return c.json({ error: "Not signed in" }, 401);
 
 		const eventId = c.req.param("eventId");

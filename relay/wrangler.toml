@@ -61,28 +61,7 @@ id = "647c7df6a0e64bf3882738057ad42f38"
 #   POLAR_PRODUCT_ID_PRO   — Polar product id for the Pro tier
 #   POLAR_PRODUCT_ID_TEAM  — Polar product id for the Team tier
 #
-# Wildcard webhook intake (Phase 2):
-#   TUNNEL_DOMAIN          — apex domain, e.g. "bridgehook.dev". When set,
-#                            POST/PUT/PATCH on <channelId>.<TUNNEL_DOMAIN>/* lands
-#                            directly in the webhook receiver. GET on the same
-#                            host returns 405 (no website hosting).
-#                            DNS: A record on `*.bridgehook.dev` → 192.0.2.0
-#                            with the orange-cloud proxy on, plus a Worker route
-#                            `*.bridgehook.dev/*`. Reserved subdomains
-#                            (relay, app, www, docs, api) are excluded.
+# Webhook URLs are `https://<relay host>/<channelId>[/path]` (src/webhook-url.ts);
+# no DNS beyond the relay's own hostname is needed.
 #
 # Non-secret defaults can also live under [vars] block if needed.
-
-# [vars]
-# TUNNEL_DOMAIN — re-enable once you own bridgehook.dev and have set up
-# Phase 1 DNS (wildcard A record on *.bridgehook.dev → orange-cloud proxy
-# + Worker route `*.bridgehook.dev/*`). With it set, buildWebhookUrl()
-# emits `https://<channelId>.<TUNNEL_DOMAIN>` as the webhook URL surfaced
-# to users; with it unset the relay falls back to the legacy
-# `${origin}/hook/<id>` form on whatever host the relay is reached at —
-# which works today because the worker is live at
-# bridgehook-relay.halleluyaholudele.workers.dev.
-#
-# When ready to flip on:
-#   [vars]
-#   TUNNEL_DOMAIN = "bridgehook.dev"

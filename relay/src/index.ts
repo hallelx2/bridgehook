@@ -8,7 +8,7 @@ import {
 } from "@bridgehook/shared";
 import { events, channels, user as userTable } from "@bridgehook/shared/db/schema";
 import { neon } from "@neondatabase/serverless";
-import { and, desc, eq, inArray, isNull, lt } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/neon-http";
 import { Hono } from "hono";
 import { checkChannelCreate, checkDailyEventCap, loadUserAccess } from "./access.js";
@@ -20,6 +20,14 @@ import { buildAuthDeviceRoutes, cleanupExpiredDeviceCodes } from "./routes/auth-
 import { buildBillingRoutes } from "./routes/billing.js";
 import { buildMeDevicesRoutes } from "./routes/me-devices.js";
 import { buildMeRoutes } from "./routes/me.js";
+import {
+	CHANNEL_ID_RE,
+	WEBHOOK_METHODS,
+	buildWebhookUrl,
+	isPathAllowed,
+	isWebhookMethod,
+	parseChannelPath,
+} from "./webhook-url.js";
 
 export { ChannelDO } from "./channel-do.js";
 export { UserDO } from "./user-do.js";
@@ -48,14 +56,6 @@ export interface Env {
 	POLAR_PRODUCT_ID_HOBBY?: string;
 	POLAR_PRODUCT_ID_PRO?: string;
 	POLAR_PRODUCT_ID_TEAM?: string;
-	/**
-	 * Apex domain for wildcard webhook intake (e.g. "bridgehook.dev").
-	 * When set, requests to `<channelId>.<TUNNEL_DOMAIN>` route directly to the
-	 * webhook receiver — no `/hook/<id>` prefix needed. When unset, only the
-	 * legacy path-based `/hook/:channelId` route accepts webhooks (preserves
-	 * dev/self-host without DNS).
-	 */
-	TUNNEL_DOMAIN?: string;
 }
 
 // ── Version ───────────────────────────────────────────────────────────────
@@ -74,6 +74,8 @@ const PUBLIC_KEY_HEX_LEN = 130;
 const SIGNATURE_HEX_LEN = 128;
 /** Acceptable clock skew for signed requests. */
 const SIGNATURE_MAX_SKEW_MS = 60_000;
+/** An unanswered claim older than this can be taken over by another executor. */
+const CLAIM_STALE_MS = 60_000;
 
 // ── Rate limit ────────────────────────────────────────────────────────────
 const RATE_LIMIT_WINDOW_SEC = 60;
@@ -149,92 +151,6 @@ function getChannelDO(env: Env, channelId: string) {
 	return env.CHANNEL.get(id);
 }
 
-/**
- * Subdomains that resolve under TUNNEL_DOMAIN but are NOT channel ids — they
- * point at first-party properties (relay API, dashboard, docs site, etc.).
- * Anything else under the apex is treated as a tunnel host.
- */
-const RESERVED_TUNNEL_SUBDOMAINS = new Set([
-	"relay",
-	"app",
-	"www",
-	"docs",
-	"api",
-	"admin",
-	"status",
-	"blog",
-	"mail",
-	"support",
-]);
-
-/** Channel id format: lowercase alphanumeric, 1–24 chars (matches CHANNEL_ID_LEN). */
-const CHANNEL_ID_RE = /^[a-z0-9]{1,24}$/;
-
-/**
- * Extract the channel id from a wildcard tunnel host, or `null` when the
- * request's Host header doesn't look like one.
- *
- *   "ch_abc123.bridgehook.dev"  →  "ch_abc123"
- *   "relay.bridgehook.dev"      →  null  (reserved)
- *   "bridgehook.dev"            →  null  (apex, no subdomain)
- *   "ch_abc.example.com"        →  null  (different domain)
- *   anything when TUNNEL_DOMAIN is unset → null  (feature off)
- *
- * Trailing dots are tolerated; ports are stripped; comparison is case-insensitive.
- */
-function parseTunnelHost(rawHost: string | null, tunnelDomain: string | undefined): string | null {
-	if (!rawHost || !tunnelDomain) return null;
-	let hostname = rawHost.split(":")[0].toLowerCase();
-	if (hostname.endsWith(".")) hostname = hostname.slice(0, -1);
-	const apex = tunnelDomain.toLowerCase();
-	if (!hostname.endsWith(`.${apex}`)) return null;
-	const sub = hostname.slice(0, -apex.length - 1);
-	// Single-label subdomain only — `foo.bar.bridgehook.dev` falls through.
-	if (sub.length === 0 || sub.includes(".")) return null;
-	if (RESERVED_TUNNEL_SUBDOMAINS.has(sub)) return null;
-	if (!CHANNEL_ID_RE.test(sub)) return null;
-	return sub;
-}
-
-/**
- * Canonical webhook URL for a channel. Subdomain shape when TUNNEL_DOMAIN is
- * set; legacy `${origin}/hook/<id>` otherwise so dev / self-host without DNS
- * keeps working.
- *
- * The protocol mirrors whatever the relay was reached over, which is correct
- * for both prod (https) and dev (http://localhost:8787 → http://<id>.localhost
- * is unusable, so dev defaults to the legacy path even with TUNNEL_DOMAIN set).
- */
-function buildWebhookUrl(
-	channelId: string,
-	requestUrl: URL,
-	tunnelDomain: string | undefined,
-): string {
-	if (tunnelDomain && requestUrl.protocol === "https:") {
-		return `https://${channelId}.${tunnelDomain}`;
-	}
-	return `${requestUrl.origin}/hook/${channelId}`;
-}
-
-/**
- * Normalize an incoming request path so `events.path` always reads as the
- * post-prefix path the user's webhook source actually targeted.
- *
- *   path-based ("/hook/ch_abc/foo")        → "/foo"
- *   subdomain  ("/foo")                    → "/foo"
- *   bare prefix ("/hook/ch_abc")           → "/"
- *
- * Pre-launch this is a behavior change for any historical events with the
- * full prefix in their path column; the dashboard just renders the stored
- * value so old rows render with the legacy prefix and new rows without.
- */
-function stripHookPrefix(requestPath: string, channelId: string): string {
-	const prefix = `/hook/${channelId}`;
-	if (requestPath === prefix) return "/";
-	if (requestPath.startsWith(`${prefix}/`)) return requestPath.slice(prefix.length);
-	return requestPath;
-}
-
 function getUserDO(env: Env, userId: string) {
 	const id = env.USER.idFromName(userId);
 	return env.USER.get(id);
@@ -261,18 +177,19 @@ function jsonResponse(status: number, body: unknown): Response {
 
 /**
  * Webhook intake — the single canonical path for accepting an inbound webhook,
- * shared by the legacy `/hook/:channelId` route and the wildcard subdomain
- * dispatcher. Validates, persists the event row, fans out via both the
+ * shared by `/<channelId>[/path]` and the `/hook/<channelId>` alias (see
+ * ./webhook-url.ts). Validates, persists the event row, fans out via both the
  * channel DO (per-channel SSE) and the user DO (cross-channel dashboard), and
  * returns 202 immediately. Never awaits localhost — the executor's response
  * lands later via `POST /hook/:channelId/response` and updates the row
  * out-of-band.
  *
- * `events.path` is stored post-prefix so the dashboard renders consistently
- * regardless of whether the producer hit the wildcard or legacy URL.
+ * `events.path` is stored post-prefix (plus any query string) so it reads as
+ * the path localhost receives, whichever URL form the producer used.
  */
 async function handleWebhookIntake(
 	channelId: string,
+	forwardPath: string,
 	request: Request,
 	env: Env,
 ): Promise<Response> {
@@ -290,10 +207,13 @@ async function handleWebhookIntake(
 	if (!channel) return jsonResponse(404, { error: "Channel not found" });
 
 	const url = new URL(request.url);
-	const cleanPath = stripHookPrefix(url.pathname, channelId);
+	// The query string travels with the path so providers that sign or route
+	// on it (`?token=…`) reach localhost intact. Allow-list matching is on the
+	// path alone.
+	const cleanPath = `${forwardPath}${url.search}`;
 
 	const allowedPaths = safeJsonParse<string[]>(channel.allowedPaths, []);
-	if (!isPathAllowed(cleanPath, allowedPaths)) {
+	if (!isPathAllowed(forwardPath, allowedPaths)) {
 		return jsonResponse(403, { error: "Path not allowed for this channel" });
 	}
 
@@ -378,14 +298,26 @@ function validateAllowedPaths(input: unknown): string[] | null {
 	return out;
 }
 
-/**
- * Match the request path against the channel's allowedPaths whitelist.
- * Caller is responsible for passing the cleaned (post-prefix) path — see
- * {@link stripHookPrefix}.
- */
-function isPathAllowed(requestPath: string, allowedPaths: string[]): boolean {
-	if (allowedPaths.length === 0) return true;
-	return allowedPaths.some((p) => requestPath === p || requestPath.startsWith(`${p}/`));
+interface PendingCursor {
+	receivedAt: Date;
+	id: string;
+}
+
+function parsePendingCursor(raw: string | null): PendingCursor | null {
+	if (!raw) return null;
+	try {
+		const json = JSON.parse(atob(raw)) as { ts?: unknown; id?: unknown };
+		if (typeof json.ts !== "string" || typeof json.id !== "string") return null;
+		if (!/^[a-z0-9]{1,32}$/.test(json.id)) return null;
+		const d = new Date(json.ts);
+		return Number.isNaN(d.getTime()) ? null : { receivedAt: d, id: json.id };
+	} catch {
+		return null;
+	}
+}
+
+function buildPendingCursor(receivedAt: Date, id: string): string {
+	return btoa(JSON.stringify({ ts: receivedAt.toISOString(), id }));
 }
 
 function parseLimit(raw: string | null): number {
@@ -541,13 +473,12 @@ app.route(
 				getChannelDO: (channelId: string) => getChannelDO(env, channelId),
 				notifyUser: (userId: string | null, payload: string) => notifyUserDO(env, userId, payload),
 			},
-			tunnelDomain: env.TUNNEL_DOMAIN ?? null,
 		};
 	}),
 );
 
 // ── /api/me/stream (cross-channel SSE) ─────────────────────────────────
-// Long-lived session-authed SSE. Pushes every webhook / response / claim
+// Long-lived SSE, authed by session or device token. Pushes every webhook / response / claim
 // event for any channel owned by the current user. Heartbeats every 20s
 // inside the UserDO so intermediaries don't kill the connection.
 //
@@ -557,10 +488,12 @@ app.get("/api/me/stream", async (c) => {
 	const auth = createAuth(c.env);
 	if (!auth) return c.json({ error: "Auth not configured" }, 404);
 
-	const sessionUser = await getSessionUser(auth, c.req.raw);
-	if (!sessionUser) return c.json({ error: "Not signed in" }, 401);
+	// Session or device token: a paired extension streams with no dashboard
+	// session.
+	const caller = await resolveCaller(auth, getDb(c.env), c.req.raw);
+	if (!caller) return c.json({ error: "Not signed in" }, 401);
 
-	const stub = getUserDO(c.env, sessionUser.id);
+	const stub = getUserDO(c.env, caller.userId);
 	// Forward the request to the DO, preserving the abort signal so the
 	// DO's `request.signal.addEventListener("abort", ...)` cleanup fires
 	// when the client disconnects.
@@ -746,7 +679,7 @@ app.post("/api/channels", async (c) => {
 			userId: channel.userId,
 			deviceId: channel.deviceId,
 			expiresAt: channel.expiresAt?.toISOString() ?? null,
-			webhookUrl: buildWebhookUrl(channel.id, url, c.env.TUNNEL_DOMAIN),
+			webhookUrl: buildWebhookUrl(channel.id, url),
 			authScheme: "ecdsa",
 		},
 		201,
@@ -772,7 +705,7 @@ app.get("/api/channels/:channelId", async (c) => {
 		allowedPaths: safeJsonParse<string[]>(channel.allowedPaths, []),
 		createdAt: channel.createdAt.toISOString(),
 		expiresAt: channel.expiresAt?.toISOString() ?? null,
-		webhookUrl: buildWebhookUrl(channel.id, url, c.env.TUNNEL_DOMAIN),
+		webhookUrl: buildWebhookUrl(channel.id, url),
 		authScheme: "ecdsa",
 	});
 });
@@ -824,6 +757,44 @@ app.get("/api/channels/:channelId/events", async (c) => {
 	if (!verified.ok) return c.json({ error: verified.error }, verified.status as 401 | 500);
 
 	const limit = parseLimit(c.req.query("limit") ?? null);
+
+	// `?pending=1` is the delivery queue: events no executor has answered yet,
+	// oldest first, paged by an opaque cursor. An executor that starts after
+	// the browser was closed drains this in order before going live, so
+	// nothing that arrived offline is skipped or reordered.
+	if (c.req.query("pending") === "1") {
+		// Postgres keeps microseconds, JS Dates keep milliseconds: compare and
+		// order on the millisecond value so a cursor round-trips exactly.
+		const receivedMs = sql`date_trunc('milliseconds', ${events.receivedAt})`;
+		const cursor = parsePendingCursor(c.req.query("after") ?? null);
+		const conditions = [
+			eq(events.channelId, channelId),
+			isNull(events.responseStatus),
+			isNull(events.error),
+		];
+		if (cursor) {
+			conditions.push(
+				or(
+					gt(receivedMs, cursor.receivedAt),
+					and(sql`${receivedMs} = ${cursor.receivedAt}`, gt(events.id, cursor.id)),
+				)!,
+			);
+		}
+		const rows = await db
+			.select()
+			.from(events)
+			.where(and(...conditions))
+			.orderBy(asc(receivedMs), asc(events.id))
+			.limit(limit + 1);
+		const hasMore = rows.length > limit;
+		const page = hasMore ? rows.slice(0, limit) : rows;
+		const last = page[page.length - 1];
+		return c.json({
+			events: page,
+			nextCursor: hasMore && last ? buildPendingCursor(last.receivedAt, last.id) : null,
+		});
+	}
+
 	const rows = await db
 		.select()
 		.from(events)
@@ -834,12 +805,11 @@ app.get("/api/channels/:channelId/events", async (c) => {
 	return c.json(rows);
 });
 
-// ── Receive webhook (public, path-based — back-compat) ──
-// Subdomain intake (`<channelId>.<TUNNEL_DOMAIN>`) is wired in the worker
-// entry below; both paths funnel through {@link handleWebhookIntake} so the
-// behavior stays identical.
-app.on(["POST", "PUT", "PATCH"], "/hook/:channelId", async (c) => {
-	return handleWebhookIntake(c.req.param("channelId"), c.req.raw, c.env);
+// ── Receive webhook: `/hook/<channelId>` alias (back-compat) ──
+// The canonical `/<channelId>[/path]` form is registered last, after every
+// first-party route, so it can never shadow one. See ./webhook-url.ts.
+app.on([...WEBHOOK_METHODS], "/hook/:channelId", async (c) => {
+	return handleWebhookIntake(c.req.param("channelId"), "/", c.req.raw, c.env);
 });
 
 // ── Claim event for executor (auth) ──
@@ -884,10 +854,14 @@ app.post("/hook/:channelId/claim", async (c) => {
 	const eventId = parsed.eventId;
 	const clientId = parsed.clientId;
 
-	// Atomic claim: only the row whose claimed_by_device_id is still NULL
-	// flips. Composite WHERE also pins to this channel so a poisoned eventId
-	// from one channel can't claim another's event.
+	// Atomic claim: the row flips when nobody holds it, when the caller already
+	// holds it, or when the holder claimed it more than CLAIM_STALE_MS ago and
+	// never answered (a tab closed
+	// or a browser quit mid-forward). Without that expiry such an event would
+	// sit in the queue forever. Composite WHERE also pins to this channel so a
+	// poisoned eventId from one channel can't claim another's event.
 	const claimedAt = new Date();
+	const staleBefore = new Date(claimedAt.getTime() - CLAIM_STALE_MS);
 	const claimed = await db
 		.update(events)
 		.set({ claimedByDeviceId: clientId, claimedAt })
@@ -895,7 +869,14 @@ app.post("/hook/:channelId/claim", async (c) => {
 			and(
 				eq(events.id, eventId),
 				eq(events.channelId, channelId),
-				isNull(events.claimedByDeviceId),
+				isNull(events.responseStatus),
+				or(
+					isNull(events.claimedByDeviceId),
+					// Re-claim by the holder refreshes the timestamp, so an executor
+					// retrying while localhost is down keeps its claim alive.
+					eq(events.claimedByDeviceId, clientId),
+					lt(events.claimedAt, staleBefore),
+				),
 			),
 		)
 		.returning({ id: events.id });
@@ -1034,6 +1015,37 @@ app.post("/hook/:channelId/response", async (c) => {
 	return c.json({ ok: true });
 });
 
+// ── Receive webhook: canonical `/<channelId>[/path]` ──
+// Registered after every first-party route. Anything after the id is the
+// path forwarded to localhost. GET answers with a short description so a
+// URL pasted into a browser explains itself instead of 404ing.
+app.all("*", async (c, next) => {
+	const parsed = parseChannelPath(c.req.path);
+	if (!parsed) return next();
+	if (isWebhookMethod(c.req.method)) {
+		return handleWebhookIntake(parsed.channelId, parsed.forwardPath, c.req.raw, c.env);
+	}
+	if (c.req.method === "GET" || c.req.method === "HEAD") {
+		const db = getDb(c.env);
+		const [channel] = await db
+			.select({ id: channels.id })
+			.from(channels)
+			.where(eq(channels.id, parsed.channelId))
+			.limit(1);
+		if (!channel) return c.json({ error: "Channel not found" }, 404);
+		return c.json({
+			channelId: channel.id,
+			webhookUrl: buildWebhookUrl(channel.id, new URL(c.req.url)),
+			accepts: WEBHOOK_METHODS,
+			message:
+				"This is a BridgeHook webhook URL. Point your provider at it; requests are queued and forwarded to your local server by the BridgeHook extension or dashboard, including any that arrive while your browser is closed.",
+		});
+	}
+	return c.json({ error: "Method not allowed" }, 405, {
+		Allow: [...WEBHOOK_METHODS, "GET"].join(", "),
+	});
+});
+
 // ── Catch-all 404 ──
 app.notFound((c) => c.json({ error: "Not Found" }, 404));
 
@@ -1076,44 +1088,8 @@ async function retentionSweep(db: DB): Promise<void> {
 }
 
 // ── Worker export ──
-//
-// The fetch entry runs *before* Hono. Two shapes of request reach the worker:
-//
-//   1. Wildcard tunnel host (`<channelId>.<TUNNEL_DOMAIN>`):
-//        • POST/PUT/PATCH → straight into {@link handleWebhookIntake}
-//        • OPTIONS         → CORS-friendly 204 (preflight succeeds, no body)
-//        • Anything else   → 405 with an Allow header (the "no website hosting"
-//                            edge guard from Phase 2 of the hardening plan).
-//      Hono is bypassed entirely for these so we don't accidentally pick up
-//      `/auth/**`, `/api/**`, etc. on a host that's supposed to be webhook-only.
-//
-//   2. First-party host (relay.<apex>, app.<apex>, localhost during dev, …):
-//        • Falls through to `app.fetch` — the Hono app handles everything.
 export default {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-		const tunnelChannelId = parseTunnelHost(request.headers.get("host"), env.TUNNEL_DOMAIN);
-		if (tunnelChannelId !== null) {
-			const method = request.method.toUpperCase();
-			if (method === "POST" || method === "PUT" || method === "PATCH") {
-				return handleWebhookIntake(tunnelChannelId, request, env);
-			}
-			if (method === "OPTIONS") {
-				return new Response(null, {
-					status: 204,
-					headers: {
-						"Access-Control-Allow-Origin": request.headers.get("origin") ?? "*",
-						"Access-Control-Allow-Methods": "POST, PUT, PATCH, OPTIONS",
-						"Access-Control-Allow-Headers":
-							request.headers.get("access-control-request-headers") ?? "Content-Type",
-						"Access-Control-Max-Age": "86400",
-					},
-				});
-			}
-			return new Response("Method Not Allowed", {
-				status: 405,
-				headers: { Allow: "POST, PUT, PATCH, OPTIONS" },
-			});
-		}
 		return app.fetch(request, env, ctx);
 	},
 	/**

@@ -133,6 +133,10 @@ describe("checkOrigin", () => {
 		expect(checkOrigin(req({ path: "/hook/abc123" }), t).ok).toBe(true);
 		expect(checkOrigin(req({ path: "/hook/abc123/response" }), t).ok).toBe(true);
 		expect(checkOrigin(req({ path: "/api/billing/webhook" }), t).ok).toBe(true);
+		expect(checkOrigin(req({ path: "/2324radf23r" }), t).ok).toBe(true);
+		expect(checkOrigin(req({ path: "/2324radf23r/stripe/webhook" }), t).ok).toBe(true);
+		// A reserved first segment is not a channel and stays guarded.
+		expect(checkOrigin(req({ path: "/api/channels" }), t).ok).toBe(false);
 	});
 });
 

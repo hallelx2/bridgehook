@@ -21,7 +21,7 @@ export function SSEEvents() {
   "id": "evt_abc123",
   "channelId": "ch_9x4kf2m",
   "method": "POST",
-  "path": "/hook/ch_9x4kf2m",
+  "path": "/webhook/stripe",
   "headers": {
     "content-type": "application/json",
     "stripe-signature": "t=1234..."
