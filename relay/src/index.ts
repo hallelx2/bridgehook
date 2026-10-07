@@ -11,11 +11,11 @@ import { neon } from "@neondatabase/serverless";
 import { and, desc, eq, inArray, isNull, lt } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/neon-http";
 import { Hono } from "hono";
-import { cors } from "hono/cors";
 import { checkChannelCreate, checkDailyEventCap, loadUserAccess } from "./access.js";
 import { createAuth, getAvailableAuthProviders, getSessionUser } from "./auth.js";
 import { createPolarClient } from "./billing.js";
 import { getOrCreateSelfHostUser, resolveCaller, touchDevice } from "./identity.js";
+import { originPolicy } from "./origin-policy.js";
 import { buildAuthDeviceRoutes, cleanupExpiredDeviceCodes } from "./routes/auth-device.js";
 import { buildBillingRoutes } from "./routes/billing.js";
 import { buildMeDevicesRoutes } from "./routes/me-devices.js";
@@ -130,6 +130,13 @@ function fromHex(hex: string): Uint8Array<ArrayBuffer> {
 async function sha256Hex(input: string): Promise<string> {
 	const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input));
 	return toHex(buf);
+}
+
+const utf8 = new TextEncoder();
+
+/** Encoded size in bytes; `.length` counts UTF-16 code units and undercounts. */
+function byteLength(s: string): number {
+	return utf8.encode(s).byteLength;
 }
 
 function isHex(s: string, len?: number): boolean {
@@ -310,7 +317,7 @@ async function handleWebhookIntake(
 	const headers: Record<string, string> = {};
 	let headersBytes = 0;
 	request.headers.forEach((value, key) => {
-		headersBytes += key.length + value.length + 4;
+		headersBytes += byteLength(key) + byteLength(value) + 4;
 		headers[key] = value;
 	});
 	if (headersBytes > MAX_HEADERS_BYTES) {
@@ -318,7 +325,7 @@ async function handleWebhookIntake(
 	}
 
 	const body = await request.text();
-	if (body.length > MAX_BODY_SIZE_BYTES) {
+	if (byteLength(body) > MAX_BODY_SIZE_BYTES) {
 		return jsonResponse(413, { error: "Body too large" });
 	}
 
@@ -488,22 +495,9 @@ async function verifyEcdsa(
 type AppEnv = { Bindings: Env };
 const app = new Hono<AppEnv>();
 
-/**
- * CORS with credentials. When the request carries an Origin header, echo it
- * back specifically (NOT `*`) and set Allow-Credentials so the browser sends
- * the Better-Auth session cookie. This is required for cross-subdomain
- * relay/<→/app calls; same-origin still works.
- */
-app.use(
-	"*",
-	cors({
-		origin: (origin) => origin ?? "*",
-		allowMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-		allowHeaders: ["Content-Type", "Authorization", "X-BH-Timestamp", "X-BH-Signature"],
-		maxAge: 86400,
-		credentials: true,
-	}),
-);
+// Cross-origin policy: credentialed CORS only for trusted origins, and
+// session-cookie mutations refused from anywhere else. See ./origin-policy.ts.
+app.use("*", originPolicy());
 
 app.onError((err, c) => {
 	console.error("Relay error:", err);
@@ -988,17 +982,30 @@ app.post("/hook/:channelId/response", async (c) => {
 		return c.json({ error: "Invalid status" }, 400);
 	}
 
-	const respHeaders =
-		parsed.headers && typeof parsed.headers === "object" && !Array.isArray(parsed.headers)
-			? (parsed.headers as Record<string, string>)
-			: {};
+	const respHeaders: Record<string, string> = {};
+	let respHeadersBytes = 0;
+	if (parsed.headers && typeof parsed.headers === "object" && !Array.isArray(parsed.headers)) {
+		for (const [k, v] of Object.entries(parsed.headers as Record<string, unknown>)) {
+			if (typeof v !== "string") continue;
+			respHeadersBytes += byteLength(k) + byteLength(v) + 4;
+			respHeaders[k] = v;
+		}
+	}
+	if (respHeadersBytes > MAX_HEADERS_BYTES) {
+		return c.json({ error: "Headers too large" }, 431);
+	}
 	const respBody = typeof parsed.body === "string" ? parsed.body : "";
+	if (byteLength(respBody) > MAX_BODY_SIZE_BYTES) {
+		return c.json({ error: "Body too large" }, 413);
+	}
 	const latencyMs =
 		typeof parsed.latencyMs === "number" && Number.isFinite(parsed.latencyMs)
 			? Math.max(0, Math.round(parsed.latencyMs))
 			: 0;
 
-	await db
+	// Pin to this channel: the signature proves control of the channel in the
+	// URL, not of an arbitrary event id.
+	const updated = await db
 		.update(events)
 		.set({
 			responseStatus: parsed.status,
@@ -1006,7 +1013,9 @@ app.post("/hook/:channelId/response", async (c) => {
 			responseBody: respBody,
 			latencyMs,
 		})
-		.where(eq(events.id, parsed.eventId));
+		.where(and(eq(events.id, parsed.eventId), eq(events.channelId, channelId)))
+		.returning({ id: events.id });
+	if (updated.length === 0) return c.json({ error: "Event not found" }, 404);
 
 	const responsePayload = JSON.stringify({
 		type: "response",
