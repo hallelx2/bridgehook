@@ -129,7 +129,7 @@ THE INTERNET                           YOUR MACHINE
 │         ▼                │   SSE    │  │  2. fetch() localhost  │  │
 │  Cloudflare Worker  ─────────────────┤  │  3. POST response back │  │
 │  + Durable Object        │          │  └─────────┬──────────────┘  │
-│  + Neon PostgreSQL       │          │            ▼                 │
+│  + D1 (SQLite)           │          │            ▼                 │
 └──────────────────────────┘          │     localhost:3000           │
                                       └──────────────────────────────┘
 ```
@@ -197,7 +197,7 @@ The relay protocol — channel create, SSE stream, event claim, signed response,
 
 ## Observability
 
-BridgeHook isn't only a tunnel — it's a **webhook observability layer**. Every event is captured in Neon PostgreSQL with full request/response detail, then surfaced in the dashboard:
+BridgeHook isn't only a tunnel — it's a **webhook observability layer**. Every event is captured in Cloudflare D1 with full request/response detail, then surfaced in the dashboard:
 
 - **Live event feed** — every webhook with method, path, time, status, latency
 - **Filter bar** — by query, status class (2xx/4xx/5xx/pending), and method
@@ -221,14 +221,14 @@ bridgehook/
 ├── packages/shared/      Shared types, constants, Drizzle DB schema
 ├── apps/web/             Landing page + Dashboard (React + Vite + Tailwind)
 ├── apps/desktop/         System tray app (Tauri + Rust, Phase 2)
-├── relay/                Cloudflare Worker + Durable Objects + Neon PostgreSQL
+├── relay/                Cloudflare Worker + Durable Objects + D1
 └── docs/                 Documentation site (React + Vite)
 ```
 
 | Component   | Technology                                    | Free Tier      |
 | ----------- | --------------------------------------------- | -------------- |
 | Relay       | Cloudflare Workers + Durable Objects          | 100K req/day   |
-| Database    | Neon PostgreSQL + Drizzle                     | 0.5 GB         |
+| Database    | Cloudflare D1 + Drizzle                       | 5 GB           |
 | Web app     | Cloudflare Pages                              | Unlimited      |
 | Docs site   | Cloudflare Pages                              | Unlimited      |
 | Desktop     | Tauri v2 (Phase 2)                            | N/A            |
@@ -246,12 +246,11 @@ git clone https://github.com/hallelx2/bridgehook
 cd bridgehook
 pnpm install
 
-# Database
-neon projects create --name bridgehook
-cd relay && DATABASE_URL="your-neon-url" npx drizzle-kit push
+# Database (Cloudflare D1): put the printed database_id in relay/wrangler.toml
+cd relay && npx wrangler d1 create bridgehook
+pnpm db:migrate:local && cd ..
 
 # Configure
-echo 'DATABASE_URL=your-neon-url' > relay/.dev.vars
 echo 'VITE_RELAY_URL=http://localhost:8787' > apps/web/.env
 
 # Run
@@ -322,5 +321,5 @@ MIT — see [LICENSE](LICENSE). Use it, fork it, ship it. If you build something
 ---
 
 <p align="center">
-  <sub>Built on Cloudflare Workers, Durable Objects, Neon PostgreSQL, React, Vite, Tauri, and the W3C secure-contexts spec.</sub>
+  <sub>Built on Cloudflare Workers, Durable Objects, D1, React, Vite, Tauri, and the W3C secure-contexts spec.</sub>
 </p>

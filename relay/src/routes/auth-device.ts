@@ -17,15 +17,13 @@
  */
 import { deviceCodes, devices } from "@bridgehook/shared/db/schema";
 import { and, eq, isNull, lt, sql } from "drizzle-orm";
-import type { drizzle } from "drizzle-orm/neon-http";
 import { Hono } from "hono";
 import { customAlphabet } from "nanoid";
 import { checkDevicePair, loadUserAccess } from "../access.js";
 import { type Auth, getSessionUser } from "../auth.js";
+import type { DB } from "../db.js";
 import { newDeviceId, newDeviceToken } from "../identity.js";
 import { addMinutes } from "../time.js";
-
-type DB = ReturnType<typeof drizzle>;
 
 const DEVICE_CODE_TTL_MIN = 15;
 const DEVICE_CODE_POLL_SEC = 5;

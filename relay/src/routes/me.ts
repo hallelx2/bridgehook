@@ -9,33 +9,19 @@ import { TRIAL_DAYS } from "@bridgehook/shared";
  * stay in src/index.ts since they have a different auth model entirely.
  */
 import { events, channels, devices, user } from "@bridgehook/shared/db/schema";
-import {
-	and,
-	count,
-	desc,
-	eq,
-	gt,
-	gte,
-	inArray,
-	isNull,
-	like,
-	lt,
-	lte,
-	or,
-	sql,
-} from "drizzle-orm";
-import type { drizzle } from "drizzle-orm/neon-http";
+import { and, count, desc, eq, gt, gte, inArray, isNull, lt, lte, or, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { checkReplay, finiteOrNull, loadDailyEventCount, loadUserAccess } from "../access.js";
 import { type Auth, getSessionUser } from "../auth.js";
+import type { DB } from "../db.js";
 import { resolveCaller } from "../identity.js";
 import { buildWebhookUrl } from "../webhook-url.js";
-
-type DB = ReturnType<typeof drizzle>;
 
 const PUBLIC_KEY_HEX_LEN = 130;
 const HEX_RE = /^[0-9a-f]+$/i;
 const MAX_FEED_LIMIT = 100;
+/** Per-filter list cap; keeps every query well under D1's 100 bound parameters. */
+const MAX_FILTER_IDS = 20;
 const DEFAULT_FEED_LIMIT = 50;
 const EVENT_ID_LEN = 16;
 const MAX_REPLAY_BODY_BYTES = 1_048_576; // 1 MB
@@ -163,18 +149,22 @@ export function buildMeRoutes(getDeps: (c: { env: unknown }) => MeEnv | null) {
 		// 24h event count + last-event lookup per channel. One round-trip,
 		// grouped server-side.
 		const since = new Date(Date.now() - ONE_DAY_MS);
-		const channelIds = rows.map((r) => r.id);
+		// Owned channels as a subquery (D1 caps bound parameters at 100).
+		const owned = deps.db
+			.select({ id: channels.id })
+			.from(channels)
+			.where(eq(channels.userId, sessionUser.id));
 		const eventStats =
-			channelIds.length === 0
+			rows.length === 0
 				? []
 				: await deps.db
 						.select({
 							channelId: events.channelId,
 							count24h: count(),
-							lastEventAt: sql<Date | null>`MAX(${events.receivedAt})`,
+							lastEventAt: sql<number | null>`MAX(${events.receivedAt})`,
 						})
 						.from(events)
-						.where(and(inArray(events.channelId, channelIds), gte(events.receivedAt, since)))
+						.where(and(inArray(events.channelId, owned), gte(events.receivedAt, since)))
 						.groupBy(events.channelId);
 		const statByChannel = new Map(eventStats.map((s) => [s.channelId, s]));
 
@@ -349,34 +339,31 @@ export function buildMeRoutes(getDeps: (c: { env: unknown }) => MeEnv | null) {
 				? Math.min(limitRaw, MAX_FEED_LIMIT)
 				: DEFAULT_FEED_LIMIT;
 
-		// Owner gate — restrict to channels the user owns.
-		const ownedChannels = await deps.db
+		// Owner gate — a subquery, so it holds however many channels the user
+		// has (D1 caps bound parameters at 100). User-supplied filter lists
+		// are capped for the same reason.
+		const owned = deps.db
 			.select({ id: channels.id })
 			.from(channels)
 			.where(eq(channels.userId, sessionUser.id));
-		if (ownedChannels.length === 0) {
-			return c.json({ events: [], nextCursor: null });
-		}
-		const ownedIds = ownedChannels.map((r) => r.id);
+		const conditions = [inArray(events.channelId, owned)];
 
 		// Filter: channel
-		const channelFilter = parseCommaList(url.searchParams.get("channel"));
-		const channelIds =
-			channelFilter.length > 0 ? channelFilter.filter((id) => ownedIds.includes(id)) : ownedIds;
-		if (channelIds.length === 0) {
-			return c.json({ events: [], nextCursor: null });
+		const channelFilter = parseCommaList(url.searchParams.get("channel")).slice(0, MAX_FILTER_IDS);
+		if (channelFilter.length > 0) {
+			conditions.push(inArray(events.channelId, channelFilter));
 		}
 
-		const conditions = [inArray(events.channelId, channelIds)];
-
 		// Filter: device
-		const deviceFilter = parseCommaList(url.searchParams.get("device"));
+		const deviceFilter = parseCommaList(url.searchParams.get("device")).slice(0, MAX_FILTER_IDS);
 		if (deviceFilter.length > 0) {
 			conditions.push(inArray(events.deviceId, deviceFilter));
 		}
 
 		// Filter: method
-		const methodFilter = parseCommaList(url.searchParams.get("method")).map((m) => m.toUpperCase());
+		const methodFilter = parseCommaList(url.searchParams.get("method"))
+			.slice(0, MAX_FILTER_IDS)
+			.map((m) => m.toUpperCase());
 		if (methodFilter.length > 0) {
 			conditions.push(inArray(events.method, methodFilter));
 		}
@@ -388,11 +375,14 @@ export function buildMeRoutes(getDeps: (c: { env: unknown }) => MeEnv | null) {
 			if (cond) conditions.push(cond);
 		}
 
-		// Filter: q (path substring)
+		// Filter: q (path substring). SQLite only honours a backslash escape
+		// with an explicit ESCAPE clause; without it `stripe_webhook` would
+		// search for a literal backslash. SQLite's LIKE ignores ASCII case,
+		// which suits a path search box.
 		const q = url.searchParams.get("q");
 		if (q && q.trim().length > 0) {
-			const pattern = `%${q.trim().replace(/[%_]/g, (s) => `\\${s}`)}%`;
-			conditions.push(like(events.path, pattern));
+			const pattern = `%${q.trim().replace(/[%_\\]/g, (s) => `\\${s}`)}%`;
+			conditions.push(sql`${events.path} LIKE ${pattern} ESCAPE '\\'`);
 		}
 
 		// Filter: time range
@@ -757,10 +747,7 @@ function statusFilterCondition(raw: string) {
 			// Either an error string was recorded, or no response yet (executor offline).
 			return or(
 				sql`${events.error} IS NOT NULL`,
-				and(
-					isNull(events.responseStatus),
-					gt(sql<number>`EXTRACT(EPOCH FROM (NOW() - ${events.receivedAt}))`, 30),
-				),
+				and(isNull(events.responseStatus), lt(events.receivedAt, new Date(Date.now() - 30_000))),
 			);
 		case "pending":
 			return isNull(events.responseStatus);

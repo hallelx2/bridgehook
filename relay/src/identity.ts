@@ -14,11 +14,9 @@
  */
 import { devices, user } from "@bridgehook/shared/db/schema";
 import { and, eq, isNull } from "drizzle-orm";
-import type { drizzle } from "drizzle-orm/neon-http";
 import { customAlphabet } from "nanoid";
 import { type Auth, getSessionUser } from "./auth.js";
-
-type DB = ReturnType<typeof drizzle>;
+import type { DB } from "./db.js";
 
 const HEX = "0123456789abcdef";
 const ALPHANUM = "0123456789abcdefghijklmnopqrstuvwxyz";

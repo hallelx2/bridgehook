@@ -21,9 +21,7 @@
 import { PLANS, type PlanId } from "@bridgehook/shared";
 import { events, channels, devices, subscriptions, user } from "@bridgehook/shared/db/schema";
 import { and, count, eq, gte, isNull } from "drizzle-orm";
-import type { drizzle } from "drizzle-orm/neon-http";
-
-type DB = ReturnType<typeof drizzle>;
+import type { DB } from "./db.js";
 
 export interface UserAccess {
 	userId: string;

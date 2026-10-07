@@ -15,7 +15,6 @@ import type { PlanId } from "@bridgehook/shared";
  */
 import { subscriptions, user } from "@bridgehook/shared/db/schema";
 import { eq } from "drizzle-orm";
-import type { drizzle } from "drizzle-orm/neon-http";
 import { Hono } from "hono";
 import { type Auth, getSessionUser } from "../auth.js";
 import {
@@ -25,8 +24,7 @@ import {
 	resolvePlanFromProduct,
 	verifyPolarWebhook,
 } from "../billing.js";
-
-type DB = ReturnType<typeof drizzle>;
+import type { DB } from "../db.js";
 
 export interface BillingEnv {
 	auth: Auth;

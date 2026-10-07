@@ -29,7 +29,7 @@ export function Architecture() {
 ├── packages/shared/     Types, constants, Drizzle schema
 ├── apps/web/            Landing page + Dashboard (React)
 ├── apps/desktop/        System tray app (Tauri, Phase 2)
-├── relay/               Cloudflare Worker + Neon
+├── relay/               Cloudflare Worker + D1
 └── docs/                Documentation (this site)`}</code>
 			</pre>
 
@@ -48,7 +48,7 @@ export function Architecture() {
 					</tr>
 					<tr>
 						<td>Database</td>
-						<td>Neon PostgreSQL + Drizzle ORM</td>
+						<td>Cloudflare D1 + Drizzle ORM</td>
 					</tr>
 					<tr>
 						<td>Web app</td>

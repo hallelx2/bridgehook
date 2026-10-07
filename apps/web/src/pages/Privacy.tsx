@@ -7,7 +7,7 @@
 import { Footer } from "../components/Footer";
 import { Nav } from "../components/Nav";
 
-const LAST_UPDATED = "May 27, 2026";
+const LAST_UPDATED = "October 7, 2026";
 const CONTACT_EMAIL = "halleluyaholudele@gmail.com";
 
 export function Privacy() {
@@ -83,10 +83,8 @@ export function Privacy() {
 						</p>
 						<ul className="list-disc pl-6 space-y-2 mt-3">
 							<li>
-								<strong>Cloudflare</strong> — hosts the relay (Workers) and the dashboard (Pages).
-							</li>
-							<li>
-								<strong>Neon</strong> — Postgres database where account and event data is stored.
+								<strong>Cloudflare</strong> — hosts the relay (Workers), the dashboard (Pages) and
+								the database (D1) where account and event data is stored.
 							</li>
 							<li>
 								<strong>Polar</strong> — payment processor for paid plans, if and when you check

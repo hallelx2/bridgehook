@@ -8,13 +8,12 @@
 		"deploy": "wrangler deploy",
 		"typecheck": "tsc --noEmit",
 		"db:generate": "drizzle-kit generate",
-		"db:push": "drizzle-kit push",
-		"db:studio": "drizzle-kit studio",
-		"test": "vitest run"
+		"test": "vitest run",
+		"db:migrate:local": "wrangler d1 migrations apply bridgehook --local",
+		"db:migrate:remote": "wrangler d1 migrations apply bridgehook --remote"
 	},
 	"dependencies": {
 		"@bridgehook/shared": "workspace:*",
-		"@neondatabase/serverless": "^0.10.0",
 		"better-auth": "^1.7.7",
 		"drizzle-orm": "^0.45.2",
 		"hono": "^4.13.13",

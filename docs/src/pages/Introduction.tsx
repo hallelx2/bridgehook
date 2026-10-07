@@ -147,8 +147,8 @@ export function Introduction() {
 					seconds, no install on their end
 				</li>
 				<li>
-					<strong>Self-hosters</strong> — clone the repo, point at your own Neon DB, deploy to your
-					own Cloudflare account. Same code, same features, your data.
+					<strong>Self-hosters</strong> — clone the repo, create your own D1 database, deploy to
+					your own Cloudflare account. Same code, same features, your data.
 				</li>
 			</ul>
 
@@ -188,8 +188,8 @@ export function Introduction() {
 
 			<Callout icon="🆓" title="Free & open source" color="#28c840">
 				BridgeHook is MIT-licensed and runs entirely on free-tier infrastructure: Cloudflare Workers
-				(100K req/day), Durable Objects, Neon PostgreSQL (0.5 GB), and Cloudflare Pages (unlimited
-				bandwidth). The only cost is a domain (~$12/year). Self-hosting is fully supported and is{" "}
+				(100K req/day), Durable Objects, D1 (5 GB), and Cloudflare Pages (unlimited bandwidth). The
+				only cost is a domain (~$12/year). Self-hosting is fully supported and is{" "}
 				<strong>the same code</strong> you see on bridgehook.dev — no enterprise tier, no paywalled
 				features, no closed-source server.
 			</Callout>

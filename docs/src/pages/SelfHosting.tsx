@@ -30,7 +30,7 @@ export function SelfHosting() {
 					</tr>
 					<tr>
 						<td>Database</td>
-						<td>Neon PostgreSQL</td>
+						<td>Cloudflare D1</td>
 						<td>0.5GB storage</td>
 					</tr>
 					<tr>
@@ -55,20 +55,31 @@ cd bridgehook
 pnpm install`}</code>
 			</pre>
 
-			<h3>2. Create a Neon database</h3>
-			<pre>
-				<code>{"neon projects create --name bridgehook --region-id aws-us-east-1"}</code>
-			</pre>
-			<p>Copy the connection URI from the output.</p>
-
-			<h3>3. Push the schema</h3>
+			<h3>2. Create a D1 database</h3>
 			<pre>
 				<code>{`cd relay
-DATABASE_URL="your-neon-connection-string" npx drizzle-kit push`}</code>
+npx wrangler d1 create bridgehook`}</code>
 			</pre>
 			<p>
-				This applies every migration in <code>relay/drizzle/*.sql</code>. Re-run it after pulling
-				new commits — the migrations are idempotent.
+				Put the printed <code>database_id</code> into the <code>[[d1_databases]]</code> block of{" "}
+				<code>relay/wrangler.toml</code>.
+			</p>
+
+			<h3>3. Apply the schema</h3>
+			<pre>
+				<code>{`pnpm db:migrate:local    # local D1 used by wrangler dev
+pnpm db:migrate:remote   # your Cloudflare D1, before deploying`}</code>
+			</pre>
+			<p>
+				This applies every migration in <code>relay/migrations/</code>. Re-run it after pulling new
+				commits; already-applied migrations are skipped.
+			</p>
+
+			<p>
+				<strong>Upgrading a relay that ran on Neon/Postgres?</strong> Export your data with{" "}
+				<code>DATABASE_URL=… python3 relay/scripts/neon-to-d1.py out.sql</code>, apply the schema
+				with <code>pnpm db:migrate:remote</code>, then load it with{" "}
+				<code>npx wrangler d1 execute bridgehook --remote --file out.sql</code> before deploying.
 			</p>
 
 			<h3>4. Configure the relay</h3>
@@ -76,8 +87,7 @@ DATABASE_URL="your-neon-connection-string" npx drizzle-kit push`}</code>
 				Create <code>relay/.dev.vars</code>:
 			</p>
 			<pre>
-				<code>{`# Required
-DATABASE_URL=postgresql://user:pass@host/db?sslmode=require
+				<code>{`# No database URL: the relay uses the D1 binding from wrangler.toml.
 
 # Optional — leave unset for self-host mode (single implicit user)
 # BETTER_AUTH_SECRET=...
@@ -115,7 +125,7 @@ pnpm dev:web`}</code>
 			<pre>
 				<code>{`# Relay → Cloudflare Workers
 cd relay
-wrangler secret put DATABASE_URL  # paste your Neon URL
+pnpm db:migrate:remote
 wrangler deploy
 
 # Web app → Cloudflare Pages

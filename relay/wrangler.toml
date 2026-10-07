@@ -19,6 +19,16 @@ routes = [
 [vars]
 TUNNEL_DOMAIN = "bridgehook.dev"
 
+# ── Database ──────────────────────────────────────────────────────────────
+# Cloudflare D1. Schema: packages/shared/src/db/schema.ts → `pnpm db:generate`
+# → migrations/; apply with `npx wrangler d1 migrations apply bridgehook
+# --local` (dev) or `--remote` (production) before deploying code that needs it.
+[[d1_databases]]
+binding = "DB"
+database_name = "bridgehook"
+database_id = "1c61a656-2d2e-419b-b2e8-d86ff5498d3c"
+migrations_dir = "migrations"
+
 [durable_objects]
 bindings = [
   { name = "CHANNEL", class_name = "ChannelDO" },

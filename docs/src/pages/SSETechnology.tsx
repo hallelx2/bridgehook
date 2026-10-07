@@ -107,7 +107,7 @@ writer.write(encoder.encode('data: {"type":"webhook",...}\\n\\n'));
 			<ul>
 				<li>
 					<strong>Browser closes tab</strong> → SSE connection closes → Writer removed from Map →
-					Events buffer in Neon DB
+					Events buffer in D1
 				</li>
 				<li>
 					<strong>Network blip</strong> → Browser's <code>EventSource</code> auto-reconnects →
@@ -115,7 +115,7 @@ writer.write(encoder.encode('data: {"type":"webhook",...}\\n\\n'));
 				</li>
 				<li>
 					<strong>Worker restarts</strong> → All SSE connections lost → Browsers auto-reconnect →
-					Channels still exist in Neon
+					Channels still exist in D1
 				</li>
 			</ul>
 		</>

@@ -38,7 +38,7 @@ POST /api/channels { secretHash: "a1b2c3d4..." }
 						<td>Raw secret</td>
 					</tr>
 					<tr>
-						<td>Relay server (Neon DB)</td>
+						<td>Relay server (D1)</td>
 						<td>SHA-256 hash only</td>
 					</tr>
 				</tbody>

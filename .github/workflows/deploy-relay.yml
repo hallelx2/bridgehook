@@ -19,6 +19,13 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # Schema first: code that needs a new table must never go live before
+      # the table exists. Already-applied migrations are skipped.
+      - run: cd relay && npx wrangler d1 migrations apply bridgehook --remote
+        env:
+          CI: "true"
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
       - run: cd relay && npx wrangler deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}

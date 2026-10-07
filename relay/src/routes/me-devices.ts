@@ -6,13 +6,11 @@
  */
 import { devices } from "@bridgehook/shared/db/schema";
 import { and, desc, eq, isNull } from "drizzle-orm";
-import type { drizzle } from "drizzle-orm/neon-http";
 import { Hono } from "hono";
 import { checkDevicePair, loadUserAccess } from "../access.js";
 import { type Auth, getSessionUser } from "../auth.js";
+import type { DB } from "../db.js";
 import { newDeviceId, newDeviceToken } from "../identity.js";
-
-type DB = ReturnType<typeof drizzle>;
 
 export interface MeDevicesEnv {
 	auth: Auth;
