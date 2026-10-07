@@ -19,7 +19,12 @@
 	},
 	"packageManager": "pnpm@9.15.4",
 	"pnpm": {
-		"onlyBuiltDependencies": ["@biomejs/biome", "esbuild", "sharp", "workerd"]
+		"onlyBuiltDependencies": ["@biomejs/biome", "esbuild", "sharp", "workerd"],
+		"overrides": {
+			"vite@6": "^6.4.4",
+			"postcss": "^8.5.29",
+			"source-map-js": "^1.2.2"
+		}
 	},
 	"engines": {
 		"node": ">=20"
