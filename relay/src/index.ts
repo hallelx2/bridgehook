@@ -1098,16 +1098,14 @@ app.post("/hook/:channelId/response", async (c) => {
 		latencyMs,
 	};
 	const responsePayload = JSON.stringify(summary);
-	// Sync channels: the channel DO needs the whole reply to return it to the
-	// waiting sender. Awaited, so the sender is answered before the executor's
-	// POST returns.
-	const doPayload =
-		channel.responseMode === "sync"
-			? JSON.stringify({
-					...summary,
-					sync: { status: parsed.status, headers: respHeaders, body: respBody, latencyMs },
-				})
-			: responsePayload;
+	// The channel DO always gets the whole reply: a sync sender may be waiting
+	// even if the channel was switched to async meanwhile, and the DO simply
+	// drops it when nobody is. Awaited, so the sender is answered before the
+	// executor's POST returns.
+	const doPayload = JSON.stringify({
+		...summary,
+		sync: { status: parsed.status, headers: respHeaders, body: respBody, latencyMs },
+	});
 
 	const stub = getChannelDO(c.env, channelId);
 	await stub
