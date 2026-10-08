@@ -15,6 +15,7 @@ import { checkReplay, finiteOrNull, loadDailyEventCount, loadUserAccess } from "
 import { type Auth, getSessionUser } from "../auth.js";
 import type { DB } from "../db.js";
 import { resolveCaller } from "../identity.js";
+import { clampSyncTimeout, isResponseMode } from "../sync.js";
 import { buildWebhookUrl } from "../webhook-url.js";
 
 const PUBLIC_KEY_HEX_LEN = 130;
@@ -135,6 +136,8 @@ export function buildMeRoutes(getDeps: (c: { env: unknown }) => MeEnv | null) {
 				port: channels.port,
 				label: channels.label,
 				allowedPaths: channels.allowedPaths,
+				responseMode: channels.responseMode,
+				syncTimeoutMs: channels.syncTimeoutMs,
 				createdAt: channels.createdAt,
 				expiresAt: channels.expiresAt,
 				deviceId: channels.deviceId,
@@ -175,6 +178,8 @@ export function buildMeRoutes(getDeps: (c: { env: unknown }) => MeEnv | null) {
 				port: r.port,
 				label: r.label,
 				allowedPaths: safeJsonArray(r.allowedPaths),
+				responseMode: r.responseMode,
+				syncTimeoutMs: r.syncTimeoutMs,
 				createdAt: r.createdAt.toISOString(),
 				expiresAt: r.expiresAt?.toISOString() ?? null,
 				webhookUrl: buildWebhookUrl(r.id, url, deps.tunnelDomain),
@@ -206,9 +211,16 @@ export function buildMeRoutes(getDeps: (c: { env: unknown }) => MeEnv | null) {
 		const patch = (body ?? {}) as {
 			label?: unknown;
 			allowedPaths?: unknown;
+			responseMode?: unknown;
+			syncTimeoutMs?: unknown;
 		};
 
-		const update: { label?: string | null; allowedPaths?: string } = {};
+		const update: {
+			label?: string | null;
+			allowedPaths?: string;
+			responseMode?: "async" | "sync";
+			syncTimeoutMs?: number;
+		} = {};
 		if (patch.label !== undefined) {
 			if (patch.label === null) {
 				update.label = null;
@@ -225,6 +237,17 @@ export function buildMeRoutes(getDeps: (c: { env: unknown }) => MeEnv | null) {
 			}
 			update.allowedPaths = JSON.stringify(validated);
 		}
+		if (patch.responseMode !== undefined) {
+			if (!isResponseMode(patch.responseMode)) {
+				return c.json({ error: "responseMode must be 'async' or 'sync'" }, 400);
+			}
+			update.responseMode = patch.responseMode;
+		}
+		if (patch.syncTimeoutMs !== undefined) {
+			const ms = clampSyncTimeout(patch.syncTimeoutMs);
+			if (ms === null) return c.json({ error: "syncTimeoutMs must be a number" }, 400);
+			update.syncTimeoutMs = ms;
+		}
 		if (Object.keys(update).length === 0) {
 			return c.json({ error: "No fields to update" }, 400);
 		}
@@ -240,6 +263,8 @@ export function buildMeRoutes(getDeps: (c: { env: unknown }) => MeEnv | null) {
 			id: updated.id,
 			label: updated.label,
 			allowedPaths: safeJsonArray(updated.allowedPaths),
+			responseMode: updated.responseMode,
+			syncTimeoutMs: updated.syncTimeoutMs,
 		});
 	});
 

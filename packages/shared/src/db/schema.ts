@@ -66,6 +66,10 @@ export const channels = sqliteTable(
 		userId: text("user_id").references(() => user.id, { onDelete: "cascade" }),
 		deviceId: text("device_id").references(() => devices.id, { onDelete: "set null" }),
 		label: text("label"),
+		// 'async' answers senders 202 at once; 'sync' holds the request until
+		// localhost's response arrives and returns it (relay/src/sync.ts).
+		responseMode: text("response_mode").notNull().default("async"),
+		syncTimeoutMs: integer("sync_timeout_ms").notNull().default(25000),
 		createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().default(nowMs),
 		// Nullable: owned channels have NULL expiresAt (perpetual; retention
 		// enforced on events). Anonymous channels carry a 24h expiry.

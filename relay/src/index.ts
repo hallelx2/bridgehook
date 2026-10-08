@@ -20,6 +20,13 @@ import { buildBillingRoutes } from "./routes/billing.js";
 import { buildMeDevicesRoutes } from "./routes/me-devices.js";
 import { buildMeRoutes } from "./routes/me.js";
 import {
+	SYNC_TIMEOUT_DEFAULT_MS,
+	type SyncOutcome,
+	clampSyncTimeout,
+	isResponseMode,
+	syncResponse,
+} from "./sync.js";
+import {
 	CHANNEL_ID_RE,
 	WEBHOOK_METHODS,
 	buildWebhookUrl,
@@ -207,6 +214,26 @@ async function handleWebhookIntake(
 	if (!channel) return jsonResponse(404, { error: "Channel not found" });
 
 	const url = new URL(request.url);
+	const method = request.method.toUpperCase();
+	const sync = channel.responseMode === "sync";
+	const isRead = method === "GET" || method === "HEAD";
+	if (!isWebhookMethod(method) && !isRead) {
+		return new Response(JSON.stringify({ error: "Method not allowed" }), {
+			status: 405,
+			headers: { "Content-Type": "application/json", Allow: acceptedMethods(sync).join(", ") },
+		});
+	}
+	// Async channels answer a browser (or a curious GET) with what the URL
+	// is; sync channels forward GET/HEAD so verification handshakes work.
+	if (isRead && !sync) {
+		return jsonResponse(200, {
+			channelId: channel.id,
+			webhookUrl: buildWebhookUrl(channel.id, url, env.TUNNEL_DOMAIN),
+			responseMode: "async",
+			accepts: acceptedMethods(false),
+			message: CHANNEL_URL_MESSAGE,
+		});
+	}
 	// The query string travels with the path so providers that sign or route
 	// on it (`?token=…`) reach localhost intact. Allow-list matching is on the
 	// path alone.
@@ -279,6 +306,19 @@ async function handleWebhookIntake(
 	});
 
 	const stub = getChannelDO(env, channelId);
+	// Sync: register the wait before waking executors, so even an instant
+	// answer finds its waiter (the DO also keeps early answers briefly).
+	const waiting = sync
+		? stub.fetch(
+				new Request("https://do/wait", {
+					method: "POST",
+					body: JSON.stringify({
+						eventId: evt.id,
+						timeoutMs: channel.syncTimeoutMs ?? SYNC_TIMEOUT_DEFAULT_MS,
+					}),
+				}),
+			)
+		: null;
 	stub
 		.fetch(new Request("https://do/notify", { method: "POST", body: ssePayload }))
 		.catch((err) => console.error("DO notify failed:", err));
@@ -286,7 +326,22 @@ async function handleWebhookIntake(
 	// Cross-channel dashboard fan-out: only when the channel has an owner.
 	notifyUserDO(env, channel.userId, ssePayload);
 
+	if (waiting) {
+		let outcome: SyncOutcome = { kind: "timeout" };
+		try {
+			outcome = (await (await waiting).json()) as SyncOutcome;
+		} catch (err) {
+			console.error("Sync wait failed:", err);
+		}
+		return syncResponse(outcome, evt.id, method);
+	}
+
 	return jsonResponse(202, { received: true, eventId: evt.id, channelId });
+}
+
+/** Methods a channel URL accepts in each response mode. */
+function acceptedMethods(sync: boolean): string[] {
+	return sync ? [...WEBHOOK_METHODS, "GET", "HEAD"] : [...WEBHOOK_METHODS];
 }
 
 function validateAllowedPaths(input: unknown): string[] | null {
@@ -616,6 +671,8 @@ app.post("/api/channels", async (c) => {
 		port?: unknown;
 		allowedPaths?: unknown;
 		label?: unknown;
+		responseMode?: unknown;
+		syncTimeoutMs?: unknown;
 	}>(c.req.raw);
 
 	if (!body) return c.json({ error: "Invalid JSON body" }, 400);
@@ -658,6 +715,16 @@ app.post("/api/channels", async (c) => {
 			? body.label.trim().slice(0, 64)
 			: null;
 
+	if (body.responseMode !== undefined && !isResponseMode(body.responseMode)) {
+		return c.json({ error: "responseMode must be 'async' or 'sync'" }, 400);
+	}
+	const responseMode = body.responseMode ?? "async";
+	const syncTimeoutMs =
+		body.syncTimeoutMs === undefined
+			? SYNC_TIMEOUT_DEFAULT_MS
+			: clampSyncTimeout(body.syncTimeoutMs);
+	if (syncTimeoutMs === null) return c.json({ error: "syncTimeoutMs must be a number" }, 400);
+
 	const channelId = crypto.randomUUID().replace(/-/g, "").slice(0, CHANNEL_ID_LEN);
 	// Owned channels are perpetual; events are aged out by retention cron, not channel.
 	const expiresAt: Date | null = null;
@@ -673,6 +740,8 @@ app.post("/api/channels", async (c) => {
 			deviceId,
 			label,
 			expiresAt,
+			responseMode,
+			syncTimeoutMs,
 		})
 		.returning();
 
@@ -686,6 +755,8 @@ app.post("/api/channels", async (c) => {
 			deviceId: channel.deviceId,
 			expiresAt: channel.expiresAt?.toISOString() ?? null,
 			webhookUrl: buildWebhookUrl(channel.id, url, c.env.TUNNEL_DOMAIN),
+			responseMode: channel.responseMode,
+			syncTimeoutMs: channel.syncTimeoutMs,
 			authScheme: "ecdsa",
 		},
 		201,
@@ -712,6 +783,8 @@ app.get("/api/channels/:channelId", async (c) => {
 		createdAt: channel.createdAt.toISOString(),
 		expiresAt: channel.expiresAt?.toISOString() ?? null,
 		webhookUrl: buildWebhookUrl(channel.id, url, c.env.TUNNEL_DOMAIN),
+		responseMode: channel.responseMode,
+		syncTimeoutMs: channel.syncTimeoutMs,
 		authScheme: "ecdsa",
 	});
 });
@@ -814,7 +887,7 @@ app.get("/api/channels/:channelId/events", async (c) => {
 // ── Receive webhook: `/hook/<channelId>` alias (back-compat) ──
 // The canonical `/<channelId>[/path]` form is registered last, after every
 // first-party route, so it can never shadow one. See ./webhook-url.ts.
-app.on([...WEBHOOK_METHODS], "/hook/:channelId", async (c) => {
+app.on([...WEBHOOK_METHODS, "GET", "HEAD"], "/hook/:channelId", async (c) => {
 	return handleWebhookIntake(c.req.param("channelId"), "/", c.req.raw, c.env);
 });
 
@@ -1004,17 +1077,28 @@ app.post("/hook/:channelId/response", async (c) => {
 		.returning({ id: events.id });
 	if (updated.length === 0) return c.json({ error: "Event not found" }, 404);
 
-	const responsePayload = JSON.stringify({
+	const summary = {
 		type: "response",
 		eventId: parsed.eventId,
 		channelId,
 		status: parsed.status,
 		latencyMs,
-	});
+	};
+	const responsePayload = JSON.stringify(summary);
+	// Sync channels: the channel DO needs the whole reply to return it to the
+	// waiting sender. Awaited, so the sender is answered before the executor's
+	// POST returns.
+	const doPayload =
+		channel.responseMode === "sync"
+			? JSON.stringify({
+					...summary,
+					sync: { status: parsed.status, headers: respHeaders, body: respBody, latencyMs },
+				})
+			: responsePayload;
 
 	const stub = getChannelDO(c.env, channelId);
-	stub
-		.fetch(new Request("https://do/notify", { method: "POST", body: responsePayload }))
+	await stub
+		.fetch(new Request("https://do/notify", { method: "POST", body: doPayload }))
 		.catch((err) => console.error("DO notify failed:", err));
 	notifyUserDO(c.env, channel.userId, responsePayload);
 
@@ -1028,23 +1112,9 @@ app.post("/hook/:channelId/response", async (c) => {
 app.all("*", async (c, next) => {
 	const parsed = parseChannelPath(c.req.path);
 	if (!parsed) return next();
-	if (isWebhookMethod(c.req.method)) {
+	const m = c.req.method.toUpperCase();
+	if (isWebhookMethod(m) || m === "GET" || m === "HEAD") {
 		return handleWebhookIntake(parsed.channelId, parsed.forwardPath, c.req.raw, c.env);
-	}
-	if (c.req.method === "GET" || c.req.method === "HEAD") {
-		const db = getDb(c.env);
-		const [channel] = await db
-			.select({ id: channels.id })
-			.from(channels)
-			.where(eq(channels.id, parsed.channelId))
-			.limit(1);
-		if (!channel) return c.json({ error: "Channel not found" }, 404);
-		return c.json({
-			channelId: channel.id,
-			webhookUrl: buildWebhookUrl(channel.id, new URL(c.req.url), c.env.TUNNEL_DOMAIN),
-			accepts: WEBHOOK_METHODS,
-			message: CHANNEL_URL_MESSAGE,
-		});
 	}
 	return c.json({ error: "Method not allowed" }, 405, {
 		Allow: [...WEBHOOK_METHODS, "GET"].join(", "),
@@ -1115,7 +1185,7 @@ async function channelHostResponse(
 ): Promise<Response> {
 	const url = new URL(request.url);
 	const method = request.method.toUpperCase();
-	if (isWebhookMethod(method)) {
+	if (isWebhookMethod(method) || method === "GET" || method === "HEAD") {
 		return handleWebhookIntake(channelId, url.pathname || "/", request, env);
 	}
 	if (method === "OPTIONS") {
@@ -1123,25 +1193,11 @@ async function channelHostResponse(
 			status: 204,
 			headers: {
 				"Access-Control-Allow-Origin": "*",
-				"Access-Control-Allow-Methods": [...WEBHOOK_METHODS, "OPTIONS"].join(", "),
+				"Access-Control-Allow-Methods": [...WEBHOOK_METHODS, "GET", "HEAD", "OPTIONS"].join(", "),
 				"Access-Control-Allow-Headers":
 					request.headers.get("access-control-request-headers") ?? "Content-Type",
 				"Access-Control-Max-Age": "86400",
 			},
-		});
-	}
-	if (method === "GET" || method === "HEAD") {
-		const [channel] = await getDb(env)
-			.select({ id: channels.id })
-			.from(channels)
-			.where(eq(channels.id, channelId))
-			.limit(1);
-		if (!channel) return jsonResponse(404, { error: "Channel not found" });
-		return jsonResponse(200, {
-			channelId: channel.id,
-			webhookUrl: buildWebhookUrl(channel.id, url, env.TUNNEL_DOMAIN),
-			accepts: WEBHOOK_METHODS,
-			message: CHANNEL_URL_MESSAGE,
 		});
 	}
 	return new Response(JSON.stringify({ error: "Method not allowed" }), {

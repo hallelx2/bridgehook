@@ -68,6 +68,26 @@ function ChannelsView() {
 		}
 	}
 
+	async function setReplyMode(
+		id: string,
+		patch: { responseMode?: "async" | "sync"; syncTimeoutMs?: number },
+	) {
+		try {
+			const updated = await me.channels.patch(id, patch);
+			setChannels((prev) =>
+				prev
+					? prev.map((c) =>
+							c.id === id
+								? { ...c, responseMode: updated.responseMode, syncTimeoutMs: updated.syncTimeoutMs }
+								: c,
+						)
+					: prev,
+			);
+		} catch (err) {
+			setError(err instanceof Error ? err.message : String(err));
+		}
+	}
+
 	async function deleteChannel(id: string) {
 		if (!window.confirm(`Delete channel ${id}? Events are deleted with it.`)) return;
 		try {
@@ -103,81 +123,98 @@ function ChannelsView() {
 					</p>
 				</div>
 			) : (
-				<div className="rounded-lg border border-gray-900 bg-gray-950 overflow-hidden">
-					<div className="grid grid-cols-[minmax(0,1.5fr)_72px_minmax(0,2fr)_72px_88px_64px] gap-3 px-4 py-2 border-b border-gray-900 text-[10px] uppercase tracking-wider text-gray-500">
-						<div>Channel</div>
-						<div>Port</div>
-						<div>Webhook URL</div>
-						<div>24h</div>
-						<div>Last event</div>
-						<div className="text-right">Actions</div>
-					</div>
-					<ul>
-						{channels.map((c) => (
-							<li
-								key={c.id}
-								className="grid grid-cols-[minmax(0,1.5fr)_72px_minmax(0,2fr)_72px_88px_64px] gap-3 px-4 py-3 border-b border-gray-900 items-center text-sm hover:bg-gray-900/40"
-							>
-								<div className="min-w-0">
-									{editingId === c.id ? (
-										<form
-											onSubmit={(e) => {
-												e.preventDefault();
-												saveLabel(c.id);
-											}}
-										>
-											<input
-												type="text"
-												// biome-ignore lint/a11y/noAutofocus: inline edit affordance — focus on entry is the expected UX
-												autoFocus
-												value={draftLabel}
-												onChange={(e) => setDraftLabel(e.target.value)}
-												onBlur={() => saveLabel(c.id)}
-												className="bg-gray-900 border border-cyan-500 rounded px-2 py-0.5 text-sm font-mono w-full"
-												placeholder={c.id}
-											/>
-										</form>
-									) : (
+				<>
+					<p className="text-xs text-gray-500 mb-3 max-w-3xl">
+						<span className="text-gray-300">Reply</span>: <span className="font-mono">202 now</span>{" "}
+						answers the sender at once and delivers to your server in the background (Stripe,
+						GitHub, OpenAI). <span className="font-mono">Your server&apos;s reply</span> holds the
+						request until your local server answers and returns that response, for tool calls from
+						voice and agent platforms (Vapi, ElevenLabs) and GET verification challenges. The
+						extension or CLI must be running; from a dashboard tab, your local server must allow
+						CORS.
+					</p>{" "}
+					<div className="rounded-lg border border-gray-900 bg-gray-950 overflow-hidden">
+						<div className="grid grid-cols-[minmax(0,1.5fr)_64px_minmax(0,2fr)_200px_48px_80px_56px] gap-3 px-4 py-2 border-b border-gray-900 text-[10px] uppercase tracking-wider text-gray-500">
+							<div>Channel</div>
+							<div>Port</div>
+							<div>Webhook URL</div>
+							<div title="What the webhook sender gets back">Reply</div>
+							<div>24h</div>
+							<div>Last event</div>
+							<div className="text-right">Actions</div>
+						</div>
+						<ul>
+							{channels.map((c) => (
+								<li
+									key={c.id}
+									className="grid grid-cols-[minmax(0,1.5fr)_64px_minmax(0,2fr)_200px_48px_80px_56px] gap-3 px-4 py-3 border-b border-gray-900 items-center text-sm hover:bg-gray-900/40"
+								>
+									<div className="min-w-0">
+										{editingId === c.id ? (
+											<form
+												onSubmit={(e) => {
+													e.preventDefault();
+													saveLabel(c.id);
+												}}
+											>
+												<input
+													type="text"
+													// biome-ignore lint/a11y/noAutofocus: inline edit affordance — focus on entry is the expected UX
+													autoFocus
+													value={draftLabel}
+													onChange={(e) => setDraftLabel(e.target.value)}
+													onBlur={() => saveLabel(c.id)}
+													className="bg-gray-900 border border-cyan-500 rounded px-2 py-0.5 text-sm font-mono w-full"
+													placeholder={c.id}
+												/>
+											</form>
+										) : (
+											<button
+												type="button"
+												onClick={() => {
+													setDraftLabel(c.label ?? "");
+													setEditingId(c.id);
+												}}
+												className="font-mono text-gray-200 truncate text-left hover:text-cyan-400 w-full"
+											>
+												{c.label || c.id}
+											</button>
+										)}
+										<div className="text-[11px] text-gray-500 mt-0.5 font-mono">
+											{c.id}
+											{c.device ? ` · ${c.device.label}` : ""}
+										</div>
+									</div>
+									<div className="font-mono text-xs text-gray-300 tabular-nums">{c.port}</div>
+									<div className="min-w-0">
+										<CopyButton text={c.webhookUrl} />
+									</div>
+									<ReplyModeControl
+										mode={c.responseMode}
+										timeoutMs={c.syncTimeoutMs}
+										onChange={(patch) => setReplyMode(c.id, patch)}
+									/>
+									<div className="font-mono text-xs text-gray-300 tabular-nums">
+										{c.stats.count24h}
+									</div>
+									<div className="text-xs text-gray-500">
+										{c.stats.lastEventAt ? formatRelative(c.stats.lastEventAt) : "—"}
+									</div>
+									<div className="text-right">
 										<button
 											type="button"
-											onClick={() => {
-												setDraftLabel(c.label ?? "");
-												setEditingId(c.id);
-											}}
-											className="font-mono text-gray-200 truncate text-left hover:text-cyan-400 w-full"
+											onClick={() => deleteChannel(c.id)}
+											className="text-xs text-gray-500 hover:text-red-400"
+											aria-label="Delete channel"
 										>
-											{c.label || c.id}
+											Delete
 										</button>
-									)}
-									<div className="text-[11px] text-gray-500 mt-0.5 font-mono">
-										{c.id}
-										{c.device ? ` · ${c.device.label}` : ""}
 									</div>
-								</div>
-								<div className="font-mono text-xs text-gray-300 tabular-nums">{c.port}</div>
-								<div className="min-w-0">
-									<CopyButton text={c.webhookUrl} />
-								</div>
-								<div className="font-mono text-xs text-gray-300 tabular-nums">
-									{c.stats.count24h}
-								</div>
-								<div className="text-xs text-gray-500">
-									{c.stats.lastEventAt ? formatRelative(c.stats.lastEventAt) : "—"}
-								</div>
-								<div className="text-right">
-									<button
-										type="button"
-										onClick={() => deleteChannel(c.id)}
-										className="text-xs text-gray-500 hover:text-red-400"
-										aria-label="Delete channel"
-									>
-										Delete
-									</button>
-								</div>
-							</li>
-						))}
-					</ul>
-				</div>
+								</li>
+							))}
+						</ul>
+					</div>
+				</>
 			)}
 		</div>
 	);
@@ -214,4 +251,59 @@ function formatRelative(iso: string): string {
 	if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m`;
 	if (ms < 86_400_000) return `${Math.floor(ms / 3_600_000)}h`;
 	return `${Math.floor(ms / 86_400_000)}d`;
+}
+
+const TIMEOUT_CHOICES = [5_000, 10_000, 25_000, 60_000, 100_000];
+
+function ReplyModeControl({
+	mode,
+	timeoutMs,
+	onChange,
+}: {
+	mode: "async" | "sync";
+	timeoutMs: number;
+	onChange: (patch: { responseMode?: "async" | "sync"; syncTimeoutMs?: number }) => void;
+}) {
+	return (
+		<div className="flex flex-col gap-1">
+			<div className="inline-flex rounded border border-gray-800 overflow-hidden text-[11px] w-fit">
+				<button
+					type="button"
+					onClick={() => onChange({ responseMode: "async" })}
+					className={`px-2 py-0.5 whitespace-nowrap ${mode === "async" ? "bg-gray-800 text-gray-100" : "text-gray-500 hover:text-gray-300"}`}
+					aria-pressed={mode === "async"}
+					title="Answer the sender 202 at once; deliver in the background"
+				>
+					202 now
+				</button>
+				<button
+					type="button"
+					onClick={() => onChange({ responseMode: "sync" })}
+					className={`px-2 py-0.5 whitespace-nowrap ${mode === "sync" ? "bg-orange-500/20 text-orange-300" : "text-gray-500 hover:text-gray-300"}`}
+					aria-pressed={mode === "sync"}
+					title="Hold the request and return your local server's response"
+				>
+					Your server&apos;s reply
+				</button>
+			</div>
+			{mode === "sync" && (
+				<label className="text-[11px] text-gray-500 flex items-center gap-1">
+					wait up to
+					<select
+						value={timeoutMs}
+						onChange={(e) => onChange({ syncTimeoutMs: Number(e.target.value) })}
+						className="bg-gray-900 border border-gray-800 rounded px-1 text-gray-300"
+					>
+						{[...new Set([...TIMEOUT_CHOICES, timeoutMs])]
+							.sort((a, b) => a - b)
+							.map((ms) => (
+								<option key={ms} value={ms}>
+									{ms / 1000}s
+								</option>
+							))}
+					</select>
+				</label>
+			)}
+		</div>
+	);
 }
