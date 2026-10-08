@@ -58,6 +58,8 @@ export interface Env {
 	MAIL_FROM?: string;
 	/** Web app base URL — used to build verificationUrl in the device-pairing flow. */
 	WEB_URL?: string;
+	/** "off" disables the landing-page demo endpoint (POST /api/demo/channels). */
+	DEMO_CHANNELS?: string;
 	/** Self-host: auto-attach all channels to this user id (or auto-created self-host user). */
 	SELF_HOST_USER_ID?: string;
 	/**
@@ -81,6 +83,20 @@ const RELAY_VERSION = "0.1.0";
 
 // ── Limits ─────────────────────────────────────────────────────────────────
 const CHANNEL_ID_LEN = 12;
+/**
+ * Landing-page demo URLs: no account, so every limit is tight. Demo
+ * channels that still hold events (live, or expired within the hour before
+ * the cron sweeps them) are capped at DEMO_MAX_LIVE, so worst-case storage
+ * is DEMO_MAX_LIVE × DEMO_MAX_EVENTS × (body + headers) ≈ 240 MB.
+ */
+const DEMO_TTL_MS = 60 * 60 * 1000;
+const DEMO_MAX_EVENTS = 50;
+const DEMO_MAX_BODY_BYTES = 16 * 1024;
+const DEMO_MAX_HEADERS_BYTES = 8 * 1024;
+/** Unexpired demo channels across all visitors. */
+const DEMO_MAX_LIVE = 200;
+/** Demo channels one IP may create per hour. */
+const DEMO_PER_IP_PER_HOUR = 5;
 const EVENT_ID_LEN = 16;
 const MAX_HEADERS_BYTES = 32 * 1024;
 const MAX_ALLOWED_PATHS = 20;
@@ -213,6 +229,13 @@ async function handleWebhookIntake(
 
 	const [channel] = await db.select().from(channels).where(eq(channels.id, channelId)).limit(1);
 	if (!channel) return jsonResponse(404, { error: "Channel not found" });
+	// Expiring channels (landing-page demos) stop accepting at once, not when
+	// the hourly cron gets to them.
+	if (channel.expiresAt && channel.expiresAt.getTime() <= Date.now()) {
+		return jsonResponse(410, { error: "This webhook URL has expired" });
+	}
+	// Ownerless channels are landing-page demos: small, few, and never sync.
+	const demo = channel.userId === null;
 
 	const url = new URL(request.url);
 	const method = request.method.toUpperCase();
@@ -286,27 +309,50 @@ async function handleWebhookIntake(
 		}
 		headers[key] = value;
 	});
-	if (headersBytes > MAX_HEADERS_BYTES) {
+	if (headersBytes > (demo ? DEMO_MAX_HEADERS_BYTES : MAX_HEADERS_BYTES)) {
 		return jsonResponse(431, { error: "Headers too large" });
 	}
 
 	const body = await request.text();
-	if (byteLength(body) > MAX_BODY_SIZE_BYTES) {
+	if (byteLength(body) > (demo ? DEMO_MAX_BODY_BYTES : MAX_BODY_SIZE_BYTES)) {
 		return jsonResponse(413, { error: "Body too large" });
 	}
+	const demoFull = () =>
+		jsonResponse(429, {
+			error: `Demo URLs accept ${DEMO_MAX_EVENTS} requests. Sign up for a permanent URL.`,
+		});
 
 	const eventId = crypto.randomUUID().replace(/-/g, "").slice(0, EVENT_ID_LEN);
-	const [evt] = await db
-		.insert(events)
-		.values({
+	let evt: { id: string; method: string; path: string; receivedAt: Date };
+	if (demo) {
+		// One statement, so the cap holds exactly however many senders race:
+		// SQLite runs it atomically and inserts nothing once the cap is hit.
+		const rows = await db.all<{ received_at: number }>(sql`
+			INSERT INTO events (id, channel_id, method, path, request_headers, request_body)
+			SELECT ${eventId}, ${channelId}, ${request.method}, ${cleanPath},
+				${JSON.stringify(headers)}, ${body || null}
+			WHERE (SELECT count(*) FROM events WHERE channel_id = ${channelId}) < ${DEMO_MAX_EVENTS}
+			RETURNING received_at`);
+		if (rows.length === 0) return demoFull();
+		evt = {
 			id: eventId,
-			channelId,
 			method: request.method,
 			path: cleanPath,
-			requestHeaders: JSON.stringify(headers),
-			requestBody: body || null,
-		})
-		.returning();
+			receivedAt: new Date(rows[0].received_at),
+		};
+	} else {
+		[evt] = await db
+			.insert(events)
+			.values({
+				id: eventId,
+				channelId,
+				method: request.method,
+				path: cleanPath,
+				requestHeaders: JSON.stringify(headers),
+				requestBody: body || null,
+			})
+			.returning();
+	}
 
 	const ssePayload = JSON.stringify({
 		type: "webhook",
@@ -398,6 +444,27 @@ function parseLimit(raw: string | null): number {
 	const n = Number.parseInt(raw ?? "", 10);
 	if (!Number.isFinite(n) || n <= 0) return DEFAULT_EVENT_LIMIT;
 	return Math.min(n, MAX_BUFFERED_EVENTS);
+}
+
+/** Per-IP count over a fixed hour window (KV, best effort like checkRateLimit). */
+async function checkHourlyQuota(
+	env: Env,
+	request: Request,
+	key: string,
+	max: number,
+): Promise<boolean> {
+	if (!env.RATE_LIMIT) return true;
+	const ip = request.headers.get("CF-Connecting-IP") || "unknown";
+	const bucket = `rl:${key}:${ip}:${Math.floor(Date.now() / 3_600_000)}`;
+	try {
+		const count = Number.parseInt((await env.RATE_LIMIT.get(bucket)) ?? "0", 10);
+		if (count >= max) return false;
+		await env.RATE_LIMIT.put(bucket, String(count + 1), { expirationTtl: 2 * 3600 });
+		return true;
+	} catch (err) {
+		console.error("Hourly quota KV error:", err);
+		return true;
+	}
 }
 
 // ── Rate limiting (KV-backed) ─────────────────────────────────────────────
@@ -677,6 +744,78 @@ app.get("/api/config", (c) => {
 		trialDays: TRIAL_DAYS,
 		version: RELAY_VERSION,
 	});
+});
+
+// ── Demo channel (landing page, no account) ──
+// The hero's "try it live" card: a real URL that records requests for an
+// hour, capped at DEMO_MAX_EVENTS small bodies, never forwarded (no owner,
+// so no executor) and never sync. The visitor's browser holds the channel
+// key, so only it can read the events back.
+app.post("/api/demo/channels", async (c) => {
+	const env = c.env;
+	if (env.DEMO_CHANNELS === "off") return c.json({ error: "Not Found" }, 404);
+	if (!(await checkRateLimit(env, c.req.raw, "demo"))) {
+		return c.json({ error: "Rate limit exceeded" }, 429);
+	}
+
+	const body = (await c.req.json().catch(() => null)) as { publicKey?: unknown } | null;
+	const publicKey = body?.publicKey;
+	if (typeof publicKey !== "string" || !isHex(publicKey, PUBLIC_KEY_HEX_LEN)) {
+		return c.json({ error: "publicKey must be a 130-char hex string" }, 400);
+	}
+	try {
+		await crypto.subtle.importKey(
+			"raw",
+			fromHex(publicKey),
+			{ name: "ECDSA", namedCurve: "P-256" },
+			false,
+			["verify"],
+		);
+	} catch {
+		return c.json({ error: "publicKey is not a valid ECDSA P-256 point" }, 400);
+	}
+	const db = getDb(env);
+	const [{ live }] = await db
+		.select({ live: sql<number>`count(*)` })
+		.from(channels)
+		// Expired channels keep their events until the hourly cron runs, so
+		// they count for an hour after expiry too.
+		.where(and(isNull(channels.userId), gt(channels.expiresAt, new Date(Date.now() - 3_600_000))));
+	if (Number(live) >= DEMO_MAX_LIVE) {
+		return c.json({ error: "The live demo is busy. Try again in a few minutes." }, 503);
+	}
+	// Spent only on a create that will succeed, so a busy demo or a bad
+	// request never uses up a network's hourly allowance.
+	if (!(await checkHourlyQuota(env, c.req.raw, "demo-hour", DEMO_PER_IP_PER_HOUR))) {
+		return c.json({ error: "Demo limit for this network reached. Try again in an hour." }, 429);
+	}
+	const channelId = crypto.randomUUID().replace(/-/g, "").slice(0, CHANNEL_ID_LEN);
+	const expiresAt = new Date(Date.now() + DEMO_TTL_MS);
+	await db.insert(channels).values({
+		id: channelId,
+		publicKey,
+		port: 3000,
+		allowedPaths: "[]",
+		userId: null,
+		deviceId: null,
+		label: "demo",
+		expiresAt,
+		responseMode: "async",
+		syncTimeoutMs: SYNC_TIMEOUT_DEFAULT_MS,
+	});
+	return c.json(
+		{
+			channelId,
+			port: 3000,
+			expiresAt: expiresAt.toISOString(),
+			webhookUrl: buildWebhookUrl(channelId, new URL(c.req.url), env.TUNNEL_DOMAIN),
+			responseMode: "async",
+			ttlSeconds: DEMO_TTL_MS / 1000,
+			maxEvents: DEMO_MAX_EVENTS,
+			authScheme: "ecdsa",
+		},
+		201,
+	);
 });
 
 // ── Create channel ──
@@ -1186,6 +1325,8 @@ app.notFound((c) => c.json({ error: "Not Found" }, 404));
  * anyway, and self-hosters typically prefer to manage their own DB hygiene.
  */
 async function retentionSweep(db: DB): Promise<void> {
+	// Free is not swept yet: switching it on deletes existing users' history,
+	// which waits on an explicit decision (HAL-2445).
 	for (const planId of ["trialing", "hobby", "pro", "team"] as PlanId[]) {
 		const retention = PLANS[planId].limits.retentionDays;
 		if (!Number.isFinite(retention) || retention <= 0) continue;
@@ -1287,12 +1428,24 @@ export default {
 	async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
 		try {
 			const db = getDb(env);
-			const expired = await db
-				.delete(channels)
-				.where(lt(channels.expiresAt, new Date()))
-				.returning({ id: channels.id });
-			if (expired.length > 0) {
-				console.log(`Cron cleanup: deleted ${expired.length} expired channels`);
+			// In batches: each channel cascades to its events, and one huge
+			// DELETE could exceed D1's per-query limits and fail every hour.
+			let expiredTotal = 0;
+			for (let round = 0; round < 50; round++) {
+				const batch = db
+					.select({ id: channels.id })
+					.from(channels)
+					.where(lt(channels.expiresAt, new Date()))
+					.limit(200);
+				const expired = await db
+					.delete(channels)
+					.where(inArray(channels.id, batch))
+					.returning({ id: channels.id });
+				expiredTotal += expired.length;
+				if (expired.length < 200) break;
+			}
+			if (expiredTotal > 0) {
+				console.log(`Cron cleanup: deleted ${expiredTotal} expired channels`);
 			}
 			const codeCount = await cleanupExpiredDeviceCodes(db);
 			if (codeCount > 0) {

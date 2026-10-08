@@ -26,19 +26,21 @@ export function BridgeHero() {
 				{/* Badge */}
 				<div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-surface border border-border text-[10px] font-bold text-primary-fixed tracking-[0.2em] uppercase mb-10">
 					<span className="w-1.5 h-1.5 rounded-full bg-primary" />
-					Zero-install webhook testing
+					Webhook testing for the AI era
 				</div>
 
 				{/* Headline — tight, oversized, no gradient text */}
 				<h1 className="text-6xl md:text-8xl lg:text-[9.5rem] font-extrabold tracking-[-0.045em] mb-8 leading-[0.88] text-on-surface">
 					Test webhooks
 					<br />
-					<span className="text-on-surface-variant">from your browser.</span>
+					<span className="text-on-surface-variant">with your agent.</span>
 				</h1>
 
 				{/* Subtitle */}
 				<p className="max-w-xl mx-auto text-on-surface-variant text-lg md:text-xl leading-relaxed mb-10 tracking-tight">
-					No tunnels. No CLI. No binaries. Capture, inspect, and replay HTTP requests in real time.
+					A permanent URL for every local port. Webhooks reach your machine through your browser and
+					wait in line while it is off, and your coding agent can send signed Stripe, OpenAI and
+					Vapi events and read what your handler did.
 				</p>
 
 				{/* CTAs */}
@@ -47,7 +49,7 @@ export function BridgeHero() {
 						to="/login?signup=1"
 						className="w-full sm:w-auto px-8 py-4 bg-on-surface text-background font-bold rounded-xl transition-all hover:bg-primary hover:text-on-surface active:scale-[0.98] no-underline text-center text-[15px]"
 					>
-						Get started — free
+						Get started free
 					</Link>
 					<a
 						href="#try"

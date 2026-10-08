@@ -49,7 +49,10 @@ function Arrow({ color = "#9093ff" }: { color?: string }) {
 
 export function ArchitectureDiagram() {
 	return (
-		<div className="not-prose my-8 bg-[#0a0a0c] border border-white/[0.06] rounded-2xl p-8 overflow-x-auto">
+		<div
+			data-llms-md="Webhook sender (Stripe, OpenAI, Vapi) → relay (Cloudflare Worker, D1 queue) → your browser (extension or dashboard tab) → localhost."
+			className="not-prose my-8 bg-[#0a0a0c] border border-white/[0.06] rounded-2xl p-8 overflow-x-auto"
+		>
 			<div className="flex items-center justify-center gap-2 min-w-[600px]">
 				{/* Internet side */}
 				<div className="flex flex-col items-center gap-6 px-6 py-4 border border-white/[0.04] rounded-xl bg-white/[0.01]">
@@ -59,7 +62,7 @@ export function ArchitectureDiagram() {
 					<DiagramNode
 						icon="📨"
 						label="Webhook Sender"
-						sublabel="Stripe / GitHub"
+						sublabel="Stripe / OpenAI / Vapi"
 						color="#ffb0cd"
 					/>
 				</div>
@@ -76,7 +79,7 @@ export function ArchitectureDiagram() {
 
 				<div className="flex flex-col items-center gap-1">
 					<Arrow color="#9093ff" />
-					<span className="text-[9px] font-bold text-primary/50 font-mono">SSE</span>
+					<span className="text-[9px] font-bold text-primary/50 font-mono">queue</span>
 				</div>
 
 				{/* Your machine */}
@@ -85,7 +88,12 @@ export function ArchitectureDiagram() {
 						Your Machine
 					</div>
 					<div className="flex flex-col items-center gap-3">
-						<DiagramNode icon="🌐" label="Your Browser" sublabel="BridgeHook JS" color="#ddb7ff" />
+						<DiagramNode
+							icon="🌐"
+							label="Your Browser"
+							sublabel="Extension or tab"
+							color="#ddb7ff"
+						/>
 						<svg width="2" height="24" viewBox="0 0 2 24" fill="none">
 							<path
 								d="M1 0V24"
@@ -105,27 +113,30 @@ export function ArchitectureDiagram() {
 
 export function DataFlowDiagram() {
 	return (
-		<div className="not-prose my-8 bg-[#0a0a0c] border border-white/[0.06] rounded-2xl p-8">
+		<div
+			data-llms-md="1. Sender POSTs to https://<id>.bridgehook.dev. 2. Relay stores the event in D1 and wakes the forwarder. 3. Forwarder claims it and calls localhost. 4. Your server answers. 5. Forwarder reports the answer; in sync mode the relay returns it to the sender."
+			className="not-prose my-8 bg-[#0a0a0c] border border-white/[0.06] rounded-2xl p-8"
+		>
 			<div className="space-y-0">
 				{[
 					{
 						step: "1",
 						from: "Stripe",
-						action: "POST /2324radf23r",
+						action: "POST /8f3a2c1d9e4b",
 						to: "Relay",
 						color: "#ffb0cd",
 					},
 					{
 						step: "2",
 						from: "Relay",
-						action: "Store in D1 → Push SSE",
+						action: "Store in D1 → wake forwarder",
 						to: "Browser",
 						color: "#9093ff",
 					},
 					{
 						step: "3",
 						from: "Browser",
-						action: "fetch(localhost:3000)",
+						action: "claim → fetch(localhost:3000)",
 						to: "Your Server",
 						color: "#ddb7ff",
 					},
@@ -139,8 +150,8 @@ export function DataFlowDiagram() {
 					{
 						step: "5",
 						from: "Browser",
-						action: "POST /hook/.../response",
-						to: "Relay → Stripe",
+						action: "report the answer",
+						to: "Relay (→ sender if sync)",
 						color: "#fcd34d",
 					},
 				].map((row, i) => (
@@ -211,7 +222,10 @@ export function DataFlowDiagram() {
  */
 export function ResponsibilityDiagram() {
 	return (
-		<div className="not-prose my-8 grid grid-cols-2 gap-4">
+		<div
+			data-llms-md="Relay: webhook intake and storage, path allowlist and quotas, delivery queue and claims, sync waits, MCP server. Browser: channel key pair, localhost forwarding, ordered draining, response capture, dashboard UI."
+			className="not-prose my-8 grid grid-cols-2 gap-4"
+		>
 			{/* Server side */}
 			<div className="bg-[#0a0a0c] border border-primary/15 rounded-2xl p-6">
 				<div className="flex items-center gap-2 mb-4">
@@ -225,11 +239,11 @@ export function ResponsibilityDiagram() {
 				</div>
 				<ul className="space-y-2">
 					{[
-						"Channel CRUD",
-						"Event storage",
-						"SSE broadcasting",
-						"Webhook receiving",
-						"Rate limiting",
+						"Webhook intake and storage",
+						"Path allowlist and quotas",
+						"Delivery queue and claims",
+						"Sync waits (Durable Objects)",
+						"MCP server",
 					].map((item) => (
 						<li key={item} className="flex items-center gap-2 text-xs text-zinc-400 font-body">
 							<span className="w-1 h-1 rounded-full bg-primary/60" />
@@ -252,11 +266,11 @@ export function ResponsibilityDiagram() {
 				</div>
 				<ul className="space-y-2">
 					{[
-						"Secret generation",
+						"Channel key pair",
 						"Localhost forwarding",
-						"Path filtering",
+						"Ordered draining",
 						"Response capture",
-						"UI rendering",
+						"Dashboard UI",
 					].map((item) => (
 						<li key={item} className="flex items-center gap-2 text-xs text-zinc-400 font-body">
 							<span className="w-1 h-1 rounded-full bg-[#28c840]/60" />

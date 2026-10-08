@@ -17,6 +17,7 @@ export function Callout({
 }) {
 	return (
 		<div
+			data-callout={title}
 			className="not-prose my-6 rounded-xl border p-5 flex gap-4"
 			style={{
 				background: `${color}06`,
@@ -84,9 +85,15 @@ export function StepTimeline({
 	steps: { title: string; desc: string; code?: string; color: string }[];
 }) {
 	return (
-		<div className="not-prose my-8 space-y-0">
+		<div data-llms="steps" className="not-prose my-8 space-y-0">
 			{steps.map((step, i) => (
-				<div key={step.title} className="flex gap-5">
+				<div
+					key={step.title}
+					data-step-title={step.title}
+					data-step-desc={step.desc}
+					data-step-code={step.code}
+					className="flex gap-5"
+				>
 					{/* Timeline connector */}
 					<div className="flex flex-col items-center">
 						<div
@@ -140,39 +147,42 @@ export function StepTimeline({
 export function SecurityLayers() {
 	const layers = [
 		{
-			name: "Channel Secrets",
-			desc: "SHA-256 hashed, never exposed to relay",
+			name: "Channel keys",
+			desc: "ECDSA P-256 per channel; the private key stays non-extractable in your browser",
 			color: "#9093ff",
 			icon: "🔑",
 		},
 		{
-			name: "Path Allowlist",
-			desc: "Client-side filtering, only allowed paths forwarded",
+			name: "Path allowlist",
+			desc: "Enforced by the relay: other paths get 403 and are never stored or forwarded",
 			color: "#ddb7ff",
 			icon: "🛡️",
 		},
 		{
-			name: "Auto-Expiry",
-			desc: "24h channel lifetime, instant disconnect on tab close",
+			name: "Sync isolation",
+			desc: "Replies only on the channel's own host, sandboxed by CSP, cookies dropped",
 			color: "#ffb0cd",
-			icon: "⏱️",
+			icon: "🧱",
 		},
 		{
-			name: "Rate Limiting",
-			desc: "60 req/min, 1MB body, 100 events max",
+			name: "Limits",
+			desc: "1 MB bodies, 32 KB headers, a daily event cap per plan, rate-limited channel creation",
 			color: "#fcd34d",
 			icon: "🚦",
 		},
 		{
-			name: "Unguessable IDs",
-			desc: "128-bit random UUIDs, cannot enumerate",
+			name: "Random IDs",
+			desc: "12 random hex characters per channel; knowing a URL only lets you send to it",
 			color: "#28c840",
 			icon: "🎲",
 		},
 	];
 
 	return (
-		<div className="not-prose my-8 space-y-3">
+		<div
+			className="not-prose my-8 space-y-3"
+			data-llms-md={layers.map((l, i) => `${i + 1}. **${l.name}**: ${l.desc}`).join("\n")}
+		>
 			{layers.map((layer, i) => (
 				<div
 					key={layer.name}
@@ -212,7 +222,10 @@ export function SecurityLayers() {
 /** Protocol comparison visualization for SSE page */
 export function ProtocolCompare() {
 	return (
-		<div className="not-prose my-8 grid grid-cols-2 gap-4">
+		<div
+			className="not-prose my-8 grid grid-cols-2 gap-4"
+			data-llms-md="SSE: server to client only, plain HTTP, built-in reconnect, passes through proxies and CDNs. WebSocket: bidirectional, separate protocol, manual reconnect, often blocked by proxies."
+		>
 			{/* SSE */}
 			<div className="bg-[#0a0a0c] border border-primary/15 rounded-xl p-5">
 				<div className="flex items-center gap-2 mb-4">

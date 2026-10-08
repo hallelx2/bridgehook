@@ -3,12 +3,18 @@ import { Logo } from "./Logo";
 
 export function Nav() {
 	return (
-		<nav className="fixed top-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-6 nav-surface rounded-full px-5 py-2.5 text-sm">
+		<nav className="fixed top-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-6 nav-surface rounded-full px-5 py-2.5 text-sm whitespace-nowrap">
 			<Link to="/" className="no-underline">
 				<Logo size="sm" showIcon />
 			</Link>
 
-			<div className="hidden md:flex items-center gap-6">
+			<div className="hidden md:flex items-center gap-5">
+				<a
+					href="#agents"
+					className="text-on-surface-variant font-medium hover:text-on-surface transition-colors"
+				>
+					AI agents
+				</a>
 				<a
 					href="#features"
 					className="text-on-surface-variant font-medium hover:text-on-surface transition-colors"
@@ -17,20 +23,18 @@ export function Nav() {
 				</a>
 				<a
 					href="#flow"
-					className="text-on-surface-variant font-medium hover:text-on-surface transition-colors"
+					className="hidden lg:inline text-on-surface-variant font-medium hover:text-on-surface transition-colors"
 				>
 					How it works
 				</a>
 				<a
 					href="#comparison"
-					className="text-on-surface-variant font-medium hover:text-on-surface transition-colors"
+					className="hidden lg:inline text-on-surface-variant font-medium hover:text-on-surface transition-colors"
 				>
 					Compare
 				</a>
 				<a
-					href="https://github.com/hallelx2/bridgehook"
-					target="_blank"
-					rel="noopener noreferrer"
+					href="https://docs.bridgehook.dev"
 					className="text-on-surface-variant font-medium hover:text-on-surface transition-colors no-underline"
 				>
 					Docs

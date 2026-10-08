@@ -122,6 +122,32 @@ describe("syncResponse", () => {
 		).toBe(502);
 	});
 
+	it("tags the relay's own answers, and a handler cannot fake the tag", () => {
+		expect(
+			syncResponse({ kind: "timeout" }, "e", "POST").headers.get("x-bridgehook-relay-answer"),
+		).toBe("timeout");
+		expect(
+			syncResponse({ kind: "response", result: result(0, "refused") }, "e", "POST").headers.get(
+				"x-bridgehook-relay-answer",
+			),
+		).toBe("unreachable");
+		const forged = syncResponse(
+			{
+				kind: "response",
+				result: {
+					status: 504,
+					headers: { "X-BridgeHook-Relay-Answer": "timeout" },
+					body: "{}",
+					latencyMs: 1,
+				},
+			},
+			"e",
+			"POST",
+		);
+		expect(forged.status).toBe(504);
+		expect(forged.headers.get("x-bridgehook-relay-answer")).toBeNull();
+	});
+
 	it("504 and 502 name the event so the sender can look it up", () => {
 		expect(
 			syncResponse({ kind: "timeout" }, "e1", "POST").headers.get("x-bridgehook-event-id"),

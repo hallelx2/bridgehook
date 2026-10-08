@@ -5,17 +5,27 @@ export function DevicePairing() {
 		<>
 			<h1>Device Pairing</h1>
 			<p>
-				The browser tab is a perfectly good executor for casual webhook testing — but it has to stay
-				open. For longer-running flows BridgeHook ships an extension and a desktop tray app that
-				pair to your account once and forward webhooks as long as they're running. The pairing flow
-				is OAuth's "device authorization grant" pattern, adapted for our shape.
+				A dashboard tab forwards only while it is open. The Chrome extension pairs with your account
+				once and keeps forwarding while Chrome runs, with its own token rather than your browser
+				session. There are two ways to pair:
 			</p>
+			<ul>
+				<li>
+					<strong>Self-register</strong>: if you are already signed in to the dashboard in the same
+					browser, the extension calls <code>POST /api/me/devices/self-register</code> with your
+					session and receives a token at once.
+				</li>
+				<li>
+					<strong>Device code</strong>: otherwise it uses the flow below, OAuth&apos;s device
+					authorization grant adapted to BridgeHook. The relay also accepts the kinds{" "}
+					<code>desktop</code> and <code>cli</code> for the clients that are in development.
+				</li>
+			</ul>
 
 			<Callout icon="🔌" title="Why a paired device?" color="#9093ff">
-				A device token survives across browser sessions. Close the dashboard tab — the extension
-				keeps forwarding. Reboot — the extension reconnects. Hand a co-worker access to a shared
-				channel — pair their machine, revoke when they leave. Sessions and per-device tokens are
-				orthogonal axes of "who is this connection."
+				A device token survives the dashboard session: sign out of the dashboard or close it and the
+				extension keeps forwarding; restart Chrome and it reconnects. Each device is listed and
+				revocable on its own.
 			</Callout>
 
 			<h2>Flow</h2>
@@ -68,23 +78,12 @@ export function DevicePairing() {
 			<p>
 				The token is shown to the device <strong>exactly once</strong>, in the exchange response.
 				Only its SHA-256 hash hits the database (<code>devices.token_hash</code>, with a unique
-				index on non-revoked rows). The device stores the plaintext locally — typically:
+				index on non-revoked rows). The extension keeps the plaintext in{" "}
+				<code>chrome.storage.local</code>.
 			</p>
-			<ul>
-				<li>
-					Browser extension → <code>chrome.storage.local</code>
-				</li>
-				<li>
-					Desktop tray → OS keychain (macOS Keychain, Windows Credential Manager, libsecret on
-					Linux)
-				</li>
-				<li>
-					CLI → <code>~/.config/bridgehook/token</code> (mode 0600)
-				</li>
-			</ul>
 			<p>
 				Subsequent requests carry <code>Authorization: Bearer dvc_…</code>. The relay hashes and
-				looks it up — at most one row matches.
+				looks it up, at most one row matches.
 			</p>
 
 			<h2>Revoking</h2>
@@ -102,17 +101,18 @@ export function DevicePairing() {
 
 			<h2>Quota interaction</h2>
 			<p>
-				The device cap is per-plan: 2 on Hobby/Trial, unlimited on Pro/Team/Selfhost. The cap counts
-				only non-revoked rows. Hitting the cap returns <code>402 Payment Required</code> with{" "}
-				<code>{'{"code":"quota","error":"Device quota reached..."}'}</code> — the dashboard surfaces
+				The device cap is per plan (1 on Free; unlimited when self-hosted) and counts only
+				non-revoked devices. Agent tokens for the MCP server do not count toward it; they have their
+				own limit of 10 per account. Hitting the cap returns <code>402 Payment Required</code> with{" "}
+				<code>{'{"code":"quota","error":"Device quota reached..."}'}</code>, the dashboard surfaces
 				this on the Approve action.
 			</p>
 
 			<Callout icon="🧹" title="Cron sweep" color="#28c840">
 				Pending device codes expire after 15 minutes. The hourly cron deletes any{" "}
-				<code>device_codes</code> rows past <code>expires_at</code>; the same cron also runs the
-				per-plan event retention sweep. Both run only when <code>BETTER_AUTH_SECRET</code> is set —
-				self-host instances skip both branches.
+				<code>device_codes</code> rows past <code>expires_at</code> and expired demo channels. The
+				same cron runs the per-plan event retention sweep, which is skipped on self-hosted relays
+				(no <code>BETTER_AUTH_SECRET</code>).
 			</Callout>
 
 			<h2>Self-host mode</h2>
@@ -120,7 +120,7 @@ export function DevicePairing() {
 				Device pairing requires auth. When <code>BETTER_AUTH_SECRET</code> is unset every route
 				under <code>/auth/device/*</code> returns 404. Self-hosters who want multiple executors
 				should either run BridgeHook in hosted shape (just set the secret) or rely on the
-				per-channel ECDSA scheme — every executor that has the channel id and the IDB-stored private
+				per-channel ECDSA scheme: every executor that has the channel id and the IDB-stored private
 				key can already forward.
 			</p>
 		</>

@@ -8,29 +8,30 @@ export function Architecture() {
 	return (
 		<>
 			<h1>Architecture</h1>
-			<p>BridgeHook is a pnpm monorepo with clearly separated concerns.</p>
+			<p>
+				BridgeHook is one pnpm monorepo: the relay, the dashboard, the extension and these docs.
+			</p>
 
 			<h2>System Overview</h2>
 			<ArchitectureDiagram />
 
 			<h2>Data Flow</h2>
-			<p>Every webhook goes through this 5-step journey:</p>
+			<p>Every webhook takes the same five steps:</p>
 			<DataFlowDiagram />
 
 			<h2>Server-Side vs Client-Side</h2>
-			<p>
-				BridgeHook strictly separates what runs on the server (relay) vs what runs in your browser:
-			</p>
+			<p>What runs on the relay, and what runs in your browser:</p>
 			<ResponsibilityDiagram />
 
 			<h2>Monorepo Structure</h2>
 			<pre>
 				<code>{`bridgehook/
-├── packages/shared/     Types, constants, Drizzle schema
-├── apps/web/            Landing page + Dashboard (React)
-├── apps/desktop/        System tray app (Tauri, Phase 2)
-├── relay/               Cloudflare Worker + D1
-└── docs/                Documentation (this site)`}</code>
+├── packages/shared/     Types, constants, plans, Drizzle schema
+├── relay/               Cloudflare Worker: intake, API, MCP server, D1, Durable Objects
+├── apps/web/            Landing page, dashboard and the no-install browser bridge (React)
+├── apps/extension/      Chrome extension (Manifest V3 service worker)
+├── apps/desktop/        Desktop app (Tauri), in development
+└── docs/                This site, plus llms.txt generated from it`}</code>
 			</pre>
 
 			<h2>Tech Stack</h2>
@@ -43,72 +44,46 @@ export function Architecture() {
 				</thead>
 				<tbody>
 					<tr>
-						<td>Relay server</td>
-						<td>Cloudflare Workers</td>
+						<td>Relay</td>
+						<td>Cloudflare Workers, Hono</td>
 					</tr>
 					<tr>
-						<td>Database</td>
-						<td>Cloudflare D1 + Drizzle ORM</td>
+						<td>Storage</td>
+						<td>Cloudflare D1 (SQLite) with Drizzle ORM; KV for rate limits and daily counters</td>
 					</tr>
 					<tr>
-						<td>Web app</td>
-						<td>Vite + React + Tailwind CSS</td>
+						<td>Live state</td>
+						<td>Durable Objects: one per channel (sync waits), one per user (the SSE stream)</td>
 					</tr>
 					<tr>
-						<td>Desktop app</td>
-						<td>Tauri v2 + Rust (Phase 2)</td>
+						<td>Auth</td>
+						<td>Better-Auth; ECDSA P-256 channel keys via WebCrypto</td>
 					</tr>
 					<tr>
-						<td>Shared types</td>
-						<td>TypeScript + Drizzle schema</td>
+						<td>MCP</td>
+						<td>Model Context Protocol SDK, stateless Streamable HTTP</td>
 					</tr>
 					<tr>
-						<td>Monorepo</td>
-						<td>pnpm workspaces</td>
+						<td>Web app and docs</td>
+						<td>Vite, React, Tailwind CSS, on Cloudflare Pages</td>
 					</tr>
 					<tr>
-						<td>Linting</td>
-						<td>Biome</td>
+						<td>Extension</td>
+						<td>Plain JavaScript, Manifest V3</td>
+					</tr>
+					<tr>
+						<td>Tooling</td>
+						<td>pnpm workspaces, TypeScript, Biome, Vitest</td>
 					</tr>
 				</tbody>
 			</table>
 
-			<h2>Cost at Scale</h2>
-			<table>
-				<thead>
-					<tr>
-						<th>Users</th>
-						<th>Monthly Requests</th>
-						<th>Cost</th>
-					</tr>
-				</thead>
-				<tbody>
-					<tr>
-						<td>1–100</td>
-						<td>~50K</td>
-						<td>$0 (free tier)</td>
-					</tr>
-					<tr>
-						<td>100–1K</td>
-						<td>~500K</td>
-						<td>$0 (free tier)</td>
-					</tr>
-					<tr>
-						<td>1K–10K</td>
-						<td>~5M</td>
-						<td>~$5/month</td>
-					</tr>
-					<tr>
-						<td>10K+</td>
-						<td>~50M+</td>
-						<td>~$50/month</td>
-					</tr>
-				</tbody>
-			</table>
+			<h2>Where the work happens</h2>
 			<p>
-				Events auto-expire in 24 hours, so the database never grows unboundedly. The relay is
-				stateless. The browser does all the compute-heavy forwarding. This architecture scales
-				cheaply.
+				The relay does little per webhook: validate, store, notify. The expensive part, waiting on
+				your handler, happens in your browser, and a sync wait parks in a Durable Object rather than
+				a running Worker. Paid plans&apos; event history is swept on a schedule, and demo channels
+				expire after an hour and are deleted by the hourly cron.
 			</p>
 		</>
 	);

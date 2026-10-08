@@ -72,12 +72,16 @@ export const channels = sqliteTable(
 		syncTimeoutMs: integer("sync_timeout_ms").notNull().default(25000),
 		createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().default(nowMs),
 		// Nullable: owned channels have NULL expiresAt (perpetual; retention
-		// enforced on events). Anonymous channels carry a 24h expiry.
+		// enforced on events). Ownerless landing-page demo channels expire.
 		expiresAt: integer("expires_at", { mode: "timestamp_ms" }),
 	},
 	(t) => [
 		index("channels_user").on(t.userId),
 		index("channels_device").on(t.deviceId).where(sql`device_id IS NOT NULL`),
+		// The hourly cleanup and the live-demo cap scan expiring channels only.
+		index("channels_expires")
+			.on(t.expiresAt)
+			.where(sql`expires_at IS NOT NULL`),
 	],
 );
 

@@ -74,6 +74,15 @@ describe("buildTestEvent", () => {
 		);
 	});
 
+	it("Vapi sends the Bearer credential by default and the legacy header on request", async () => {
+		const bearer = await buildTestEvent("vapi", { secret: "tok" });
+		expect(bearer.headers.authorization).toBe("Bearer tok");
+		expect(bearer.headers["x-vapi-secret"]).toBeUndefined();
+		const legacy = await buildTestEvent("vapi", { secret: "tok", vapiAuth: "x-vapi-secret" });
+		expect(legacy.headers["x-vapi-secret"]).toBe("tok");
+		expect(legacy.headers.authorization).toBeUndefined();
+	});
+
 	it("Vapi tool-calls carries a toolCallId and says what it expects back", async () => {
 		const e = await buildTestEvent("vapi");
 		const id = JSON.parse(e.body).message.toolCallList[0].id;

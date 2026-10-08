@@ -123,6 +123,39 @@ export async function createChannel(port: number, allowedPaths: string[]): Promi
 }
 
 /**
+ * A landing-page demo URL: no account, lives an hour, records up to a few
+ * dozen small requests and never forwards them. The key stays in this
+ * browser, so only this visitor can read what arrives.
+ */
+export async function createDemoChannel(): Promise<
+	ChannelInfo & { maxEvents?: number; ttlSeconds?: number }
+> {
+	const tempId = `pending-${crypto.randomUUID()}`;
+	const publicKey = await generateChannelKey(tempId);
+	try {
+		const res = await fetch(`${RELAY_URL}/api/demo/channels`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ publicKey }),
+		});
+		if (!res.ok) {
+			const text = await res.text().catch(() => "");
+			throw new Error(
+				res.status === 429
+					? "Too many demo URLs from this network. Try again in a minute."
+					: `Could not create a demo URL (${res.status})${text ? `: ${text}` : ""}`,
+			);
+		}
+		const data = (await res.json()) as ChannelInfo & { maxEvents?: number; ttlSeconds?: number };
+		await renameKey(tempId, data.channelId);
+		return data;
+	} catch (err) {
+		await deleteChannelKey(tempId);
+		throw err;
+	}
+}
+
+/**
  * Stable-URL channel resolver. When the user is signed in we want the
  * webhook URL for a given local port to be a permanent fixture of their
  * account — pasting it into Stripe/Paystack/etc. once and never having
@@ -382,6 +415,7 @@ export function pollEvents(
 		if (stopped) return;
 		try {
 			const events = await getEvents(channelId, 50, signal);
+			if (stopped) return;
 			consecutiveErrors = 0;
 			if (events.length > 0 && events[0].id !== lastSeenId) {
 				lastSeenId = events[0].id;

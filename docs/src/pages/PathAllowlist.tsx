@@ -3,50 +3,48 @@ export function PathAllowlist() {
 		<>
 			<h1>Path Allowlist</h1>
 			<p>
-				The path allowlist is a client-side security feature that restricts which localhost
-				endpoints the bridge can forward to.
+				A webhook URL is public, so anyone can send to any path under it. The allowlist decides
+				which of those paths may reach your server.
 			</p>
 
-			<h2>How It Works</h2>
-			<p>When you start a bridge, you specify allowed paths:</p>
+			<h2>Rules</h2>
 			<pre>
-				<code>{`Allowed:
-  ✓  /webhook/stripe
-  ✓  /webhook/github
+				<code>{`Allowed paths: /api/webhooks
 
-Blocked (never forwarded):
-  ✗  /admin
-  ✗  /api/users
-  ✗  /api/delete-everything
-  ✗  /`}</code>
+  ✓  /api/webhooks             exact match
+  ✓  /api/webhooks/stripe      below an allowed path
+  ✗  /api/webhooks-old         a prefix of the name is not enough
+  ✗  /admin                    403, never stored or forwarded`}</code>
 			</pre>
+			<ul>
+				<li>
+					An empty list, or <code>/</code>, allows every path.
+				</li>
+				<li>A trailing slash on an entry is ignored.</li>
+				<li>
+					The extension asks for one path prefix per port (default <code>/webhook</code>); the
+					dashboard&apos;s browser bridge takes several, one per line. Channels an agent creates
+					allow every path.
+				</li>
+			</ul>
 
 			<h2>Enforcement</h2>
 			<p>
-				Path filtering happens <strong>in your browser</strong>, not on the relay. Even if someone
-				crafts a webhook targeting <code>/admin</code>, the browser simply drops it:
+				The relay checks the path on arrival. A request outside the list gets{" "}
+				<code>403 Path not allowed for this channel</code> and is not stored, queued or forwarded,
+				so a probe for <code>/admin</code> never reaches your machine and never counts against your
+				daily event cap.
 			</p>
-			<pre>
-				<code>{`source.onmessage = async (event) => {
-  const webhook = JSON.parse(event.data);
-
-  // Security check — runs in YOUR browser
-  if (!allowedPaths.some(p => webhook.path.startsWith(p))) {
-    // Silently drop — never reaches localhost
-    return;
-  }
-
-  // Only allowed paths reach here
-  await fetch(\`http://localhost:\${port}\${webhook.path}\`, { ... });
-};`}</code>
-			</pre>
-
-			<h2>Why Client-Side?</h2>
 			<p>
-				Because the browser is the gatekeeper. The relay server doesn't know or care about your
-				allowed paths — it just delivers events. Your browser makes the decision about what to
-				forward. This means even a compromised relay can't force your browser to call endpoints you
-				haven't allowed.
+				Matching uses the path alone, everything after the host. The query string is not part of the
+				match but is forwarded with the request, so <code>?token=…</code> reaches your server
+				intact.
+			</p>
+
+			<h2>Changing it</h2>
+			<p>
+				Send <code>PATCH /api/me/channels/:id</code> with <code>{`{ "allowedPaths": [...] }`}</code>{" "}
+				while signed in. Paths are validated, and an invalid list is rejected with <code>400</code>.
 			</p>
 		</>
 	);
