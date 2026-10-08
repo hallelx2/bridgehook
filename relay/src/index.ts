@@ -223,6 +223,19 @@ async function handleWebhookIntake(
 			headers: { "Content-Type": "application/json", Allow: acceptedMethods(sync).join(", ") },
 		});
 	}
+	// With channel hosts available, sync replies (content from the owner's
+	// server) are only ever served on <id>.<TUNNEL_DOMAIN>, never on the relay
+	// host that carries the API and the session cookie.
+	if (
+		sync &&
+		env.TUNNEL_DOMAIN &&
+		classifyHost(request.headers.get("host"), env.TUNNEL_DOMAIN).kind !== "channel"
+	) {
+		return jsonResponse(421, {
+			error: "Sync channels answer on their own host",
+			webhookUrl: buildWebhookUrl(channel.id, url, env.TUNNEL_DOMAIN),
+		});
+	}
 	// Async channels answer a browser (or a curious GET) with what the URL
 	// is; sync channels forward GET/HEAD so verification handshakes work.
 	if (isRead && !sync) {
@@ -1174,7 +1187,9 @@ async function handleChannelHost(channelId: string, request: Request, env: Env):
 	// Browser senders (the dashboard's test button, any page posting a test
 	// webhook) need to read the answer. Never with credentials.
 	const out = new Response(res.body, res);
-	out.headers.set("Access-Control-Allow-Origin", "*");
+	if (!out.headers.has("access-control-allow-origin")) {
+		out.headers.set("Access-Control-Allow-Origin", "*");
+	}
 	return out;
 }
 

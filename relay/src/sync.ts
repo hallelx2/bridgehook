@@ -54,7 +54,24 @@ const DROP_HEADERS = new Set([
 	"upgrade",
 	"content-length",
 	"content-encoding",
+	// A channel owner's server must never set cookies on a BridgeHook host:
+	// on the relay host they would land beside the session, and on channel
+	// hosts they could be scoped to the parent domain.
+	"set-cookie",
+	"set-cookie2",
 ]);
+
+/**
+ * Applied to every sync reply. The body comes from a channel owner's server
+ * and is shown to whoever sent the request, possibly a person's browser:
+ * these stop it from running script or being sniffed into something
+ * executable, whatever its content type. Server-to-server senders ignore them.
+ */
+export const SYNC_SAFETY_HEADERS: Record<string, string> = {
+	"Content-Security-Policy": "sandbox; default-src 'none'",
+	"X-Content-Type-Options": "nosniff",
+	"Cross-Origin-Resource-Policy": "cross-origin",
+};
 
 export function senderHeaders(headers: Record<string, string>): Headers {
 	const out = new Headers();
@@ -93,7 +110,9 @@ export function syncResponse(
 		);
 	}
 	const { result } = outcome;
-	if (!Number.isInteger(result.status) || result.status < 100 || result.status > 599) {
+	// 1xx cannot be a final response (Response() throws on it); anything
+	// outside HTTP's range means the executor could not reach localhost.
+	if (!Number.isInteger(result.status) || result.status < 200 || result.status > 599) {
 		return Response.json(
 			{
 				error: "Your local server could not be reached",
@@ -104,10 +123,13 @@ export function syncResponse(
 		);
 	}
 	const headers = senderHeaders(result.headers);
+	for (const [k, v] of Object.entries(SYNC_SAFETY_HEADERS)) headers.set(k, v);
 	headers.set("X-BridgeHook-Event-Id", eventId);
 	if (!headers.has("access-control-allow-origin"))
 		headers.set("Access-Control-Allow-Origin", corsOrigin);
-	const noBody = method === "HEAD" || result.status === 204 || result.status === 304;
+	// Statuses that must not carry a body (Response() throws otherwise).
+	const noBody =
+		method === "HEAD" || result.status === 204 || result.status === 205 || result.status === 304;
 	return new Response(noBody ? null : result.body, { status: result.status, headers });
 }
 

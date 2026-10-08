@@ -122,6 +122,44 @@ describe("syncResponse", () => {
 		).toBe(502);
 	});
 
+	it("cannot run script or set cookies, whatever localhost sends", async () => {
+		const res = syncResponse(
+			{
+				kind: "response",
+				result: result(200, "<script>alert(1)</script>", {
+					"content-type": "text/html",
+					"set-cookie": "s=1; Domain=.bridgehook.dev",
+				}),
+			},
+			"e",
+			"GET",
+		);
+		expect(res.headers.get("content-security-policy")).toContain("sandbox");
+		expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+		expect(res.headers.get("set-cookie")).toBeNull();
+	});
+
+	it("1xx goes down the 502 path; 205 is sent without a body", async () => {
+		expect(syncResponse({ kind: "response", result: result(101, "x") }, "e", "POST").status).toBe(
+			502,
+		);
+		const r205 = syncResponse({ kind: "response", result: result(205, "x") }, "e", "POST");
+		expect(r205.status).toBe(205);
+		expect(await r205.text()).toBe("");
+	});
+
+	it("keeps localhost's own CORS origin", () => {
+		const res = syncResponse(
+			{
+				kind: "response",
+				result: result(200, "x", { "access-control-allow-origin": "https://app.example" }),
+			},
+			"e",
+			"POST",
+		);
+		expect(res.headers.get("access-control-allow-origin")).toBe("https://app.example");
+	});
+
 	it("sends no body for HEAD and 204", async () => {
 		expect(
 			await syncResponse({ kind: "response", result: result(200, "x") }, "e", "HEAD").text(),
