@@ -25,6 +25,8 @@
  * the SW is alive.
  */
 
+import { QueueDrainer } from "./drain.js";
+
 const RELAY_URL = "https://relay.bridgehook.dev";
 /**
  * Apex for channel webhook URLs (`https://<channelId>.bridgehook.dev`). The
@@ -35,13 +37,16 @@ const channelWebhookUrl = (channelId) => `https://${channelId}.${WEBHOOK_DOMAIN}
 /** Events fetched per page when draining a channel's delivery queue. */
 const PENDING_PAGE_SIZE = 100;
 /**
- * Longest a local handler may take before the attempt counts as failed.
- * Generous on purpose: stepping through a handler on a breakpoint must not
- * fail the webhook (the claim heartbeat keeps it ours meanwhile), but a
- * handler that never answers must not hold the queue forever. Three such
- * timeouts skip the event (see MAX_FORWARD_ATTEMPTS).
+ * Longest a local handler may take. Chrome stops an extension service worker
+ * when a fetch() response takes more than 30 seconds (measured from Chrome's
+ * service-worker lifecycle docs on 2026-10-08), so the extension records its
+ * own timeout first. A timeout is recorded once and not resent, since the
+ * handler may still be running. The dashboard tab waits 5 minutes, for
+ * breakpoints.
  */
-const LOCALHOST_TIMEOUT_MS = 5 * 60 * 1000;
+const LOCALHOST_TIMEOUT_MS = 25 * 1000;
+/** chrome.storage.session key of forwards in flight, by event id. */
+const INFLIGHT_KEY = "bh_inflight_v1";
 const WEB_URL = "https://app.bridgehook.dev";
 
 // ── Storage keys ─────────────────────────────────────────────────────
@@ -119,11 +124,7 @@ async function refreshAccount() {
 				});
 			}
 			// Kick off (or keep) the push-based stream.
-			if (prevSource !== "session") {
-				startUserStream().catch((err) => {
-					console.warn("[BridgeHook] start stream failed:", err);
-				});
-			}
+			ensureUserStream();
 			return account;
 		}
 	} catch {
@@ -148,10 +149,11 @@ async function refreshAccount() {
 					plan: typeof me.plan === "string" ? me.plan : null,
 					deviceLabel: device.label ?? null,
 				};
-				// Device-mode can't use /api/me/stream (cookie-only). Tear
-				// down any session-mode stream we still hold and fall back
-				// to polling.
-				if (prevSource === "session") stopUserStream();
+				// The relay accepts the device token on /api/me/stream too, so
+				// a paired extension gets push delivery with no dashboard
+				// session. A stream opened with the cookie stays valid (same
+				// user); a new one authenticates with the token.
+				ensureUserStream();
 				return account;
 			}
 		} catch {
@@ -168,7 +170,7 @@ async function refreshAccount() {
 		plan: null,
 		deviceLabel: null,
 	};
-	if (prevSource === "session") stopUserStream();
+	if (prevSource) stopUserStream();
 	return account;
 }
 
@@ -199,7 +201,7 @@ const pollingControllers = new Map();
 
 // ── User-level SSE stream (push-based webhook delivery) ──────────────
 //
-// Session-mode only: /api/me/stream requires a Better-Auth cookie. When
+// /api/me/stream accepts the session cookie or the device token. When
 // connected, the relay pushes webhook / response / claim frames the
 // moment they land, so localhost forwarding starts within ~ms of the
 // upstream provider's POST. Polling stays as catch-up.
@@ -210,6 +212,18 @@ let userStreamController = null;
 let userStreamBackoffMs = 1000;
 /** True between the "connected" frame and stream teardown. */
 let userStreamConnected = false;
+/** The user the open stream belongs to; a different sign-in restarts it. */
+let userStreamUserId = null;
+
+/** Start the stream, or restart it if it belongs to another user. */
+function ensureUserStream() {
+	if (userStreamController && userStreamUserId !== (account.user?.id ?? null)) stopUserStream();
+	if (!userStreamController) {
+		startUserStream().catch((err) => {
+			console.warn("[BridgeHook] start stream failed:", err);
+		});
+	}
+}
 
 /**
  * @typedef {Object} BridgeService
@@ -504,19 +518,45 @@ async function claimEvent(channelId, eventId) {
 
 async function sendResponseToRelay(channelId, eventId, response) {
 	const device = await getStoredDeviceToken();
-	const body = JSON.stringify({
-		eventId,
-		status: response.status,
-		headers: response.headers,
-		body: response.body,
-		latencyMs: response.latencyMs,
-		deviceId: device?.deviceId,
-	});
-	await signedFetch(channelId, `${RELAY_URL}/hook/${channelId}/response`, {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body,
-	});
+	const post = (r) =>
+		signedFetch(channelId, `${RELAY_URL}/hook/${channelId}/response`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				eventId,
+				status: r.status,
+				headers: r.headers,
+				body: r.body,
+				latencyMs: r.latencyMs,
+				deviceId: device?.deviceId,
+			}),
+		});
+	let res = await post(response);
+	// The relay keeps at most 1 MB of body and 32 KB of headers. Store what
+	// fits rather than leave the event queued (it would be delivered again).
+	if (res.status === 413 || res.status === 431) res = await post(fitResponse(response));
+	if (!res.ok) throw new Error(`Relay did not store the answer: ${res.status}`);
+}
+
+const MAX_STORED_BODY_BYTES = 1_048_576;
+
+function fitResponse(r) {
+	const enc = new TextEncoder();
+	const bytes = enc.encode(r.body ?? "");
+	const note = `\n\n[BridgeHook: response body truncated from ${bytes.length} bytes]`;
+	const room = MAX_STORED_BODY_BYTES - enc.encode(note).length - 1024;
+	const body =
+		bytes.length > room
+			? new TextDecoder().decode(bytes.slice(0, room)).replace(/\uFFFD+$/, "") + note
+			: r.body;
+	const headers = {};
+	let size = 0;
+	for (const [k, v] of Object.entries(r.headers ?? {})) {
+		size += enc.encode(k).length + enc.encode(v).length + 4;
+		if (size > 16 * 1024) break;
+		headers[k] = v;
+	}
+	return { ...r, body, headers };
 }
 
 // ── Sign-in handoff ──────────────────────────────────────────────────
@@ -714,11 +754,18 @@ async function forwardToLocalhost(event, port, servicePath) {
 		const latencyMs = Math.round(performance.now() - start);
 		const msg =
 			err?.name === "TimeoutError"
-				? `localhost:${port} did not respond within ${LOCALHOST_TIMEOUT_MS / 60000} minutes.`
+				? `localhost:${port} did not respond within ${LOCALHOST_TIMEOUT_MS / 1000} seconds (the extension's limit; the dashboard tab waits 5 minutes).`
 				: err.message?.includes("Failed to fetch")
 					? `Connection refused — is localhost:${port} running?`
 					: err.message;
-		return { status: 0, headers: {}, body: "", latencyMs, error: msg };
+		return {
+			status: 0,
+			headers: {},
+			body: "",
+			latencyMs,
+			error: msg,
+			timedOut: err?.name === "TimeoutError",
+		};
 	}
 }
 
@@ -750,25 +797,29 @@ function handleUserStreamFrame(frame) {
 /**
  * Open a streaming-fetch SSE connection to /api/me/stream. The relay
  * pushes webhook frames the moment they land, so localhost forwarding
- * is push-based when the user is signed in via dashboard cookie.
+ * is push-based whenever the extension is signed in (cookie or device
+ * token).
  *
  * Reconnects with exponential backoff up to 30s; stops cleanly when
- * the account loses session-mode or the SW tears down.
+ * the account signs out or the SW tears down.
  */
 async function startUserStream() {
 	if (userStreamController) return;
-	if (account.source !== "session") return;
+	if (!account.source) return;
 
 	const controller = new AbortController();
 	userStreamController = controller;
+	userStreamUserId = account.user?.id ?? null;
 
 	try {
-		const res = await fetch(`${RELAY_URL}/api/me/stream`, {
-			method: "GET",
-			credentials: "include",
-			headers: { Accept: "text/event-stream" },
-			signal: controller.signal,
-		});
+		const res = await fetch(
+			`${RELAY_URL}/api/me/stream`,
+			await withAuth({
+				method: "GET",
+				headers: { Accept: "text/event-stream" },
+				signal: controller.signal,
+			}),
+		);
 		if (!res.ok || !res.body) {
 			throw new Error(`stream failed (${res.status})`);
 		}
@@ -813,7 +864,7 @@ async function startUserStream() {
 	const delay = userStreamBackoffMs;
 	userStreamBackoffMs = Math.min(userStreamBackoffMs * 2, 30_000);
 	setTimeout(() => {
-		if (account.source === "session" && !userStreamController) {
+		if (account.source && !userStreamController) {
 			startUserStream().catch((err) => {
 				console.warn("[BridgeHook] stream reconnect failed:", err);
 			});
@@ -827,37 +878,30 @@ function stopUserStream() {
 		userStreamController = null;
 	}
 	userStreamConnected = false;
+	userStreamUserId = null;
 }
 
 // ── Bridge loop (ordered queue drain, woken by SSE, backed by polling) ──
 //
-// Every service forwards through one serialized drain of the channel's
-// delivery queue (`GET /api/channels/:id/events?pending=1`, oldest first):
+// Every service forwards through QueueDrainer (./drain.js, generated from
+// apps/web/src/lib/drain.ts), the same algorithm the dashboard tab runs, so
+// the extension and a tab on the same channel cannot disagree:
 //
-//   • On start — including when the browser opens after being closed — the
-//     drain walks the whole backlog page by page, so webhooks that arrived
-//     while nobody was listening are delivered, in arrival order.
-//   • Live — an SSE frame from /api/me/stream does not forward directly; it
-//     wakes the drain. That keeps one ordered path for live and backlog
-//     events alike, so a fresh webhook can never overtake an older one.
-//   • Fallback — a timer re-runs the drain (2s without SSE, 15s with it).
+//   • the channel's delivery queue (`?pending=1`) is drained oldest first,
+//     page by page, so webhooks that arrived while Chrome was closed are
+//     delivered in arrival order
+//   • each event is claimed before forwarding and the claim refreshed while
+//     localhost works; an event another executor holds stops the pass, so
+//     nothing newer overtakes it, and the pass is retried in 15s (claims go
+//     stale after 60s)
+//   • localhost down: stop at that event and retry every 5s, probing before
+//     claiming; outages never count against the event
+//   • localhost up but the event keeps failing: after MAX_ATTEMPTS record
+//     status 0 and move on; a handler that times out is recorded once
+//   • an answer the relay refuses is re-sent, never the webhook
 //
-// Each event is claimed before forwarding, so with several executors on one
-// channel (extension, dashboard tab, desktop app) exactly one forwards it.
-// The claim is refreshed every CLAIM_HEARTBEAT_MS while localhost works on
-// it, so a slow handler (or one paused on a breakpoint) is not handed to a
-// second executor by the relay's 60s stale-claim takeover.
-//
-// When forwarding fails the drain stops at that event, so nothing later is
-// delivered ahead of it:
-//   • localhost down (a liveness probe fails): wait and retry; outages do
-//     not count against the event, however long they last
-//   • localhost up but this event keeps failing: after MAX_FORWARD_ATTEMPTS
-//     the failure is recorded on the relay (status 0) and the drain moves on,
-//     so one payload that crashes the handler cannot hold the queue forever
-
-const MAX_FORWARD_ATTEMPTS = 3;
-const CLAIM_HEARTBEAT_MS = 20000;
+// SSE frames from /api/me/stream wake the drain; a timer backs it up (2s
+// without SSE, 15s with it).
 
 /** True when something is listening on localhost:<port> (any HTTP answer). */
 async function localhostReachable(port) {
@@ -888,110 +932,98 @@ function noteLocalhostDown(service, message) {
 }
 
 /**
- * Forward one queued event. Returns:
- *   "done"        — answered (forwarded, or given up on and recorded)
- *   "skipped"     — another executor holds it right now, or already handled
- *   "retry-later" — leave it queued and stop this pass
+ * Forwards in flight survive in chrome.storage.session. If Chrome stopped the
+ * worker mid-forward anyway, the event is recorded as timed out on restart
+ * instead of being sent to a handler that may still be running.
  */
-async function forwardEventThroughBridge(service, evt) {
-	if (!service.active) return "skipped";
-	if (!service._handled) service._handled = new Set();
-	if (!service._attempts) service._attempts = new Map();
-	if (service._handled.has(evt.id)) return "skipped";
-
-	const attempts = service._attempts.get(evt.id) ?? 0;
-	// On a retry, check the server is up before re-sending: an outage should
-	// not burn the event's attempts, and nothing should be sent into it.
-	if (attempts > 0 || service._localhostDown) {
-		if (!(await localhostReachable(service.port))) {
-			noteLocalhostDown(service, `Connection refused — is localhost:${service.port} running?`);
-			return "retry-later";
-		}
-	}
-
-	// Not added to _handled when another executor holds it: if that claim goes
-	// stale (tab closed, its forward failed) a later pass takes it over.
-	if (!(await claimEvent(service.channelId, evt.id))) return "skipped";
-
-	const heartbeat = setInterval(() => {
-		claimEvent(service.channelId, evt.id).catch(() => {});
-	}, CLAIM_HEARTBEAT_MS);
-	let result;
-	try {
-		result = await forwardToLocalhost(evt, service.port, service.path);
-	} finally {
-		clearInterval(heartbeat);
-	}
-
-	if (result.error) {
-		if (!(await localhostReachable(service.port))) {
-			noteLocalhostDown(service, result.error);
-			return "retry-later";
-		}
-		const tries = attempts + 1;
-		if (tries < MAX_FORWARD_ATTEMPTS) {
-			service._attempts.set(evt.id, tries);
-			service.status = "error";
-			service.error = `${result.error} (attempt ${tries} of ${MAX_FORWARD_ATTEMPTS})`;
-			broadcastStatus();
-			return "retry-later";
-		}
-		// Localhost is up but this event fails every time: record it and move
-		// on rather than block every newer webhook behind it.
-		service._attempts.delete(evt.id);
-		service._handled.add(evt.id);
-		service.errorCount = (service.errorCount || 0) + 1;
-		chrome.notifications.create({
-			type: "basic",
-			iconUrl: "icons/icon-128.png",
-			title: "BridgeHook",
-			message: `${service.name}: a ${evt.method || "POST"} ${evt.path || "/"} webhook failed ${MAX_FORWARD_ATTEMPTS} times while localhost:${service.port} was up; skipped it. Replay it from the dashboard.`,
-		});
-		try {
-			await sendResponseToRelay(service.channelId, evt.id, {
-				status: 0,
-				headers: {},
-				body: `BridgeHook: forwarding failed ${MAX_FORWARD_ATTEMPTS} times while localhost:${service.port} was reachable. Last error: ${result.error}`,
-				latencyMs: result.latencyMs,
-			});
-		} catch (err) {
-			console.warn(`[BridgeHook] failure upload failed for ${evt.id}:`, err);
-		}
-		broadcastStatus();
-		return "done";
-	}
-
-	service._localhostDown = false;
-	service._attempts.delete(evt.id);
-	service._handled.add(evt.id);
-	service.eventCount = (service.eventCount || 0) + 1;
-	if (result.status >= 400) service.errorCount = (service.errorCount || 0) + 1;
-	try {
-		await sendResponseToRelay(service.channelId, evt.id, result);
-	} catch (err) {
-		console.warn(`[BridgeHook] response upload failed for ${evt.id}:`, err);
-	}
-	broadcastStatus();
-	return "done";
+async function markInflight(eventId, startedAt) {
+	const out = await chrome.storage.session.get(INFLIGHT_KEY);
+	const map = out[INFLIGHT_KEY] ?? {};
+	if (startedAt === null) delete map[eventId];
+	else map[eventId] = startedAt;
+	await chrome.storage.session.set({ [INFLIGHT_KEY]: map });
 }
 
-/**
- * Walk the delivery queue oldest-first until it is empty, localhost is down,
- * or the bridge is stopped. Returns false when it stopped on a localhost
- * failure.
- */
-async function drainQueue(service, signal) {
-	let after = null;
-	do {
-		if (signal.aborted) return true;
-		const page = await fetchPendingPage(service.channelId, after);
-		for (const evt of page.events) {
-			if (signal.aborted) return true;
-			if ((await forwardEventThroughBridge(service, evt)) === "retry-later") return false;
-		}
-		after = page.nextCursor;
-	} while (after);
-	return true;
+async function inflightSince(eventId) {
+	const out = await chrome.storage.session.get(INFLIGHT_KEY);
+	return out[INFLIGHT_KEY]?.[eventId] ?? null;
+}
+
+function drainerFor(service, signal) {
+	const refused = `Connection refused — is localhost:${service.port} running?`;
+	// A stopped bridge's last in-flight work must not touch the service's
+	// status: the user turned it off.
+	const live = () => !signal.aborted;
+	const showRetry = (message) => {
+		if (!live()) return;
+		service.status = "error";
+		service.error = message;
+		broadcastStatus();
+	};
+	return new QueueDrainer({
+		fetchPending: (after) => fetchPendingPage(service.channelId, after),
+		claim: (eventId) => claimEvent(service.channelId, eventId),
+		probe: async () =>
+			(await localhostReachable(service.port))
+				? { state: "ok" }
+				: { state: "down", message: refused },
+		forward: async (evt) => {
+			const since = await inflightSince(evt.id);
+			if (since !== null) {
+				await markInflight(evt.id, null);
+				return {
+					kind: "timeout",
+					message: `Chrome stopped the extension while localhost:${service.port} was still handling this webhook (no answer within about 30 seconds). It was not resent; forward slow handlers from the dashboard tab.`,
+					latencyMs: Date.now() - since,
+				};
+			}
+			await markInflight(evt.id, Date.now());
+			let r;
+			try {
+				r = await forwardToLocalhost(evt, service.port, service.path);
+			} finally {
+				await markInflight(evt.id, null);
+			}
+			if (!r.error) {
+				return {
+					kind: "response",
+					result: { status: r.status, headers: r.headers, body: r.body, latencyMs: r.latencyMs },
+				};
+			}
+			if (r.timedOut) return { kind: "timeout", message: r.error, latencyMs: r.latencyMs };
+			if (!(await localhostReachable(service.port))) return { kind: "down", message: r.error };
+			showRetry(`${r.error} (retrying, up to 3 attempts)`);
+			return { kind: "failed", message: r.error, latencyMs: r.latencyMs };
+		},
+		report: async (evt, result) => {
+			try {
+				await sendResponseToRelay(service.channelId, evt.id, result);
+			} catch (err) {
+				showRetry(`Could not store the answer on the relay: ${err.message}. Retrying.`);
+				throw err;
+			}
+		},
+		onDelivered: (_evt, result) => {
+			service.eventCount = (service.eventCount || 0) + 1;
+			if (result.status >= 400) service.errorCount = (service.errorCount || 0) + 1;
+			if (live()) broadcastStatus();
+		},
+		onSkipped: (evt, message) => {
+			service.errorCount = (service.errorCount || 0) + 1;
+			chrome.notifications.create({
+				type: "basic",
+				iconUrl: "icons/icon-128.png",
+				title: "BridgeHook",
+				message: `${service.name}: ${evt.method || "POST"} ${evt.path || "/"} was not delivered (${message.length > 120 ? `${message.slice(0, 117)}…` : message}). Replay it from the dashboard.`,
+			});
+			if (live()) broadcastStatus();
+		},
+		onLocalhost: (state, message) => {
+			if (!live()) return;
+			if (state === "down") noteLocalhostDown(service, message ?? refused);
+			else if (state === "ok") service._localhostDown = false;
+		},
+	});
 }
 
 function startBridge(service) {
@@ -999,34 +1031,40 @@ function startBridge(service) {
 
 	const controller = new AbortController();
 	pollingControllers.set(service.id, controller);
-
-	if (!service._handled) service._handled = new Set();
+	const drainer = drainerFor(service, controller.signal);
+	// A pass of the previous drainer may still be forwarding (stop() lets it
+	// finish); the new one waits for it, so the same event is never in flight
+	// twice from this install.
+	const previousPass = service._pass ?? Promise.resolve();
+	service._drainer = drainer;
+	service._localhostDown = false;
 	let consecutiveErrors = 0;
 	let running = false;
-	let wakeAgain = false;
 	let timer = null;
 
 	async function run() {
 		if (controller.signal.aborted) return;
 		if (running) {
-			wakeAgain = true; // an SSE frame arrived mid-drain; go round again
+			drainer.wake(); // an SSE frame arrived mid-drain: one more pass
 			return;
 		}
 		running = true;
 		clearTimeout(timer);
-		let localhostOk = true;
+		let result = "idle";
 		try {
-			do {
-				wakeAgain = false;
-				localhostOk = await drainQueue(service, controller.signal);
-			} while (wakeAgain && localhostOk && !controller.signal.aborted);
+			await previousPass.catch(() => {});
+			const pass = drainer.wake();
+			service._pass = pass;
+			result = await pass;
 			consecutiveErrors = 0;
-			if (localhostOk) {
+			if (controller.signal.aborted) return;
+			if (result !== "retry") {
 				service.status = "connected";
 				service.error = null;
 			}
 			broadcastStatus();
 		} catch (err) {
+			if (controller.signal.aborted) return;
 			consecutiveErrors++;
 			service.status = err?.kind === "quota" ? "limit" : "error";
 			service.error = err.message;
@@ -1035,25 +1073,31 @@ function startBridge(service) {
 			running = false;
 		}
 		if (controller.signal.aborted) return;
-		// quota: 30s, nothing will change before the reset.
-		// localhost down: retry the queued event every 5s.
+		// quota: 30s, nothing changes before the reset.
+		// localhost or relay trouble on an event: retry it in 5s.
+		// another executor holds the oldest event: look again in 15s.
 		// relay errors: back off to 10s.
-		// SSE healthy: 15s safety net; SSE frames wake the drain instantly.
+		// SSE healthy: 15s safety net; frames wake the drain at once.
 		const delay =
 			service.status === "limit"
 				? 30000
-				: !localhostOk
+				: result === "retry"
 					? 5000
-					: consecutiveErrors > 3
-						? 10000
-						: userStreamConnected
-							? 15000
-							: 2000;
+					: result === "blocked"
+						? 15000
+						: consecutiveErrors > 3
+							? 10000
+							: userStreamConnected
+								? 15000
+								: 2000;
 		timer = setTimeout(run, delay);
 	}
 
 	service._wake = run;
-	controller.signal.addEventListener("abort", () => clearTimeout(timer));
+	controller.signal.addEventListener("abort", () => {
+		clearTimeout(timer);
+		drainer.stop();
+	});
 	run();
 }
 
@@ -1068,6 +1112,7 @@ function stopBridge(serviceId) {
 		service.status = "disconnected";
 		service.error = null;
 		service._wake = null;
+		service._drainer = null;
 	}
 }
 // ── Storage / CRUD ───────────────────────────────────────────────────
@@ -1325,7 +1370,7 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 	} else {
 		await refreshAccount();
 		await ensurePollingForActiveServices();
-		if (account.source === "session" && !userStreamController) {
+		if (account.source && !userStreamController) {
 			startUserStream().catch((err) => {
 				console.warn("[BridgeHook] start stream failed:", err);
 			});

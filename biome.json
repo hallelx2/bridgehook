@@ -32,6 +32,14 @@
 		}
 	},
 	"files": {
-		"ignore": ["node_modules", "dist", "target", ".tauri", ".wrangler", "relay/migrations/meta"]
+		"ignore": [
+			"node_modules",
+			"dist",
+			"target",
+			".tauri",
+			".wrangler",
+			"relay/migrations/meta",
+			"apps/extension/drain.js"
+		]
 	}
 }
