@@ -59,7 +59,7 @@ export function Introduction() {
 					{
 						title: "Copy the URL",
 						desc: "The same port always gets the same URL. Paste it into Stripe, OpenAI, Vapi or any provider once.",
-						code: "https://2324radf23r.bridgehook.dev",
+						code: "https://8f3a2c1d9e4b.bridgehook.dev",
 						color: "#FF5C26",
 					},
 					{

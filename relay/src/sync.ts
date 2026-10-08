@@ -67,6 +67,10 @@ const DROP_HEADERS = new Set([
  * these stop it from running script or being sniffed into something
  * executable, whatever its content type. Server-to-server senders ignore them.
  */
+/** Bodies of the relay's own sync answers, so callers can tell them from a handler's. */
+export const SYNC_TIMEOUT_ERROR = "Your local server did not answer in time";
+export const SYNC_UNREACHABLE_ERROR = "Your local server could not be reached";
+
 export const SYNC_SAFETY_HEADERS: Record<string, string> = {
 	"Content-Security-Policy": "sandbox; default-src 'none'",
 	"X-Content-Type-Options": "nosniff",
@@ -102,7 +106,7 @@ export function syncResponse(
 	if (outcome.kind === "timeout") {
 		return Response.json(
 			{
-				error: "Your local server did not answer in time",
+				error: SYNC_TIMEOUT_ERROR,
 				eventId,
 				hint: "Is the BridgeHook extension (or a dashboard tab) running for this URL? The event stays queued and will still be delivered.",
 			},
@@ -118,7 +122,7 @@ export function syncResponse(
 	if (!Number.isInteger(result.status) || result.status < 200 || result.status > 599) {
 		return Response.json(
 			{
-				error: "Your local server could not be reached",
+				error: SYNC_UNREACHABLE_ERROR,
 				eventId,
 				detail: result.body.slice(0, 500),
 			},

@@ -85,7 +85,7 @@ export function OpenAIGuide() {
 				<li>Add your port in BridgeHook and copy the URL, plus your route, for example:</li>
 			</ol>
 			<pre>
-				<code>https://2324radf23r.bridgehook.dev/api/webhooks/openai</code>
+				<code>https://8f3a2c1d9e4b.bridgehook.dev/api/webhooks/openai</code>
 			</pre>
 			<ol start={2}>
 				<li>
@@ -154,7 +154,7 @@ export function ElevenLabsGuide() {
 				</li>
 				<li>
 					Set the tool URL to your channel URL plus route, for example{" "}
-					<code>https://2324radf23r.bridgehook.dev/tools/lookup-order</code>.
+					<code>https://8f3a2c1d9e4b.bridgehook.dev/tools/lookup-order</code>.
 				</li>
 				<li>
 					Your local handler&apos;s JSON reply is what the agent receives. If it does not answer
@@ -291,7 +291,7 @@ export function VapiGuide() {
 				</li>
 				<li>
 					Set the assistant&apos;s (or tool&apos;s) server URL to your channel URL plus route, for
-					example <code>https://2324radf23r.bridgehook.dev/vapi/tools</code>.
+					example <code>https://8f3a2c1d9e4b.bridgehook.dev/vapi/tools</code>.
 				</li>
 			</ol>
 

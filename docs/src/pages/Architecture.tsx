@@ -82,8 +82,8 @@ export function Architecture() {
 			<p>
 				The relay does little per webhook: validate, store, notify. The expensive part, waiting on
 				your handler, happens in your browser, and a sync wait parks in a Durable Object rather than
-				a running Worker. Storage stays bounded because each plan&apos;s event history is swept on a
-				schedule.
+				a running Worker. Paid plans&apos; event history is swept on a schedule, and demo channels
+				expire after an hour and are deleted by the hourly cron.
 			</p>
 		</>
 	);

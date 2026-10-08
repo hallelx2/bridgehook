@@ -4,8 +4,9 @@ export function SSEEvents() {
 			<h1>SSE Events</h1>
 			<p>
 				<code>GET /api/me/stream</code> is a per-user Server-Sent Events stream covering all of your
-				channels. It needs the session cookie. Frames are JSON in <code>data:</code> lines, and a
-				comment frame every 20 seconds keeps the connection open.
+				channels. It accepts the session cookie or a device token (
+				<code>Authorization: Bearer dvc_…</code>). Frames are JSON in <code>data:</code> lines, and
+				a comment frame every 20 seconds keeps the connection open.
 			</p>
 
 			<h2>connected</h2>
@@ -20,7 +21,7 @@ export function SSEEvents() {
 				<code>{`{
   "type": "webhook",
   "id": "…",
-  "channelId": "2324radf23r",
+  "channelId": "8f3a2c1d9e4b",
   "method": "POST",
   "path": "/api/webhooks/stripe",
   "headers": { "content-type": "application/json", "stripe-signature": "t=…,v1=…" },
@@ -32,14 +33,14 @@ export function SSEEvents() {
 			<h2>claimed</h2>
 			<p>A forwarder claimed an event and is delivering it.</p>
 			<pre>
-				<code>{`{ "type": "claimed", "eventId": "…", "channelId": "2324radf23r",
+				<code>{`{ "type": "claimed", "eventId": "…", "channelId": "8f3a2c1d9e4b",
   "claimerId": "web_…", "claimedAt": "…" }`}</code>
 			</pre>
 
 			<h2>response</h2>
 			<p>Your server&apos;s answer was reported.</p>
 			<pre>
-				<code>{`{ "type": "response", "eventId": "…", "channelId": "2324radf23r",
+				<code>{`{ "type": "response", "eventId": "…", "channelId": "8f3a2c1d9e4b",
   "status": 200, "latencyMs": 12 }`}</code>
 			</pre>
 
@@ -57,8 +58,8 @@ source.onmessage = (msg) => {
 			</pre>
 			<p>
 				Treat a <code>webhook</code> frame as a signal to read the delivery queue, not as the work
-				itself: the queue is ordered and survives disconnects, the stream does not. Device-token
-				clients (the extension without a browser session) cannot open this stream and poll instead.
+				itself: the queue is ordered and survives disconnects, the stream does not. Forwarders also
+				poll on a timer, so a dropped stream only delays delivery.
 			</p>
 		</>
 	);

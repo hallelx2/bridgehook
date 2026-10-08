@@ -144,7 +144,7 @@ bearer_token_env_var = "BRIDGEHOOK_TOKEN"   # export BRIDGEHOOK_TOKEN=dvc_…`}<
 				<code>
 					Use BridgeHook to send a signed Stripe checkout.session.completed to my app on port 3000
 					at /api/webhooks/stripe (secret whsec_…), then fix whatever the handler gets wrong and
-					replay until it returns 200.
+					send it again until it returns 200.
 				</code>
 			</pre>
 		</>

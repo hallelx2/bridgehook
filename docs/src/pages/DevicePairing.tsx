@@ -110,9 +110,9 @@ export function DevicePairing() {
 
 			<Callout icon="🧹" title="Cron sweep" color="#28c840">
 				Pending device codes expire after 15 minutes. The hourly cron deletes any{" "}
-				<code>device_codes</code> rows past <code>expires_at</code>; the same cron also runs the
-				per-plan event retention sweep. Both run only when <code>BETTER_AUTH_SECRET</code> is set,
-				self-host instances skip both branches.
+				<code>device_codes</code> rows past <code>expires_at</code> and expired demo channels. The
+				same cron runs the per-plan event retention sweep, which is skipped on self-hosted relays
+				(no <code>BETTER_AUTH_SECRET</code>).
 			</Callout>
 
 			<h2>Self-host mode</h2>

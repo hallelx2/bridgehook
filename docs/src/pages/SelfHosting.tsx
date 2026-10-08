@@ -7,10 +7,10 @@ export function SelfHosting() {
 			<p>BridgeHook is fully open source. You can run the entire stack yourself.</p>
 
 			<Callout icon="🔓" title="Self-host = no quotas, no paywalls" color="#28c840">
-				When you run the relay without a <code>BETTER_AUTH_SECRET</code>, every channel attaches to
-				a single implicit user on the <code>selfhost</code> tier: unlimited channels and devices, no
-				retention sweep, no Billing page. Hosted and self-hosted run the same code; which variables
-				you set decides the mode.
+				When you run the relay without a <code>BETTER_AUTH_SECRET</code>, every channel you create
+				attaches to a single implicit user on the <code>selfhost</code> tier: unlimited channels and
+				devices, no retention sweep, no Billing page. Hosted and self-hosted run the same code;
+				which variables you set decides the mode.
 			</Callout>
 
 			<h2>What You Need</h2>
@@ -78,6 +78,9 @@ pnpm db:migrate:remote   # your Cloudflare D1, before deploying`}</code>
 # MAIL_FROM=BridgeHook <noreply@yourdomain.com>
 # GITHUB_CLIENT_ID=... GITHUB_CLIENT_SECRET=...
 # GOOGLE_CLIENT_ID=... GOOGLE_CLIENT_SECRET=...
+
+# Optional: "off" disables the landing-page demo (POST /api/demo/channels)
+# DEMO_CHANNELS=off
 
 # Optional: leave unset to disable the Billing page entirely
 # POLAR_ACCESS_TOKEN=...

@@ -1,12 +1,20 @@
 import { ArrowRight, Check, Clipboard, Loader2, RefreshCw, Terminal, Zap } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { deleteChannelKey } from "../lib/crypto";
 import { createDemoChannel, pollEvents } from "../lib/relay";
 import type { WebhookEventData } from "../lib/relay";
 
 type DemoState =
 	| { kind: "idle" }
 	| { kind: "creating" }
-	| { kind: "live"; channelId: string; webhookUrl: string }
+	| {
+			kind: "live";
+			channelId: string;
+			webhookUrl: string;
+			expiresAt: number;
+			maxEvents: number;
+	  }
+	| { kind: "expired" }
 	| { kind: "error"; message: string };
 
 /**
@@ -39,38 +47,65 @@ export function HeroLiveDemo() {
 		return () => clearTimeout(t);
 	}, [copied]);
 
+	const channelRef = useRef<string | null>(null);
+	const expiryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+	/** Stop polling and forget this demo channel's key. */
+	const teardown = useCallback(() => {
+		stopPollRef.current?.();
+		stopPollRef.current = null;
+		if (expiryTimerRef.current) clearTimeout(expiryTimerRef.current);
+		expiryTimerRef.current = null;
+		const id = channelRef.current;
+		channelRef.current = null;
+		if (id) deleteChannelKey(id).catch(() => {});
+	}, []);
+
+	useEffect(() => teardown, [teardown]);
+
+	const expire = useCallback(() => {
+		teardown();
+		setState({ kind: "expired" });
+	}, [teardown]);
+
 	const start = useCallback(async () => {
+		teardown();
 		try {
 			setState({ kind: "creating" });
 			setEvents([]);
 			const channel = await createDemoChannel();
+			const expiresAt = channel.expiresAt ? Date.parse(channel.expiresAt) : Date.now() + 3_600_000;
+			channelRef.current = channel.channelId;
 			setState({
 				kind: "live",
 				channelId: channel.channelId,
 				webhookUrl: channel.webhookUrl,
+				expiresAt,
+				maxEvents: channel.maxEvents ?? 50,
 			});
-			const stop = pollEvents(
+			expiryTimerRef.current = setTimeout(expire, Math.max(0, expiresAt - Date.now()));
+			stopPollRef.current = pollEvents(
 				channel.channelId,
 				(evts) => {
 					if (evts.length > 0) setEvents(evts);
 				},
-				() => {
-					// Transient polling failures are not fatal — keep trying silently.
+				(err) => {
+					// The cron deletes expired demo channels: a 404 means it is gone.
+					// Other failures are transient; polling keeps trying.
+					if (/\b404\b/.test(err.message)) expire();
 				},
 				2000,
 			);
-			stopPollRef.current = stop;
 		} catch (err) {
 			setState({ kind: "error", message: (err as Error).message });
 		}
-	}, []);
+	}, [teardown, expire]);
 
 	const reset = useCallback(() => {
-		stopPollRef.current?.();
-		stopPollRef.current = null;
+		teardown();
 		setEvents([]);
 		setState({ kind: "idle" });
-	}, []);
+	}, [teardown]);
 
 	const copyUrl = (url: string) => {
 		navigator.clipboard
@@ -96,8 +131,17 @@ export function HeroLiveDemo() {
 					{state.kind === "live" && (
 						<div className="flex items-center gap-2">
 							<span className="w-1.5 h-1.5 rounded-full bg-success" />
-							<span className="text-[11px] font-bold text-success">Channel live</span>
+							<span className="text-[11px] font-bold text-success">
+								Live until{" "}
+								{new Date(state.expiresAt).toLocaleTimeString([], {
+									hour: "2-digit",
+									minute: "2-digit",
+								})}
+							</span>
 						</div>
+					)}
+					{state.kind === "expired" && (
+						<span className="text-[11px] font-bold text-on-surface-muted">Expired</span>
 					)}
 					{state.kind === "error" && (
 						<span className="text-[11px] font-bold text-danger">Error</span>
@@ -110,12 +154,14 @@ export function HeroLiveDemo() {
 				{state.kind === "live" && (
 					<LiveBody
 						webhookUrl={state.webhookUrl}
+						maxEvents={state.maxEvents}
 						events={events}
 						onCopy={() => copyUrl(state.webhookUrl)}
 						onReset={reset}
 						copied={copied}
 					/>
 				)}
+				{state.kind === "expired" && <ExpiredBody onStart={start} />}
 				{state.kind === "error" && <ErrorBody message={state.message} onRetry={start} />}
 			</div>
 		</div>
@@ -135,7 +181,7 @@ function IdleBody({ onStart }: { onStart: () => void }) {
 					</h3>
 					<p className="text-[13px] text-on-surface-variant leading-relaxed">
 						No signup. A real URL that records requests for an hour: curl it and watch them land
-						here. Sign up and it becomes permanent and forwards to your localhost.
+						here. Sign up for a permanent URL that forwards to your localhost.
 					</p>
 				</div>
 			</div>
@@ -160,14 +206,38 @@ function CreatingBody() {
 	);
 }
 
+function ExpiredBody({ onStart }: { onStart: () => void }) {
+	return (
+		<div className="px-6 py-8 text-left">
+			<h3 className="text-lg font-bold text-on-surface tracking-tight mb-1">
+				This demo URL has expired
+			</h3>
+			<p className="text-[13px] text-on-surface-variant leading-relaxed mb-6">
+				Demo URLs last an hour. Generate another, or sign up for a permanent URL that forwards to
+				your localhost.
+			</p>
+			<button
+				type="button"
+				onClick={onStart}
+				className="inline-flex items-center gap-2 px-5 py-3 bg-primary text-background font-bold rounded-lg text-[14px] hover:bg-primary-dim transition-colors"
+			>
+				Generate a new demo URL
+				<ArrowRight size={16} strokeWidth={2.25} />
+			</button>
+		</div>
+	);
+}
+
 function LiveBody({
 	webhookUrl,
+	maxEvents,
 	events,
 	onCopy,
 	onReset,
 	copied,
 }: {
 	webhookUrl: string;
+	maxEvents: number;
 	events: WebhookEventData[];
 	onCopy: () => void;
 	onReset: () => void;
@@ -225,7 +295,7 @@ function LiveBody({
 			<div className="px-5 py-4">
 				<div className="flex items-center justify-between mb-2">
 					<div className="text-[9px] font-bold text-on-surface-muted uppercase tracking-[0.25em]">
-						Incoming requests
+						Incoming requests · {Math.min(events.length, maxEvents)} of {maxEvents}
 					</div>
 					<button
 						type="button"

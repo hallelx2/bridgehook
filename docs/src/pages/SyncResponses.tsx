@@ -68,7 +68,7 @@ export function SyncResponses() {
 				</li>
 			</ul>
 			<pre>
-				<code>{`PATCH /api/me/channels/2324radf23r
+				<code>{`PATCH /api/me/channels/8f3a2c1d9e4b
 { "responseMode": "sync", "syncTimeoutMs": 20000 }`}</code>
 			</pre>
 
@@ -79,7 +79,7 @@ export function SyncResponses() {
 				echo:
 			</p>
 			<pre>
-				<code>{`GET https://2324radf23r.bridgehook.dev/webhook?hub.mode=subscribe&hub.challenge=8231
+				<code>{`GET https://8f3a2c1d9e4b.bridgehook.dev/webhook?hub.mode=subscribe&hub.challenge=8231
 → 200  "8231"`}</code>
 			</pre>
 

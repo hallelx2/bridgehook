@@ -36,7 +36,7 @@ export function Billing() {
 					</tr>
 					<tr>
 						<td>Event history</td>
-						<td>3 days</td>
+						<td>3 days (not yet enforced: older events are currently kept)</td>
 						<td>Kept until you delete it</td>
 					</tr>
 				</tbody>

@@ -30,14 +30,15 @@ export function Replay() {
 			<p>Each event row carries two columns that form the chain:</p>
 			<ul>
 				<li>
-					<code>kind</code>: <code>"live"</code> or <code>"replay"</code>. Indexed; live events are
-					immutable except for response data.
+					<code>kind</code>: <code>"live"</code> or <code>"replay"</code>. Live events are immutable
+					except for response data.
 				</li>
 				<li>
-					<code>replay_of</code>: self-FK pointing at the source event. <code>null</code> on live
-					events. A CHECK constraint enforces{" "}
-					<code>(kind = 'replay') = (replay_of IS NOT NULL)</code> so you can't accidentally orphan
-					one or fake the other.
+					<code>replay_of</code>: self-FK pointing at the source event, <code>null</code> on live
+					events. A CHECK constraint (<code>kind = 'replay' OR replay_of IS NULL</code>) stops a
+					live event from pointing at a source. Deleting a source sets its replays&apos;{" "}
+					<code>replay_of</code> to <code>null</code>, so a replay can outlive the event it came
+					from.
 				</li>
 			</ul>
 			<p>

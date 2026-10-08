@@ -24,7 +24,7 @@ export function Quickstart() {
 					{
 						title: "Copy the URL",
 						desc: "The same port keeps the same URL across restarts. Register it with your provider once.",
-						code: "https://2324radf23r.bridgehook.dev",
+						code: "https://8f3a2c1d9e4b.bridgehook.dev",
 						color: "#FF5C26",
 					},
 					{
@@ -62,7 +62,7 @@ export function Quickstart() {
 
 			<h2>Send a test webhook</h2>
 			<pre>
-				<code>{`curl -X POST https://2324radf23r.bridgehook.dev/api/webhooks/test \\
+				<code>{`curl -X POST https://8f3a2c1d9e4b.bridgehook.dev/api/webhooks/test \\
   -H "Content-Type: application/json" \\
   -d '{"event": "checkout.session.completed"}'`}</code>
 			</pre>

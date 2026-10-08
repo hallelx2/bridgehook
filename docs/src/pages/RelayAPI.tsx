@@ -57,13 +57,13 @@ export function RelayAPI() {
 
 			<h2>Webhook intake</h2>
 			<pre>
-				<code>{`POST https://2324radf23r.bridgehook.dev/api/webhooks/stripe?x=1
+				<code>{`POST https://8f3a2c1d9e4b.bridgehook.dev/api/webhooks/stripe?x=1
 Content-Type: application/json
 
 { "type": "checkout.session.completed", ... }
 
 → 202 Accepted
-{ "received": true, "eventId": "…", "channelId": "2324radf23r" }
+{ "received": true, "eventId": "…", "channelId": "8f3a2c1d9e4b" }
 
 # forwarded to http://localhost:<port>/api/webhooks/stripe?x=1`}</code>
 			</pre>
@@ -74,9 +74,9 @@ Content-Type: application/json
 					an async channel answers with a short description of the URL.
 				</li>
 				<li>
-					<code>403</code> path not allowed, <code>402</code> daily cap reached (
-					<code>code: "quota"</code>), <code>413</code> body over 1 MB, <code>431</code> headers
-					over 32 KB.
+					<code>410</code> the URL has expired (demo URLs), <code>403</code> path not allowed,{" "}
+					<code>402</code> daily cap reached (<code>code: "quota"</code>), <code>413</code> body
+					over 1 MB, <code>431</code> headers over 32 KB.
 				</li>
 				<li>
 					Sync channels: the sender gets your server&apos;s reply, <code>504</code> on timeout or{" "}
@@ -106,11 +106,11 @@ Content-Type: application/json
 
 → 201 Created
 {
-  "channelId": "2324radf23r",
+  "channelId": "8f3a2c1d9e4b",
   "port": 3000,
   "label": "stripe-dev",
   "expiresAt": null,
-  "webhookUrl": "https://2324radf23r.bridgehook.dev",
+  "webhookUrl": "https://8f3a2c1d9e4b.bridgehook.dev",
   "responseMode": "async",
   "syncTimeoutMs": 25000,
   "authScheme": "ecdsa"
@@ -120,6 +120,21 @@ Content-Type: application/json
 				<code>401</code> without a session or device token, <code>402</code> at the plan&apos;s
 				channel limit, <code>429</code> after 10 creates a minute from one IP. Forwarders normally
 				call <code>GET /api/me/channels</code> first and reuse the channel for the port.
+			</p>
+
+			<h3>Demo channel (no account)</h3>
+			<pre>
+				<code>{`POST /api/demo/channels
+{ "publicKey": "04…" }
+
+→ 201 { "channelId": "…", "webhookUrl": "…", "expiresAt": "…", "maxEvents": 50, … }`}</code>
+			</pre>
+			<p>
+				Powers the landing page&apos;s live demo. The channel has no owner and is never forwarded.
+				It expires after an hour (then <code>410</code>), takes at most 50 requests (then{" "}
+				<code>429</code>) of up to 16 KB body and 8 KB headers. Each IP may create 5 an hour, and at
+				most 200 can be live at once (<code>503</code> beyond that). Self-hosted relays can turn it
+				off with <code>DEMO_CHANNELS=off</code> (<code>404</code>).
 			</p>
 
 			<h3>Read and delete</h3>

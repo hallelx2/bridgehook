@@ -48,7 +48,7 @@ export function HowItWorks() {
 
 			<h3>3. The forwarder wakes</h3>
 			<p>
-				The relay notifies your signed-in dashboard and extension over a per-user SSE stream (
+				The relay notifies your dashboard and extension over a per-user SSE stream (
 				<code>/api/me/stream</code>). Forwarders also poll, so nothing depends on that stream
 				staying up: the dashboard tab every 2 seconds, the extension on a 30-second alarm.
 			</p>

@@ -269,7 +269,9 @@ export function Layout({
 				<div className="px-4 py-4 border-t border-white/[0.06] space-y-3">
 					<CopyAllDocs />
 					<a
-						href="#"
+						href="https://github.com/hallelx2/bridgehook"
+						target="_blank"
+						rel="noreferrer"
 						className="flex items-center gap-2 px-3 py-1.5 text-[11px] text-zinc-500 hover:text-primary transition-colors font-body no-underline"
 					>
 						<svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">

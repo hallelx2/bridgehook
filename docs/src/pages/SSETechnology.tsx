@@ -13,14 +13,14 @@ export function SSETechnology() {
 
 			<h2>The per-user stream</h2>
 			<pre>
-				<code>{`GET https://relay.bridgehook.dev/api/me/stream     (session cookie)
+				<code>{`GET https://relay.bridgehook.dev/api/me/stream     (session cookie or device token)
 Content-Type: text/event-stream
 
-data: {"type":"webhook","id":"…","channelId":"2324radf23r","method":"POST","path":"/api/webhooks/stripe","headers":{…},"body":"…","receivedAt":"…"}
+data: {"type":"webhook","id":"…","channelId":"8f3a2c1d9e4b","method":"POST","path":"/api/webhooks/stripe","headers":{…},"body":"…","receivedAt":"…"}
 
-data: {"type":"claimed","eventId":"…","channelId":"2324radf23r","claimerId":"…","claimedAt":"…"}
+data: {"type":"claimed","eventId":"…","channelId":"8f3a2c1d9e4b","claimerId":"…","claimedAt":"…"}
 
-data: {"type":"response","eventId":"…","channelId":"2324radf23r","status":200,"latencyMs":12}`}</code>
+data: {"type":"response","eventId":"…","channelId":"8f3a2c1d9e4b","status":200,"latencyMs":12}`}</code>
 			</pre>
 			<p>
 				One stream per signed-in user carries events for all of their channels. It is held by a
@@ -32,8 +32,8 @@ data: {"type":"response","eventId":"…","channelId":"2324radf23r","status":200,
 					<strong>Dashboard pages</strong> (Overview, Events, Channels) update live from it.
 				</li>
 				<li>
-					<strong>The extension</strong> uses it while you are signed in with a browser session, and
-					polls on a 30-second alarm in device-token mode, which has no cookie.
+					<strong>The extension</strong> subscribes with its device token and also polls on a
+					30-second alarm.
 				</li>
 				<li>
 					<strong>The no-install tab</strong> polls its channel every 2 seconds and drains the queue

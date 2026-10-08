@@ -6,7 +6,7 @@ import { PAGES } from "./registry";
 /** Pages are addressed as `#/<id>` so every page has a URL to link to. */
 function pageFromHash(): string {
 	const id = window.location.hash.replace(/^#\/?/, "").split(/[?#]/)[0];
-	return id in PAGES ? id : "introduction";
+	return Object.hasOwn(PAGES, id) ? id : "introduction";
 }
 
 export function App() {

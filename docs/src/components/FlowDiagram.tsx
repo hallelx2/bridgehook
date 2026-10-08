@@ -122,7 +122,7 @@ export function DataFlowDiagram() {
 					{
 						step: "1",
 						from: "Stripe",
-						action: "POST /2324radf23r",
+						action: "POST /8f3a2c1d9e4b",
 						to: "Relay",
 						color: "#ffb0cd",
 					},
