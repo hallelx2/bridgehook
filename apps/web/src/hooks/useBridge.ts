@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { deleteChannelKey, getChannelPrivateKey } from "../lib/crypto";
+import { type LocalhostState, QueueDrainer } from "../lib/drain";
 import type { WebhookEventData } from "../lib/relay";
 import {
-	RELAY_URL,
 	claimEvent,
 	findOrCreateChannelForPort,
-	forwardToLocalhost,
+	forwardForDrain,
 	getChannel,
 	getClientId,
 	getEvents,
+	getPendingEvents,
 	pollEvents,
 	safeParseJson,
 	sendResponse,
@@ -47,6 +48,8 @@ interface BridgeState {
 	pollFailures: number;
 	mock: MockConfig;
 	secrets: Record<string, string>;
+	/** Whether this tab can reach and read the local server (no-install mode). */
+	localhost: { state: LocalhostState; message: string | null };
 }
 
 interface StoredChannel {
@@ -181,17 +184,23 @@ export function useBridge() {
 		pollFailures: 0,
 		mock: loadStored<MockConfig>(MOCK_KEY, DEFAULT_MOCK),
 		secrets: loadStored<Record<string, string>>(SECRETS_KEY, {}),
+		localhost: { state: "ok", message: null },
 	}));
 
 	const stopPollingRef = useRef<(() => void) | null>(null);
 	const abortControllerRef = useRef<AbortController | null>(null);
-	const forwardedRef = useRef<Set<string>>(new Set());
+	const drainerRef = useRef<QueueDrainer<WebhookEventData> | null>(null);
+	const drainTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const isMountedRef = useRef(true);
 
 	// Refs for values accessed from long-lived callbacks to avoid stale closures
 	const portRef = useRef(state.port);
 	const channelIdRef = useRef(state.channelId);
 	const mockRef = useRef(state.mock);
+	const webhookUrlRef = useRef(state.webhookUrl);
+	useEffect(() => {
+		webhookUrlRef.current = state.webhookUrl;
+	}, [state.webhookUrl]);
 	useEffect(() => {
 		portRef.current = state.port;
 	}, [state.port]);
@@ -205,6 +214,44 @@ export function useBridge() {
 	const safeSetState = useCallback((updater: (s: BridgeState) => BridgeState) => {
 		if (!isMountedRef.current) return;
 		setState(updater);
+	}, []);
+
+	/**
+	 * Run the ordered drain now; when it stopped on a local-server problem,
+	 * try again in 5s (outages and missing CORS do not consume attempts).
+	 */
+	const wakeDrainRef = useRef<() => void>(() => {});
+	const wakeDrain = useCallback(() => wakeDrainRef.current(), []);
+	wakeDrainRef.current = () => {
+		const drainer = drainerRef.current;
+		if (!drainer) return;
+		if (drainTimerRef.current) {
+			clearTimeout(drainTimerRef.current);
+			drainTimerRef.current = null;
+		}
+		drainer
+			.wake()
+			.then((ok) => {
+				if (!ok && drainerRef.current === drainer) {
+					drainTimerRef.current = setTimeout(() => wakeDrainRef.current(), 5000);
+				}
+			})
+			.catch((err) => {
+				if (err instanceof DOMException && err.name === "AbortError") return;
+				console.warn("drain failed:", err);
+				if (drainerRef.current === drainer) {
+					drainTimerRef.current = setTimeout(() => wakeDrainRef.current(), 5000);
+				}
+			});
+	};
+
+	const stopDrain = useCallback(() => {
+		drainerRef.current?.stop();
+		drainerRef.current = null;
+		if (drainTimerRef.current) {
+			clearTimeout(drainTimerRef.current);
+			drainTimerRef.current = null;
+		}
 	}, []);
 
 	/**
@@ -230,98 +277,11 @@ export function useBridge() {
 				pollFailures: 0,
 			}));
 
-			const signal = abortControllerRef.current?.signal;
-
-			const unforwarded = events.filter(
-				(e) => !e.responseStatus && !e.error && !forwardedRef.current.has(e.id),
-			);
-
-			for (const evt of unforwarded) {
-				forwardedRef.current.add(evt.id);
-				const currentPort = portRef.current;
-				const currentChannelId = channelIdRef.current;
-				const currentMock = mockRef.current;
-
-				// Claim arbitration — when multiple executors are connected,
-				// the first to claim wins. Losers see `claimed: false` and
-				// drop the work; the winner's response will arrive via SSE
-				// (or the next poll cycle) so the UI still updates.
-				if (!currentChannelId) continue;
-				const channelIdForClaim = currentChannelId;
-				const clientId = getClientId();
-
-				claimEvent(channelIdForClaim, evt.id, clientId, signal)
-					.then((claim) => {
-						if (!claim.claimed) return; // another executor handles this one
-
-						// ── Mock mode: skip localhost, return canned response ────────
-						if (currentMock.enabled) {
-							const cannedResponse = {
-								status: currentMock.status,
-								headers: currentMock.headers,
-								body: currentMock.body,
-								latencyMs: 0,
-							};
-							safeSetState((s) => ({
-								...s,
-								events: s.events.map((e) =>
-									e.id === evt.id
-										? {
-												...e,
-												responseStatus: cannedResponse.status,
-												responseBody: cannedResponse.body,
-												latencyMs: cannedResponse.latencyMs,
-											}
-										: e,
-								),
-							}));
-							sendResponse(channelIdForClaim, evt.id, cannedResponse, signal).catch((err) => {
-								if (err instanceof DOMException && err.name === "AbortError") return;
-								console.warn("mock response send failed:", err);
-							});
-							return;
-						}
-
-						// ── Real mode: forward to localhost, capture, send back ──────
-						return forwardToLocalhost(evt, currentPort, signal)
-							.then((response) => {
-								safeSetState((s) => ({
-									...s,
-									events: s.events.map((e) =>
-										e.id === evt.id
-											? {
-													...e,
-													responseStatus: response.status,
-													responseBody: response.body,
-													latencyMs: response.latencyMs,
-												}
-											: e,
-									),
-								}));
-								return sendResponse(channelIdForClaim, evt.id, response, signal).catch((err) => {
-									if (err instanceof DOMException && err.name === "AbortError") return;
-									console.error("sendResponse failed:", err);
-								});
-							})
-							.catch((err) => {
-								if (err instanceof DOMException && err.name === "AbortError") return;
-								const message = errorMessage(err);
-								safeSetState((s) => ({
-									...s,
-									events: s.events.map((e) => (e.id === evt.id ? { ...e, error: message } : e)),
-								}));
-							});
-					})
-					.catch((err) => {
-						// Claim itself failed (network / signature error). Don't poison the
-						// event row — drop and let another executor (or the next poll) try.
-						if (err instanceof DOMException && err.name === "AbortError") return;
-						console.warn("claimEvent failed:", err);
-						forwardedRef.current.delete(evt.id);
-					});
-			}
+			// Forwarding is the drainer's job (ordered, claimed, retried); a
+			// snapshot with unanswered events just wakes it.
+			if (events.some((e) => e.responseStatus === null && !e.error)) wakeDrain();
 		},
-		[safeSetState],
+		[safeSetState, wakeDrain],
 	);
 
 	const handlePollError = useCallback(
@@ -348,13 +308,6 @@ export function useBridge() {
 			if (controller.signal.aborted) return;
 
 			const liveEvents = existing.map(toLiveEvent);
-			// Only mark events as already forwarded if they have a terminal outcome.
-			// Pending events should be retried (useful after a refresh).
-			for (const e of existing) {
-				if (e.responseStatus !== null || e.error !== null) {
-					forwardedRef.current.add(e.id);
-				}
-			}
 
 			safeSetState((s) => ({
 				...s,
@@ -363,6 +316,47 @@ export function useBridge() {
 				allowedPaths,
 				status: "connected",
 			}));
+
+			stopDrain();
+			const signal = controller.signal;
+			const patchEvent = (id: string, patch: Partial<LiveEvent>) =>
+				safeSetState((s) => ({
+					...s,
+					events: s.events.map((e) => (e.id === id ? { ...e, ...patch } : e)),
+				}));
+			drainerRef.current = new QueueDrainer<WebhookEventData>({
+				fetchPending: (after) => getPendingEvents(channelId, after, signal),
+				claim: async (eventId) => {
+					const clientId = getClientId();
+					const c = await claimEvent(channelId, eventId, clientId, signal);
+					return c.claimed || c.claimerId === clientId;
+				},
+				forward: async (evt) => {
+					const mock = mockRef.current;
+					if (mock.enabled) {
+						return {
+							kind: "response",
+							result: { status: mock.status, headers: mock.headers, body: mock.body, latencyMs: 0 },
+						};
+					}
+					return forwardForDrain(evt, portRef.current, signal);
+				},
+				report: (evt, result) => sendResponse(channelId, evt.id, result, signal),
+				onDelivered: (evt, r) =>
+					patchEvent(evt.id, {
+						responseStatus: r.status,
+						responseBody: r.body,
+						latencyMs: r.latencyMs,
+						error: null,
+					}),
+				onSkipped: (evt, message) => patchEvent(evt.id, { error: message }),
+				onLocalhost: (localhostState, message) =>
+					safeSetState((s) => ({
+						...s,
+						localhost: { state: localhostState, message: message ?? null },
+					})),
+			});
+			wakeDrain();
 
 			const stopPolling = pollEvents(
 				channelId,
@@ -373,7 +367,7 @@ export function useBridge() {
 			);
 			stopPollingRef.current = stopPolling;
 		},
-		[handleNewEvents, handlePollError, safeSetState],
+		[handleNewEvents, handlePollError, safeSetState, stopDrain, wakeDrain],
 	);
 
 	/** Create a fresh channel, start polling, persist for rehydration. */
@@ -394,7 +388,7 @@ export function useBridge() {
 					allowedPaths,
 					error: null,
 				}));
-				forwardedRef.current = new Set();
+				stopDrain();
 
 				// Stable URL per (user, port): when signed in, reuses an
 				// existing channel for this port instead of minting a new
@@ -425,7 +419,7 @@ export function useBridge() {
 				}));
 			}
 		},
-		[bootstrapChannel, safeSetState],
+		[bootstrapChannel, safeSetState, stopDrain],
 	);
 
 	const disconnect = useCallback(() => {
@@ -433,7 +427,7 @@ export function useBridge() {
 		stopPollingRef.current = null;
 		abortControllerRef.current?.abort();
 		abortControllerRef.current = null;
-		forwardedRef.current = new Set();
+		stopDrain();
 		clearStored(STORE_KEY);
 		// Fire-and-forget IDB key cleanup — the channel is already unusable
 		// without the key, and this reclaims storage.
@@ -454,8 +448,9 @@ export function useBridge() {
 			pollFailures: 0,
 			mock: s.mock,
 			secrets: s.secrets,
+			localhost: { state: "ok", message: null },
 		}));
-	}, [safeSetState]);
+	}, [safeSetState, stopDrain]);
 
 	/**
 	 * On mount, rehydrate a previously-active channel if one is stored.
@@ -522,7 +517,7 @@ export function useBridge() {
 	 * as a new row with its own latency and response.
 	 */
 	const replay = useCallback(async (event: LiveEvent) => {
-		const url = `${RELAY_URL}${event.path}`;
+		const url = channelUrl(webhookUrlRef.current, event.path);
 		const headers = stripReplayHeaders(event.requestHeaders);
 		await fetch(url, {
 			method: event.method,
@@ -534,7 +529,7 @@ export function useBridge() {
 	/** Replay with modified body and/or headers. Produces a new feed row. */
 	const replayWithEdits = useCallback(
 		async (event: LiveEvent, edits: { body?: string; headers?: Record<string, string> }) => {
-			const url = `${RELAY_URL}${event.path}`;
+			const url = channelUrl(webhookUrlRef.current, event.path);
 			const base = stripReplayHeaders(event.requestHeaders);
 			const merged = { ...base, ...(edits.headers ?? {}) };
 			await fetch(url, {
@@ -574,12 +569,13 @@ export function useBridge() {
 		isMountedRef.current = true;
 		return () => {
 			isMountedRef.current = false;
+			stopDrain();
 			stopPollingRef.current?.();
 			stopPollingRef.current = null;
 			abortControllerRef.current?.abort();
 			abortControllerRef.current = null;
 		};
-	}, []);
+	}, [stopDrain]);
 
 	return {
 		...state,
@@ -590,4 +586,15 @@ export function useBridge() {
 		setMock,
 		setSecret,
 	};
+}
+
+/**
+ * Where a replay goes: the channel's own webhook URL plus the event's path.
+ * Events store the path localhost receives (`/stripe/webhook?x=1`); older rows
+ * may still carry the legacy `/hook/<id>` prefix, which is dropped.
+ */
+function channelUrl(webhookUrl: string | null, path: string): string {
+	if (!webhookUrl) throw new Error("No active channel to replay to");
+	const clean = path.replace(/^\/hook\/[a-z0-9]+(?=\/|$|\?)/, "") || "/";
+	return `${webhookUrl.replace(/\/$/, "")}${clean === "/" ? "" : clean}`;
 }

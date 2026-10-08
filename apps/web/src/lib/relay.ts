@@ -11,6 +11,8 @@
 
 import { deleteChannelKey, generateChannelKey, signedFetch } from "./crypto";
 
+import type { ForwardOutcome } from "./drain";
+
 const RELAY_URL = import.meta.env.VITE_RELAY_URL || "http://localhost:8787";
 
 export interface ChannelInfo {
@@ -227,6 +229,100 @@ export async function getEvents(
 	);
 	if (!res.ok) throw new Error(`Failed to get events: ${res.status}`);
 	return res.json() as Promise<WebhookEventData[]>;
+}
+
+// ── Delivery queue (signed) ───────────────────────────────────────────────
+/**
+ * One page of the channel's delivery queue: events no executor has answered,
+ * oldest first. Older relays answer with a plain newest-first array, which is
+ * normalised here.
+ */
+export async function getPendingEvents(
+	channelId: string,
+	after: string | null,
+	signal?: AbortSignal,
+): Promise<{ events: WebhookEventData[]; nextCursor: string | null }> {
+	const params = new URLSearchParams({ pending: "1", limit: "100" });
+	if (after) params.set("after", after);
+	const res = await signedFetch(
+		channelId,
+		`${RELAY_URL}/api/channels/${encodeURIComponent(channelId)}/events?${params}`,
+		{ signal },
+	);
+	if (!res.ok) throw new Error(`Failed to get queued events: ${res.status}`);
+	const data = (await res.json()) as
+		| WebhookEventData[]
+		| { events: WebhookEventData[]; nextCursor: string | null };
+	if (Array.isArray(data)) {
+		const events = data
+			.filter((e) => e.responseStatus === null && !e.error)
+			.sort((a, b) => new Date(a.receivedAt).getTime() - new Date(b.receivedAt).getTime());
+		return { events, nextCursor: null };
+	}
+	return { events: data.events ?? [], nextCursor: data.nextCursor ?? null };
+}
+
+/** Longest a local handler may take (room to step through it on a breakpoint). */
+export const LOCALHOST_TIMEOUT_MS = 5 * 60 * 1000;
+
+/**
+ * Forward an event and classify what happened, for the queue drainer.
+ *
+ * A page can only read a localhost response if the local server sends CORS
+ * headers, and every failure surfaces as the same TypeError. Two probes tell
+ * the cases apart:
+ *   • a plain CORS GET of "/" succeeds → the server allows this origin, so the
+ *     request itself failed (crash, reset): count it as a failed attempt
+ *   • otherwise a no-cors GET succeeds → the server is up but blocks
+ *     cross-origin reads: tell the user how to allow it
+ *   • both fail → the server is down (or the browser's local-network
+ *     permission was refused): keep the event queued
+ */
+export async function forwardForDrain(
+	event: WebhookEventData,
+	port: number,
+	signal?: AbortSignal,
+): Promise<ForwardOutcome> {
+	const started = performance.now();
+	const timeout = AbortSignal.timeout(LOCALHOST_TIMEOUT_MS);
+	const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
+	try {
+		const result = await forwardToLocalhost(event, port, combined);
+		return { kind: "response", result };
+	} catch (err) {
+		if (signal?.aborted) throw err;
+		const latencyMs = Math.round(performance.now() - started);
+		if (timeout.aborted) {
+			return {
+				kind: "failed",
+				message: `localhost:${port} did not answer within ${LOCALHOST_TIMEOUT_MS / 60000} minutes`,
+				latencyMs,
+			};
+		}
+		const base = `http://localhost:${port}/`;
+		const probe = (init: RequestInit) =>
+			fetch(base, { ...init, signal: AbortSignal.timeout(3000) }).then(
+				() => true,
+				() => false,
+			);
+		if (await probe({ method: "GET" })) {
+			return { kind: "failed", message: errorText(err), latencyMs };
+		}
+		if (await probe({ method: "GET", mode: "no-cors" })) {
+			return {
+				kind: "cors",
+				message: `Your server on localhost:${port} is running but does not allow ${location.origin} to read its responses (CORS).`,
+			};
+		}
+		return {
+			kind: "down",
+			message: `Can't reach localhost:${port}. Is your server running? (Chrome may also ask to allow local network access.)`,
+		};
+	}
+}
+
+function errorText(err: unknown): string {
+	return err instanceof Error ? err.message : String(err);
 }
 
 // ── Polling ───────────────────────────────────────────────────────────────

@@ -15,6 +15,7 @@ import { AuthCallback } from "./pages/AuthCallback";
 import { Billing } from "./pages/Billing";
 import { ChannelsList } from "./pages/ChannelsList";
 import { Connect } from "./pages/Connect";
+import { Dashboard as BrowserBridge } from "./pages/Dashboard";
 import { DashboardHome } from "./pages/DashboardHome";
 import { DevicesList } from "./pages/DevicesList";
 import { EventDetail } from "./pages/EventDetail";
@@ -111,6 +112,15 @@ export function App() {
 					element={
 						<AuthGate>
 							<ChannelsList />
+						</AuthGate>
+					}
+				/>
+				{/* No-install mode: this tab forwards webhooks to localhost. */}
+				<Route
+					path="/dashboard/bridge"
+					element={
+						<AuthGate>
+							<BrowserBridge />
 						</AuthGate>
 					}
 				/>

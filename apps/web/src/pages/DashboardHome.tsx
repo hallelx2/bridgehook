@@ -148,7 +148,13 @@ function HostedHome() {
 						</Link>
 					</div>
 					{channels.length === 0 ? (
-						<EmptyRow text="No channels yet. Pair a device to create one." />
+						<div className="px-4 py-6 text-center text-sm text-gray-500">
+							No channels yet. Pair the extension or CLI, or{" "}
+							<Link to="/dashboard/bridge" className="text-cyan-400 hover:underline">
+								forward from this browser tab
+							</Link>{" "}
+							with nothing to install.
+						</div>
 					) : (
 						<ul className="divide-y divide-gray-900">
 							{channels.slice(0, 5).map((c) => (
