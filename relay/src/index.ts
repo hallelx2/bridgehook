@@ -81,6 +81,10 @@ const RELAY_VERSION = "0.1.0";
 
 // ── Limits ─────────────────────────────────────────────────────────────────
 const CHANNEL_ID_LEN = 12;
+/** Landing-page demo URLs: no account, short-lived, small. */
+const DEMO_TTL_MS = 60 * 60 * 1000;
+const DEMO_MAX_EVENTS = 50;
+const DEMO_MAX_BODY_BYTES = 64 * 1024;
 const EVENT_ID_LEN = 16;
 const MAX_HEADERS_BYTES = 32 * 1024;
 const MAX_ALLOWED_PATHS = 20;
@@ -213,6 +217,13 @@ async function handleWebhookIntake(
 
 	const [channel] = await db.select().from(channels).where(eq(channels.id, channelId)).limit(1);
 	if (!channel) return jsonResponse(404, { error: "Channel not found" });
+	// Expiring channels (landing-page demos) stop accepting at once, not when
+	// the hourly cron gets to them.
+	if (channel.expiresAt && channel.expiresAt.getTime() <= Date.now()) {
+		return jsonResponse(410, { error: "This webhook URL has expired" });
+	}
+	// Ownerless channels are landing-page demos: small, few, and never sync.
+	const demo = channel.userId === null;
 
 	const url = new URL(request.url);
 	const method = request.method.toUpperCase();
@@ -291,8 +302,19 @@ async function handleWebhookIntake(
 	}
 
 	const body = await request.text();
-	if (byteLength(body) > MAX_BODY_SIZE_BYTES) {
+	if (byteLength(body) > (demo ? DEMO_MAX_BODY_BYTES : MAX_BODY_SIZE_BYTES)) {
 		return jsonResponse(413, { error: "Body too large" });
+	}
+	if (demo) {
+		const [{ n }] = await db
+			.select({ n: sql<number>`count(*)` })
+			.from(events)
+			.where(eq(events.channelId, channel.id));
+		if (Number(n) >= DEMO_MAX_EVENTS) {
+			return jsonResponse(429, {
+				error: `Demo URLs accept ${DEMO_MAX_EVENTS} requests. Sign up for a permanent URL.`,
+			});
+		}
 	}
 
 	const eventId = crypto.randomUUID().replace(/-/g, "").slice(0, EVENT_ID_LEN);
@@ -677,6 +699,61 @@ app.get("/api/config", (c) => {
 		trialDays: TRIAL_DAYS,
 		version: RELAY_VERSION,
 	});
+});
+
+// ── Demo channel (landing page, no account) ──
+// The hero's "try it live" card: a real URL that records requests for an
+// hour, capped at DEMO_MAX_EVENTS small bodies, never forwarded (no owner,
+// so no executor) and never sync. The visitor's browser holds the channel
+// key, so only it can read the events back.
+app.post("/api/demo/channels", async (c) => {
+	const env = c.env;
+	if (!(await checkRateLimit(env, c.req.raw, "demo"))) {
+		return c.json({ error: "Rate limit exceeded" }, 429);
+	}
+	const body = (await c.req.json().catch(() => null)) as { publicKey?: unknown } | null;
+	const publicKey = body?.publicKey;
+	if (typeof publicKey !== "string" || !isHex(publicKey, PUBLIC_KEY_HEX_LEN)) {
+		return c.json({ error: "publicKey must be a 130-char hex string" }, 400);
+	}
+	try {
+		await crypto.subtle.importKey(
+			"raw",
+			fromHex(publicKey),
+			{ name: "ECDSA", namedCurve: "P-256" },
+			false,
+			["verify"],
+		);
+	} catch {
+		return c.json({ error: "publicKey is not a valid ECDSA P-256 point" }, 400);
+	}
+	const db = getDb(env);
+	const channelId = crypto.randomUUID().replace(/-/g, "").slice(0, CHANNEL_ID_LEN);
+	const expiresAt = new Date(Date.now() + DEMO_TTL_MS);
+	await db.insert(channels).values({
+		id: channelId,
+		publicKey,
+		port: 3000,
+		allowedPaths: "[]",
+		userId: null,
+		deviceId: null,
+		label: "demo",
+		expiresAt,
+		responseMode: "async",
+		syncTimeoutMs: SYNC_TIMEOUT_DEFAULT_MS,
+	});
+	return c.json(
+		{
+			channelId,
+			port: 3000,
+			expiresAt: expiresAt.toISOString(),
+			webhookUrl: buildWebhookUrl(channelId, new URL(c.req.url), env.TUNNEL_DOMAIN),
+			responseMode: "async",
+			maxEvents: DEMO_MAX_EVENTS,
+			authScheme: "ecdsa",
+		},
+		201,
+	);
 });
 
 // ── Create channel ──

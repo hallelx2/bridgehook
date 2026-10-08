@@ -52,11 +52,18 @@ Typical loop:
 1. create_webhook_url(port) for the port the user's app listens on. Register that URL with the provider, or skip that and use send_test_event.
 2. send_test_event(channel_id, provider, signing_secret?) fires a realistic, optionally signed payload (stripe, github, openai, elevenlabs, vapi, generic), or wait_for_webhook catches a real one.
 3. get_event(event_id) shows the request AND what the local handler answered (status, headers, body, latency, error).
-4. Fix the handler, then replay_event(event_id) and compare.
+4. Fix the handler, then send_test_event again (or replay_event) and compare.
 
-Forwarding to localhost is done by the user's BridgeHook Chrome extension. If an event stays unanswered, ask the user to add the port in the BridgeHook extension (it reuses the same URL). For tool-call webhooks whose reply matters (Vapi, ElevenLabs server tools) or GET verification challenges, set_response_mode(channel_id, "sync").`;
+Stripe, OpenAI (Standard Webhooks) and ElevenLabs sign a timestamp and reject signatures older than 5, 5 and 30 minutes. replay_event resends the original signature, so after that window send a fresh send_test_event instead. GitHub signatures have no timestamp and replay fine.
+
+Forwarding to localhost is done by the user's BridgeHook Chrome extension or by a dashboard tab (https://app.bridgehook.dev/dashboard/bridge, no install). If an event stays unanswered, nothing is forwarding for that port: ask the user to add the port in either one (both reuse the same URL). Unanswered events are queued, not lost. For tool-call webhooks whose reply matters (Vapi, ElevenLabs server tools) or GET verification challenges, set_response_mode(channel_id, "sync").`;
 
 const BODY_LIMIT = 16_000;
+
+/** What to tell the agent when its test event has no answer yet. */
+function notAnsweredHint(port: number, waitMs: number): string {
+	return `No answer from localhost:${port} within ${Math.round(waitMs / 1000)}s. The event is queued and will still be delivered. If nothing is forwarding for this port, ask the user to add port ${port} in the BridgeHook extension or open https://app.bridgehook.dev/dashboard/bridge; then check get_event.`;
+}
 
 function text(v: unknown) {
 	return {
@@ -231,7 +238,7 @@ export function buildMcpServer(ctx: McpContext): McpServer {
 				local_port: port,
 				reply_mode: patch.responseMode ?? "async",
 				created: true,
-				next_step: `Webhooks to this URL are queued (nothing is lost). To forward them to localhost:${port}, the user adds port ${port} in the BridgeHook Chrome extension, which adopts this same URL.`,
+				next_step: `Webhooks to this URL are queued (nothing is lost). To forward them to localhost:${port}, the user adds port ${port} in the BridgeHook Chrome extension or opens https://app.bridgehook.dev/dashboard/bridge with port ${port}; both adopt this same URL.`,
 			});
 		},
 	);
@@ -286,7 +293,15 @@ export function buildMcpServer(ctx: McpContext): McpServer {
 					.string()
 					.max(256)
 					.optional()
-					.describe("The endpoint secret the handler verifies with"),
+					.describe(
+						"The endpoint secret the handler verifies with (for Vapi, the credential token)",
+					),
+				vapi_auth: z
+					.enum(["bearer", "x-vapi-secret"])
+					.optional()
+					.describe(
+						"Vapi only: Authorization: Bearer (Vapi's default credential) or the legacy X-Vapi-Secret header",
+					),
 				wait_seconds: z
 					.number()
 					.min(0)
@@ -295,12 +310,16 @@ export function buildMcpServer(ctx: McpContext): McpServer {
 					.describe("How long to wait for the answer (default 20)"),
 			},
 		},
-		async ({ channel_id, provider, event_type, path, signing_secret, wait_seconds }) => {
+		async ({ channel_id, provider, event_type, path, signing_secret, vapi_auth, wait_seconds }) => {
 			const ch = await ownedChannel(ctx.db, ctx.userId, channel_id);
 			if (!ch) return fail("Channel not found");
 			let testEvent: Awaited<ReturnType<typeof buildTestEvent>>;
 			try {
-				testEvent = await buildTestEvent(provider, { type: event_type, secret: signing_secret });
+				testEvent = await buildTestEvent(provider, {
+					type: event_type,
+					secret: signing_secret,
+					vapiAuth: vapi_auth,
+				});
 			} catch (err) {
 				return fail(err instanceof Error ? err.message : String(err));
 			}
@@ -344,7 +363,7 @@ export function buildMcpServer(ctx: McpContext): McpServer {
 						sent: testEvent.description,
 						signed: testEvent.signed,
 						reply_mode: "sync",
-						still_waiting: `The local server had not answered after ${waitMs / 1000}s. Check list_events / get_event for the outcome.`,
+						still_waiting: notAnsweredHint(ch.port, Math.max(waitMs, 2000)),
 					});
 				}
 				const body = await raced.text();
@@ -374,6 +393,9 @@ export function buildMcpServer(ctx: McpContext): McpServer {
 				sent: testEvent.description,
 				signed: testEvent.signed,
 				event: evt ? summarize(serializeEventDetail(evt)) : { event_id: eventId },
+				...(evt?.responseStatus == null && !evt?.error
+					? { not_answered_yet: notAnsweredHint(ch.port, waitMs) }
+					: {}),
 			});
 		},
 	);

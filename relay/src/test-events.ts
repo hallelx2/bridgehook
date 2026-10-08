@@ -77,7 +77,17 @@ export async function standardWebhooksSignature(
 
 export async function buildTestEvent(
 	provider: TestProvider,
-	opts: { type?: string; secret?: string; now?: number } = {},
+	opts: {
+		type?: string;
+		secret?: string;
+		now?: number;
+		/**
+		 * Vapi only: how the server-URL credential is sent. `bearer` is Vapi's
+		 * default Bearer Token credential (`Authorization: Bearer …`);
+		 * `x-vapi-secret` is the legacy header (measured 2026-10-08).
+		 */
+		vapiAuth?: "bearer" | "x-vapi-secret";
+	} = {},
 ): Promise<TestEvent> {
 	const now = Math.floor((opts.now ?? Date.now()) / 1000);
 	const json = { "content-type": "application/json", "user-agent": "BridgeHook-Test/1.0" };
@@ -225,7 +235,10 @@ export async function buildTestEvent(
 				},
 			});
 			const headers: Record<string, string> = { ...json, "user-agent": "Vapi/1.0" };
-			if (opts.secret) headers["x-vapi-secret"] = opts.secret;
+			if (opts.secret) {
+				if (opts.vapiAuth === "x-vapi-secret") headers["x-vapi-secret"] = opts.secret;
+				else headers.authorization = `Bearer ${opts.secret}`;
+			}
 			return {
 				method: "POST",
 				headers,
