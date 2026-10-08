@@ -15,7 +15,8 @@ export function AiAgents() {
 			<Callout icon="🔌" title="Endpoint" color="#ff8a5c">
 				<code>https://relay.bridgehook.dev/mcp</code> (Streamable HTTP). Authenticate with an agent
 				token from <b>Dashboard → AI agents</b>, sent as <code>Authorization: Bearer dvc_…</code>.
-				Agent tokens do not count toward your device limit and can be revoked at any time.
+				Agent tokens only work with the MCP server, do not count toward your device limit, and can
+				be revoked at any time.
 			</Callout>
 
 			<h2>Connect</h2>

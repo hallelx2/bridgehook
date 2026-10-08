@@ -41,7 +41,7 @@ export interface McpContext {
 	 * Deliver a request to a channel exactly as if the provider had sent it
 	 * (full intake: allow-list, quota, storage, sync wait).
 	 */
-	deliver(channelId: string, request: Request): Promise<Response>;
+	deliver(channelId: string, forwardPath: string, request: Request): Promise<Response>;
 }
 
 const INSTRUCTIONS = `BridgeHook delivers real webhooks to the user's local server through a permanent URL per port, even while their machine is off (queued, delivered in order). Use it to build and debug webhook handlers end to end.
@@ -291,10 +291,12 @@ export function buildMcpServer(ctx: McpContext): McpServer {
 		async ({ channel_id, provider, event_type, path, signing_secret, wait_seconds }) => {
 			const ch = await ownedChannel(ctx.db, ctx.userId, channel_id);
 			if (!ch) return fail("Channel not found");
-			const testEvent = await buildTestEvent(provider, {
-				type: event_type,
-				secret: signing_secret,
-			});
+			let testEvent: Awaited<ReturnType<typeof buildTestEvent>>;
+			try {
+				testEvent = await buildTestEvent(provider, { type: event_type, secret: signing_secret });
+			} catch (err) {
+				return fail(err instanceof Error ? err.message : String(err));
+			}
 			const p = path ? (path.startsWith("/") ? path : `/${path}`) : "/";
 			const target = ctx.tunnelDomain
 				? `https://${ch.id}.${ctx.tunnelDomain}${p}`
@@ -304,21 +306,35 @@ export function buildMcpServer(ctx: McpContext): McpServer {
 				headers: { ...testEvent.headers, host: new URL(target).host },
 				body: testEvent.body,
 			});
-			const res = await ctx.deliver(ch.id, req);
-			const resText = await res.text();
+			const waitMs = (wait_seconds ?? 20) * 1000;
 			if (ch.responseMode === "sync") {
+				// The sender is held up to the channel's sync timeout; the agent
+				// waits at most wait_seconds and can look the event up afterwards.
+				const delivered = ctx.deliver(ch.id, p, req);
+				const raced = await Promise.race([delivered, sleep(waitMs).then(() => null)]);
+				if (!raced) {
+					return text({
+						sent: testEvent.description,
+						signed: testEvent.signed,
+						reply_mode: "sync",
+						still_waiting: `The local server had not answered after ${waitMs / 1000}s. Check list_events / get_event for the outcome.`,
+					});
+				}
+				const body = await raced.text();
 				return text({
 					sent: testEvent.description,
 					signed: testEvent.signed,
 					reply_mode: "sync",
 					reply_returned_to_sender: {
-						status: res.status,
-						event_id: res.headers.get("x-bridgehook-event-id"),
-						content_type: res.headers.get("content-type"),
-						body: clip(resText),
+						status: raced.status,
+						event_id: raced.headers.get("x-bridgehook-event-id"),
+						content_type: raced.headers.get("content-type"),
+						body: clip(body),
 					},
 				});
 			}
+			const res = await ctx.deliver(ch.id, p, req);
+			const resText = await res.text();
 			let eventId: string | null = null;
 			try {
 				eventId = (JSON.parse(resText) as { eventId?: string }).eventId ?? null;
@@ -326,8 +342,7 @@ export function buildMcpServer(ctx: McpContext): McpServer {
 			if (res.status !== 202 || !eventId) {
 				return fail(`Relay refused the test webhook: ${res.status} ${resText.slice(0, 300)}`);
 			}
-			const deadline = Date.now() + (wait_seconds ?? 20) * 1000;
-			const evt = await waitForAnswer(ctx.db, ctx.userId, eventId, deadline);
+			const evt = await waitForAnswer(ctx.db, ctx.userId, eventId, Date.now() + waitMs);
 			return text({
 				sent: testEvent.description,
 				signed: testEvent.signed,

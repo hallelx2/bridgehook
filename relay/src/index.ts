@@ -620,7 +620,7 @@ app.all("/mcp", async (c) => {
 	let userId: string;
 	let deviceId: string | null = null;
 	if (auth) {
-		const caller = await resolveCaller(auth, db, c.req.raw);
+		const caller = await resolveCaller(auth, db, c.req.raw, { allowAgentTokens: true });
 		if (!caller) {
 			return c.json(
 				{
@@ -647,8 +647,8 @@ app.all("/mcp", async (c) => {
 			getChannelDO: (channelId: string) => getChannelDO(env, channelId),
 			notifyUser: (uid: string | null, payload: string) => notifyUserDO(env, uid, payload),
 		},
-		deliver: (channelId: string, request: Request) =>
-			handleWebhookIntake(channelId, new URL(request.url).pathname || "/", request, env),
+		deliver: (channelId: string, forwardPath: string, request: Request) =>
+			handleWebhookIntake(channelId, forwardPath, request, env),
 	});
 });
 

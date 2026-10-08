@@ -66,7 +66,12 @@ export async function standardWebhooksSignature(
 	ts: number,
 	body: string,
 ): Promise<string> {
-	const key = b64decode(secret.startsWith("whsec_") ? secret.slice(6) : secret);
+	let key: Uint8Array;
+	try {
+		key = b64decode(secret.startsWith("whsec_") ? secret.slice(6) : secret);
+	} catch {
+		throw new Error("OpenAI signing secret must be a whsec_… key (base64 after the prefix)");
+	}
 	return `v1,${b64(await hmac(key, `${id}.${ts}.${body}`))}`;
 }
 

@@ -214,7 +214,8 @@ function AiAgentsView() {
 					</ul>
 				)}
 				<p className="text-[11px] text-gray-600 mt-2">
-					Agent tokens do not count toward your device limit. Up to 10 per account.
+					Agent tokens only work with BridgeHook's MCP server, so they do not count toward your
+					device limit. Up to 10 per account.
 				</p>
 			</section>
 		</div>
