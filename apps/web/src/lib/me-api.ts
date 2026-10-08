@@ -46,6 +46,9 @@ export interface MeChannel {
 	port: number;
 	label: string | null;
 	allowedPaths: string[];
+	/** 'async' answers senders 202 at once; 'sync' returns localhost's reply. */
+	responseMode: "async" | "sync";
+	syncTimeoutMs: number;
 	createdAt: string;
 	expiresAt: string | null;
 	webhookUrl: string;
@@ -155,11 +158,22 @@ export const me = {
 				return null;
 			}
 		},
-		patch: (id: string, patch: { label?: string | null; allowedPaths?: string[] }) =>
-			meFetch<{ id: string; label: string | null; allowedPaths: string[] }>(
-				`/channels/${encodeURIComponent(id)}`,
-				{ method: "PATCH", body: JSON.stringify(patch) },
-			),
+		patch: (
+			id: string,
+			patch: {
+				label?: string | null;
+				allowedPaths?: string[];
+				responseMode?: "async" | "sync";
+				syncTimeoutMs?: number;
+			},
+		) =>
+			meFetch<{
+				id: string;
+				label: string | null;
+				allowedPaths: string[];
+				responseMode: "async" | "sync";
+				syncTimeoutMs: number;
+			}>(`/channels/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(patch) }),
 		remove: (id: string) =>
 			meFetch<{ deleted: true }>(`/channels/${encodeURIComponent(id)}`, { method: "DELETE" }),
 		rotateKey: (id: string, publicKey: string) =>
