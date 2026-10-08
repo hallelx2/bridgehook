@@ -5,67 +5,75 @@ export function HowItWorks() {
 		<>
 			<h1>How It Works</h1>
 			<p>
-				BridgeHook uses a simple three-component architecture: a cloud relay, your browser, and your
-				local dev server.
+				Three parts: a relay in the cloud, a forwarder in your browser, and your local server. The
+				relay accepts webhooks and queues them; the forwarder takes them off the queue and delivers
+				them to localhost.
 			</p>
 
-			<h2>Architecture Overview</h2>
-			<p>
-				The relay sits in the cloud. Your browser connects to it. When a webhook arrives, the relay
-				pushes it to your browser, which forwards it to localhost.
-			</p>
-
+			<h2>The pieces</h2>
 			<ArchitectureDiagram />
-
-			<h2>Step-by-Step Flow</h2>
-			<p>Here's exactly what happens when a webhook fires:</p>
-
-			<DataFlowDiagram />
-
-			<h3>1. Channel Creation</h3>
-			<p>
-				When you click "Start Bridge", your browser sends a request to the relay server to create a
-				new channel. The relay generates a unique channel ID, stores it in the database, and returns
-				a webhook URL.
-			</p>
-
-			<h3>2. SSE Connection</h3>
-			<p>
-				Your browser opens a Server-Sent Events (SSE) connection to the relay. This is a long-lived
-				HTTP connection that stays open — the relay can push data to your browser at any time
-				through it.
-			</p>
-
-			<h3>3. Webhook Arrives</h3>
-			<p>When Stripe (or any provider) POSTs to your webhook URL, the relay:</p>
 			<ul>
-				<li>Stores the event in the database</li>
-				<li>Pushes the event through the SSE connection to your browser</li>
+				<li>
+					<strong>Relay</strong>: a Cloudflare Worker with D1 for storage and Durable Objects for
+					live wake-ups and sync waits. It never connects to your machine.
+				</li>
+				<li>
+					<strong>Forwarder</strong>: the BridgeHook Chrome extension, or a dashboard tab in{" "}
+					<a href="#/browser-bridge">no-install mode</a>. It is the only part that can reach
+					localhost.
+				</li>
+				<li>
+					<strong>Your server</strong>: whatever runs on the port, unchanged (no-install mode needs
+					a CORS rule).
+				</li>
 			</ul>
 
-			<h3>4. Browser Forwards to Localhost</h3>
+			<h2>One webhook, step by step</h2>
+			<DataFlowDiagram />
+
+			<h3>1. A URL per port</h3>
 			<p>
-				Your browser's JavaScript receives the SSE event and calls{" "}
-				<code>fetch('http://localhost:3000/webhook/stripe')</code> with the exact same method,
-				headers, and body. This works because the JS is running on your machine — it has direct
-				access to localhost.
+				Adding a port creates a channel owned by your account, with a 12-character id and its own
+				host: <code>https://&lt;id&gt;.bridgehook.dev</code>. Adding the same port again, from the
+				extension, a tab or an agent, returns the same channel, so the URL never changes.
 			</p>
 
-			<h3>5. Response Returns</h3>
+			<h3>2. The relay accepts and stores</h3>
 			<p>
-				Your local server responds (e.g. <code>200 OK</code>). The browser captures this response
-				and POSTs it back to the relay. The relay stores it and, if the original sender is still
-				waiting, returns it as the HTTP response.
+				A request to the URL is checked against the channel&apos;s path allowlist and your
+				plan&apos;s limits, then stored in D1 with its method, path, headers and body. The path
+				after the host is the path your server receives. In async mode the sender gets{" "}
+				<code>202</code> with the event id right away.
 			</p>
 
-			<h2>Why This Works</h2>
+			<h3>3. The forwarder wakes</h3>
 			<p>
-				The key insight:{" "}
-				<strong>
-					your browser sits at the intersection of the internet and your local network
-				</strong>
-				. It can receive data from a remote server (SSE) and make requests to localhost (fetch). No
-				other tool needed — the browser IS the bridge.
+				The relay notifies your signed-in dashboard and extension over a per-user SSE stream (
+				<code>/api/me/stream</code>). Forwarders also poll, so nothing depends on that stream
+				staying up: the dashboard tab every 2 seconds, the extension on a 30-second alarm.
+			</p>
+
+			<h3>4. Claim, forward, report</h3>
+			<p>
+				The forwarder reads the queue oldest first, <strong>claims</strong> an event so only one
+				forwarder handles it, sends it to <code>http://localhost:&lt;port&gt;&lt;path&gt;</code>{" "}
+				with the original method, headers and body, then reports your server&apos;s status, headers,
+				body and latency. Claim and report requests are signed with the channel&apos;s key (
+				<a href="#/channel-secrets">Channel Keys</a>).
+			</p>
+
+			<h3>5. The answer</h3>
+			<p>
+				The answer is stored with the event, so the dashboard and the MCP tools can show it. On a{" "}
+				<a href="#/sync-responses">sync channel</a> the relay was holding the sender&apos;s request
+				and returns the answer to it.
+			</p>
+
+			<h2>When nothing is forwarding</h2>
+			<p>
+				Steps 1 and 2 still happen. Events wait in the queue and are delivered in arrival order when
+				a forwarder starts. Your plan sets how long event history is kept (see{" "}
+				<a href="#/billing">Billing</a>).
 			</p>
 		</>
 	);

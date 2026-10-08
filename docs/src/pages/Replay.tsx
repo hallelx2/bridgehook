@@ -6,27 +6,35 @@ export function Replay() {
 			<h1>Replay</h1>
 			<p>
 				Every webhook is persisted with its full request body, headers, response, and timing. From
-				the dashboard you can replay any historical event back through your localhost — with
-				optional edits to the body or headers — and BridgeHook records the new attempt as a child of
-				the original.
+				the dashboard you can replay any historical event back through your localhost, with optional
+				edits to the body or headers, and BridgeHook records the new attempt as a child of the
+				original.
 			</p>
 
 			<Callout icon="🔁" title="Why replay matters" color="#9093ff">
 				Webhook providers don't send test events on demand. Without replay you have to either
 				trigger the real action (cancel a subscription, refund a customer) or wait for one to happen
-				organically. Replay lets you iterate on the handler with the exact production payload — same
-				headers, same signature checks, everything.
+				organically. Replay sends the exact payload and headers again, so you can iterate on the
+				handler against what the provider really sent.
+			</Callout>
+
+			<Callout icon="⏱️" title="Signatures with timestamps" color="#fcd34d">
+				A replay carries the original signature. Stripe and OpenAI (5 minutes by default) and
+				ElevenLabs (30 minutes) reject an older timestamp, so their replays fail verification after
+				that window. Send a fresh signed test event instead (the MCP tool{" "}
+				<code>send_test_event</code> does this), or relax the tolerance in your dev environment.
+				GitHub signatures have no timestamp and replay fine.
 			</Callout>
 
 			<h2>Replay chain semantics</h2>
 			<p>Each event row carries two columns that form the chain:</p>
 			<ul>
 				<li>
-					<code>kind</code> — <code>"live"</code> or <code>"replay"</code>. Indexed; live events are
+					<code>kind</code>: <code>"live"</code> or <code>"replay"</code>. Indexed; live events are
 					immutable except for response data.
 				</li>
 				<li>
-					<code>replay_of</code> — self-FK pointing at the source event. <code>null</code> on live
+					<code>replay_of</code>: self-FK pointing at the source event. <code>null</code> on live
 					events. A CHECK constraint enforces{" "}
 					<code>(kind = 'replay') = (replay_of IS NOT NULL)</code> so you can't accidentally orphan
 					one or fake the other.
@@ -34,8 +42,8 @@ export function Replay() {
 			</ul>
 			<p>
 				The chain is a tree (one source can have many replays; a replay can itself be replayed). The
-				Event Detail page (<code>/dashboard/events/:id</code>) renders one level — the children of
-				the current event plus the original it points at — and you drill into deeper history by
+				Event Detail page (<code>/dashboard/events/:id</code>) renders one level, the children of
+				the current event plus the original it points at, and you drill into deeper history by
 				following any child's link.
 			</p>
 
@@ -67,9 +75,9 @@ export function Replay() {
 				</li>
 			</ol>
 			<p>
-				The executor — your dashboard tab, paired extension, or desktop — picks up the new event on
-				the next poll/SSE frame, races the claim, and forwards it to localhost exactly like a fresh
-				webhook.
+				The forwarder (the extension or a dashboard tab) picks the replay up from the queue, claims
+				it and forwards it to localhost exactly like a fresh webhook. Coding agents can do the same
+				through the MCP tool <code>replay_event</code>.
 			</p>
 
 			<h2>Cancelling a queued replay</h2>
@@ -81,7 +89,7 @@ export function Replay() {
 
 			<h2>Claim arbitration</h2>
 			<p>
-				When multiple executors are connected — the dashboard tab AND a paired extension, say — they
+				When multiple executors are connected, the dashboard tab AND a paired extension, say, they
 				race to forward each event. To prevent duplicate work, every executor calls{" "}
 				<code>POST /hook/:channelId/claim</code> with its <code>clientId</code> before forwarding:
 			</p>
@@ -92,12 +100,11 @@ X-BH-Signature: <hex>
 { "eventId": "evt_xyz", "clientId": "web_<uuid>" }`}</code>
 			</pre>
 			<p>
-				The endpoint runs an atomic{" "}
-				<code>
-					UPDATE events SET claimed_by_device_id = $1 WHERE id = $2 AND claimed_by_device_id IS NULL
-				</code>{" "}
-				— at most one client wins. The winner forwards; the loser sees <code>409</code> with the
-				actual winner's <code>clientId</code> and drops the work. The DO fans out a{" "}
+				The claim is one atomic <code>UPDATE</code> that succeeds when the event is unanswered and
+				nobody holds it, the caller already holds it (re-claiming refreshes the claim while the
+				handler runs), or the holder claimed it more than 60 seconds ago without answering (a tab
+				closed mid-forward). At most one client wins. A loser gets <code>409</code> with the
+				holder&apos;s <code>clientId</code> and leaves the event alone. The DO fans out a{" "}
 				<code>{'{ type: "claimed" }'}</code> SSE frame so other listeners can update the UI without
 				waiting for the response round-trip.
 			</p>
@@ -120,9 +127,9 @@ X-BH-Signature: <hex>
 						</td>
 					</tr>
 					<tr>
-						<td>Extension / desktop / CLI</td>
+						<td>Extension</td>
 						<td>
-							<code>dev_&lt;20 alphanum&gt;</code> — the paired device's id from{" "}
+							<code>dev_&lt;20 alphanum&gt;</code>: the paired device's id from{" "}
 							<code>devices.id</code>
 						</td>
 					</tr>
@@ -132,8 +139,8 @@ X-BH-Signature: <hex>
 			<Callout icon="🧬" title="Replay attribution" color="#ddb7ff">
 				When you replay an event the dashboard records you as the trigger (
 				<code>replayed_by_user_id</code>) and the executor that forwarded the replay as the actor (
-				<code>device_id</code> via the claim flow). The Team-tier audit log surfaces "who replayed
-				what, when" by reading those columns directly.
+				<code>device_id</code> via the claim flow), so &quot;who replayed what, and where it
+				ran&quot; is answerable from the event rows.
 			</Callout>
 		</>
 	);

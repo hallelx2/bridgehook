@@ -5,77 +5,66 @@ export function Billing() {
 		<>
 			<h1>Billing</h1>
 			<p>
-				BridgeHook integrates with{" "}
-				<a href="https://polar.sh" target="_blank" rel="noreferrer">
-					Polar
-				</a>{" "}
-				as the merchant-of-record. Polar handles the checkout, tax, invoicing, and the customer
-				portal; the relay handles the plan flip, quota gating, and webhook signature verification.
+				Hosted BridgeHook is on the <strong>Free plan</strong> for everyone today. Paid plans are
+				not on sale yet.
 			</p>
 
-			<Callout icon="💳" title="Why Polar (not Stripe direct)?" color="#9093ff">
-				Polar is MoR — they collect the money, file the tax. For a single dev shipping a dev tool,
-				that's the difference between "ships next week" and "ships once you set up VAT registration
-				in 27 countries." Trade-off: ~5% above the bare Stripe rate. Acceptable.
-			</Callout>
-
-			<h2>Tier overview</h2>
-			<p>
-				Tiers are defined in <code>packages/shared/src/pricing.ts</code> — the single source of
-				truth. Both the Billing UI and the relay's quota enforcement read from the same{" "}
-				<code>PLANS</code> object, so a price change is one file diff.
-			</p>
+			<h2>Free plan limits</h2>
 			<table>
 				<thead>
 					<tr>
-						<th>Plan</th>
-						<th>Monthly</th>
-						<th>Channels</th>
-						<th>Devices</th>
-						<th>Retention</th>
+						<th>Limit</th>
+						<th>Free</th>
+						<th>Self-hosted</th>
 					</tr>
 				</thead>
 				<tbody>
 					<tr>
-						<td>
-							<code>trialing</code>
-						</td>
-						<td>Free 7d</td>
-						<td>5</td>
-						<td>2</td>
-						<td>7d</td>
+						<td>Channels (ports with a URL)</td>
+						<td>1</td>
+						<td>Unlimited</td>
 					</tr>
 					<tr>
-						<td>
-							<code>hobby</code>
-						</td>
-						<td>$2</td>
-						<td>5</td>
-						<td>2</td>
-						<td>7d</td>
+						<td>Paired devices</td>
+						<td>1 (agent tokens do not count; up to 10)</td>
+						<td>Unlimited</td>
 					</tr>
 					<tr>
-						<td>
-							<code>pro</code>
-						</td>
-						<td>$9</td>
-						<td>∞</td>
-						<td>∞</td>
-						<td>30d</td>
+						<td>Webhooks accepted per day (UTC)</td>
+						<td>10</td>
+						<td>Unlimited</td>
 					</tr>
 					<tr>
-						<td>
-							<code>team</code>
-						</td>
-						<td>$29</td>
-						<td>∞</td>
-						<td>∞</td>
-						<td>90d</td>
+						<td>Event history</td>
+						<td>3 days</td>
+						<td>Kept until you delete it</td>
 					</tr>
 				</tbody>
 			</table>
+			<p>
+				Requests rejected by the path allowlist do not count toward the daily cap. When the cap is
+				reached, the URL answers <code>402</code> with <code>{'{"code":"quota"}'}</code> until
+				midnight UTC. Your usage for the day is on the dashboard&apos;s Overview and in the
+				extension popup.
+			</p>
+			<p>
+				Limits live in <code>packages/shared/src/pricing.ts</code>, which both the relay&apos;s
+				enforcement and the Billing page read, so they cannot disagree.
+			</p>
 
-			<h2>Polar setup</h2>
+			<h2>For operators: enabling paid plans</h2>
+			<p>
+				The relay integrates with{" "}
+				<a href="https://polar.sh" target="_blank" rel="noreferrer">
+					Polar
+				</a>{" "}
+				as merchant of record: Polar runs checkout, tax, invoices and the customer portal; the relay
+				maps subscriptions to plans and enforces limits. Paid tiers stay hidden until the{" "}
+				<code>POLAR_*</code> variables below are set and the tiers are added to{" "}
+				<code>PUBLIC_PLAN_ORDER</code>.
+			</p>
+
+			<h3>Polar setup</h3>
 			<ol>
 				<li>
 					Create a Polar account at{" "}
@@ -86,8 +75,8 @@ export function Billing() {
 				</li>
 				<li>
 					Create three products: <strong>Hobby</strong>, <strong>Pro</strong>, <strong>Team</strong>{" "}
-					— at the prices shown above (or whatever you decide; the relay reads pricing from{" "}
-					<code>PLANS</code>, Polar just charges what its product says).
+					at the prices you choose. Polar charges what its product says; the relay maps the product
+					id to a plan and reads limits from <code>PLANS</code>.
 				</li>
 				<li>
 					Generate a server access token from <em>Settings → Developer</em> →{" "}
@@ -95,14 +84,14 @@ export function Billing() {
 					<code>customer_sessions:write</code>, <code>subscriptions:read</code>.
 				</li>
 				<li>
-					Configure a webhook endpoint at <code>https://relay.example.com/api/billing/webhook</code>{" "}
-					— subscribe to <code>subscription.created</code>, <code>subscription.updated</code>,{" "}
+					Configure a webhook endpoint at <code>https://relay.example.com/api/billing/webhook</code>
+					, subscribe to <code>subscription.created</code>, <code>subscription.updated</code>,{" "}
 					<code>subscription.canceled</code>, <code>subscription.revoked</code>. Copy the webhook
 					secret (<code>whsec_…</code>).
 				</li>
 			</ol>
 
-			<h2>Relay env vars</h2>
+			<h3>Relay env vars</h3>
 			<pre>
 				<code>{`wrangler secret put POLAR_ACCESS_TOKEN
 wrangler secret put POLAR_WEBHOOK_SECRET
@@ -113,10 +102,10 @@ wrangler secret put POLAR_PRODUCT_ID_TEAM`}</code>
 			<p>
 				With all five set, <code>/api/config</code> reports <code>billingEnabled: true</code> and
 				the Billing page shows real checkout buttons. Leave any of them unset to drop into the
-				"billing not configured" UI — <code>/api/me/billing/**</code> returns 503.
+				"billing not configured" UI, <code>/api/me/billing/**</code> returns 503.
 			</p>
 
-			<h2>Webhook signatures</h2>
+			<h3>Webhook signatures</h3>
 			<p>
 				Polar uses the{" "}
 				<a href="https://www.standardwebhooks.com/" target="_blank" rel="noreferrer">
@@ -136,7 +125,7 @@ wrangler secret put POLAR_PRODUCT_ID_TEAM`}</code>
 						<td>
 							<code>webhook-id</code>
 						</td>
-						<td>Unique event id — used in the signed value.</td>
+						<td>Unique event id: used in the signed value.</td>
 					</tr>
 					<tr>
 						<td>
@@ -161,7 +150,7 @@ wrangler secret put POLAR_PRODUCT_ID_TEAM`}</code>
 				<code>relay/src/billing.ts → verifyPolarWebhook()</code>.
 			</p>
 
-			<h2>Plan lifecycle</h2>
+			<h3>Plan lifecycle</h3>
 			<table>
 				<thead>
 					<tr>
@@ -191,7 +180,7 @@ wrangler secret put POLAR_PRODUCT_ID_TEAM`}</code>
 						</td>
 						<td>Unchanged</td>
 						<td>
-							No (graceful — Polar dunning runs; transitions to canceled when payment gives up)
+							No (graceful, Polar dunning runs; transitions to canceled when payment gives up)
 						</td>
 					</tr>
 					<tr>
@@ -214,13 +203,14 @@ wrangler secret put POLAR_PRODUCT_ID_TEAM`}</code>
 				retries are not a problem.
 			</Callout>
 
-			<h2>Trial and quota enforcement</h2>
+			<h2>Quota enforcement</h2>
 			<p>
-				Trial users (<code>plan = "trialing"</code>) have full Hobby-tier limits until{" "}
-				<code>trialEndsAt</code>. After that the access layer flips them to read-only (
-				<code>402 Payment Required</code> on writes). Channel and device quotas are checked on every
-				create against <code>PLANS[plan].limits.maxChannels</code> / <code>maxDevices</code>; replay
-				just checks the read-only flag.
+				Channel and device quotas are checked on every create against{" "}
+				<code>PLANS[plan].limits.maxChannels</code> / <code>maxDevices</code> and answer{" "}
+				<code>402</code> with <code>{'{"code":"quota"}'}</code> when reached. The daily event cap is
+				counted in KV per UTC day. Accounts on a canceled subscription, or from the retired 7-day
+				trial after it ended, are read-only: they can view history but not create channels, pair
+				devices or replay.
 			</p>
 			<p>
 				The hourly cron in <code>relay/src/index.ts → scheduled()</code> sweeps events past their

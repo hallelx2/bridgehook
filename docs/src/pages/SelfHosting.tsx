@@ -8,43 +8,23 @@ export function SelfHosting() {
 
 			<Callout icon="🔓" title="Self-host = no quotas, no paywalls" color="#28c840">
 				When you run the relay without a <code>BETTER_AUTH_SECRET</code>, every channel attaches to
-				a single implicit user with the <code>selfhost</code> tier — unlimited channels, unlimited
-				devices, no event retention sweep, no Billing page. The hosted codebase and self-host
-				codebase are the same binary; the difference is which env vars you set.
+				a single implicit user on the <code>selfhost</code> tier: unlimited channels and devices, no
+				retention sweep, no Billing page. Hosted and self-hosted run the same code; which variables
+				you set decides the mode.
 			</Callout>
 
 			<h2>What You Need</h2>
-			<table>
-				<thead>
-					<tr>
-						<th>Component</th>
-						<th>Options</th>
-						<th>Free Tier</th>
-					</tr>
-				</thead>
-				<tbody>
-					<tr>
-						<td>Relay server</td>
-						<td>Cloudflare Worker</td>
-						<td>100K req/day</td>
-					</tr>
-					<tr>
-						<td>Database</td>
-						<td>Cloudflare D1</td>
-						<td>0.5GB storage</td>
-					</tr>
-					<tr>
-						<td>Web app</td>
-						<td>Cloudflare Pages</td>
-						<td>Unlimited bandwidth</td>
-					</tr>
-					<tr>
-						<td>Domain</td>
-						<td>Any registrar</td>
-						<td>~$12/year</td>
-					</tr>
-				</tbody>
-			</table>
+			<ul>
+				<li>
+					A Cloudflare account: the relay is a Worker with D1 and Durable Objects, and the web app
+					and docs deploy to Pages. Small instances fit the free tiers.
+				</li>
+				<li>Node.js and pnpm.</li>
+				<li>
+					Optionally a domain on Cloudflare, for <code>&lt;id&gt;.yourdomain.com</code> webhook
+					URLs.
+				</li>
+			</ul>
 
 			<h2>Setup</h2>
 
@@ -89,14 +69,17 @@ pnpm db:migrate:remote   # your Cloudflare D1, before deploying`}</code>
 			<pre>
 				<code>{`# No database URL: the relay uses the D1 binding from wrangler.toml.
 
-# Optional — leave unset for self-host mode (single implicit user)
+# Optional: leave unset for self-host mode (single implicit user)
 # BETTER_AUTH_SECRET=...
 # BETTER_AUTH_URL=...
 # WEB_URL=http://localhost:5173
-# RESEND_API_KEY=...
+# AUTH_TRUSTED_ORIGINS=http://localhost:5173
+# RESEND_API_KEY=...                (verification, password reset, magic links)
 # MAIL_FROM=BridgeHook <noreply@yourdomain.com>
+# GITHUB_CLIENT_ID=... GITHUB_CLIENT_SECRET=...
+# GOOGLE_CLIENT_ID=... GOOGLE_CLIENT_SECRET=...
 
-# Optional — leave unset to disable the Billing page entirely
+# Optional: leave unset to disable the Billing page entirely
 # POLAR_ACCESS_TOKEN=...
 # POLAR_WEBHOOK_SECRET=whsec_...
 # POLAR_PRODUCT_ID_HOBBY=prod_...
@@ -154,8 +137,8 @@ wrangler deploy
 							No <code>BETTER_AUTH_SECRET</code>
 						</td>
 						<td>
-							Single implicit user, no auth UI, no quotas, no Billing page, <code>/auth/**</code>{" "}
-							returns 404, <code>/api/me/**</code> returns 404
+							One implicit user, no sign-in, no quotas, no Billing page; <code>/auth/**</code> and{" "}
+							<code>/api/me/**</code> return 404
 						</td>
 					</tr>
 					<tr>
@@ -164,37 +147,45 @@ wrangler deploy
 							<code>BETTER_AUTH_SECRET</code> set, <code>POLAR_ACCESS_TOKEN</code> unset
 						</td>
 						<td>
-							Magic-link login, device pairing, dashboard, but Billing page shows "billing not
-							configured" and <code>/api/me/billing/**</code> returns 503
+							Accounts (email and password; magic link and OAuth when configured), device pairing,
+							agent tokens and MCP, per-plan quotas and retention. Billing reports &quot;not
+							configured&quot;.
 						</td>
 					</tr>
 					<tr>
 						<td>Hosted, paid</td>
-						<td>Both auth and Polar env vars set</td>
-						<td>
-							Full SaaS shape — trials, paywall, retention sweep, claim arbitration, UserDO push
-						</td>
+						<td>Auth and the Polar variables set</td>
+						<td>Everything above plus checkout and paid tiers</td>
 					</tr>
 				</tbody>
 			</table>
 
 			<h2>Custom Domain</h2>
-			<p>Add these DNS records in Cloudflare:</p>
+			<p>With a domain on Cloudflare:</p>
 			<pre>
-				<code>{`yourdomain.com        → Cloudflare Pages (docs)
-app.yourdomain.com    → Cloudflare Pages (web app)
-relay.yourdomain.com  → Cloudflare Worker (relay)`}</code>
+				<code>{`docs.yourdomain.com    → Pages (docs)
+app.yourdomain.com     → Pages (web app)
+relay.yourdomain.com   → Worker custom domain (API)
+*.yourdomain.com       → proxied wildcard record + Worker route "*.yourdomain.com/*"`}</code>
 			</pre>
 			<p>
-				Update <code>VITE_RELAY_URL</code> in the web app to point to your relay domain. When auth
-				is enabled across subdomains, also set <code>AUTH_COOKIE_DOMAIN=".yourdomain.com"</code> on
-				the relay so the session cookie flows from <code>app.</code> to <code>relay.</code>.
+				Set <code>TUNNEL_DOMAIN = "yourdomain.com"</code> in the relay&apos;s <code>[vars]</code>{" "}
+				and webhook URLs become <code>https://&lt;id&gt;.yourdomain.com</code>. Give the app and
+				docs hosts routes without a script so the wildcard route does not capture them. Without{" "}
+				<code>TUNNEL_DOMAIN</code>, URLs use the path form{" "}
+				<code>https://relay.yourdomain.com/&lt;id&gt;</code>.
+			</p>
+			<p>
+				Point <code>VITE_RELAY_URL</code> at the relay, set <code>WEB_URL</code>,{" "}
+				<code>BETTER_AUTH_URL</code> and <code>AUTH_TRUSTED_ORIGINS</code>, and leave{" "}
+				<code>AUTH_COOKIE_DOMAIN</code> unset when channel hosts share the domain (see{" "}
+				<a href="#/auth">Authentication</a>).
 			</p>
 
 			<Callout icon="🔁" title="Updating an instance" color="#9093ff">
-				After pulling new commits, re-run <code>npx drizzle-kit push</code> to apply any new
-				migrations, then redeploy. Migrations are designed to be safe to re-run; they fail loudly if
-				the DB has incompatible state (e.g. legacy bearer channels still present).
+				After pulling new commits run <code>pnpm db:migrate:remote</code> in <code>relay/</code>,
+				then redeploy the Worker. Apply migrations before deploying code that needs them; already
+				applied migrations are skipped.
 			</Callout>
 		</>
 	);

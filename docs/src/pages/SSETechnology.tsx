@@ -3,121 +3,57 @@ import { Callout, ProtocolCompare } from "../components/Illustrations";
 export function SSETechnology() {
 	return (
 		<>
-			<h1>SSE Technology</h1>
+			<h1>Live updates (SSE)</h1>
 			<p>
-				Server-Sent Events (SSE) is the core transport technology that makes BridgeHook work.
-				Understanding SSE helps you understand why BridgeHook is so simple and reliable.
+				BridgeHook pushes &quot;something changed&quot; to your browser with Server-Sent Events, the
+				same one-way HTTP stream used for streamed LLM output. The stream only wakes things up: the
+				webhook itself is always read from the queue, so a dropped stream delays delivery by a few
+				seconds and never loses an event.
 			</p>
 
-			<h2>What Is SSE?</h2>
+			<h2>The per-user stream</h2>
+			<pre>
+				<code>{`GET https://relay.bridgehook.dev/api/me/stream     (session cookie)
+Content-Type: text/event-stream
+
+data: {"type":"webhook","id":"…","channelId":"2324radf23r","method":"POST","path":"/api/webhooks/stripe","headers":{…},"body":"…","receivedAt":"…"}
+
+data: {"type":"claimed","eventId":"…","channelId":"2324radf23r","claimerId":"…","claimedAt":"…"}
+
+data: {"type":"response","eventId":"…","channelId":"2324radf23r","status":200,"latencyMs":12}`}</code>
+			</pre>
 			<p>
-				SSE is a standard web API for receiving a stream of events from a server over a single HTTP
-				connection. It's the same technology that powers ChatGPT's streaming responses, live sports
-				tickers, and real-time dashboards.
+				One stream per signed-in user carries events for all of their channels. It is held by a
+				Durable Object per user, so a webhook that lands on any channel fans out to every open
+				dashboard page and the extension at once.
 			</p>
-
-			<Callout icon="📡" title="Same Tech, Different Purpose" color="#ddb7ff">
-				In LLM streaming, SSE sends text tokens for the UI to render. In BridgeHook, SSE sends
-				webhook payloads for the browser to forward to localhost. Same pipe, different cargo.
-			</Callout>
-
-			<h2>How SSE Differs From Regular HTTP</h2>
-			<p>A normal HTTP request completes immediately:</p>
-			<pre>
-				<code>{`Browser: GET /api/data
-Server:  200 OK { data: "here" }
-→ Connection closes`}</code>
-			</pre>
-
-			<p>An SSE connection stays open — the server sends data whenever it wants:</p>
-			<pre>
-				<code>{`Browser: GET /hook/ch_9x4kf2m/events
-Server:  200 OK (Content-Type: text/event-stream)
-
-         data: {"type":"connected"}
-
-         ...minutes pass, connection stays open...
-
-         data: {"type":"webhook","method":"POST","path":"/webhook/stripe"}
-
-         ...more minutes...
-
-         data: {"type":"webhook","method":"POST","path":"/webhook/github"}
-
-→ Connection stays open until the browser closes it`}</code>
-			</pre>
-
-			<h2>Why SSE and Not WebSocket?</h2>
-			<ProtocolCompare />
-			<p>
-				BridgeHook only needs server-to-client pushing (the relay pushes webhook events to the
-				browser). The browser sends responses back via regular <code>POST</code> requests — no
-				bidirectional channel needed. SSE is simpler, more reliable, and works through every proxy
-				and CDN.
-			</p>
-
-			<h2>The Browser API</h2>
-			<p>SSE in the browser is a single line of code:</p>
-			<pre>
-				<code>{`const source = new EventSource('/hook/ch_9x4kf2m/events');
-
-source.onmessage = (event) => {
-  const data = JSON.parse(event.data);
-  // data.type === "webhook"
-  // data.method, data.headers, data.body — everything needed
-};
-
-// The browser automatically reconnects if the connection drops.
-// No manual reconnection logic needed.`}</code>
-			</pre>
-
-			<h2>How the Relay Implements SSE</h2>
-			<p>
-				On Cloudflare Workers, SSE is implemented using a <code>TransformStream</code> — a pipe with
-				two ends:
-			</p>
-			<pre>
-				<code>{`// When your browser connects:
-const { readable, writable } = new TransformStream();
-const writer = writable.getWriter();
-
-// Store the writer — this is the "connection" to YOUR browser.
-// It's a JavaScript object in the Worker's memory.
-sseConnections.set(channelId, writer);
-
-// Return the readable end — this HTTP response never closes:
-return new Response(readable, {
-  headers: { "Content-Type": "text/event-stream" }
-});
-
-// Later, when a webhook arrives:
-const writer = sseConnections.get(channelId);
-writer.write(encoder.encode('data: {"type":"webhook",...}\\n\\n'));
-// → This instantly appears in your browser's EventSource`}</code>
-			</pre>
-
-			<Callout icon="🔌" title="The Connection Is Just RAM" color="#ffb0cd">
-				The <code>WritableStreamDefaultWriter</code> stored in the Map is the relay's handle to your
-				browser. It lives in the Worker's memory — not in a database, not on disk. Cloudflare's
-				infrastructure handles the actual TCP/TLS delivery. The Worker just writes bytes into a
-				pipe.
-			</Callout>
-
-			<h2>What Happens When the Connection Drops</h2>
 			<ul>
 				<li>
-					<strong>Browser closes tab</strong> → SSE connection closes → Writer removed from Map →
-					Events buffer in D1
+					<strong>Dashboard pages</strong> (Overview, Events, Channels) update live from it.
 				</li>
 				<li>
-					<strong>Network blip</strong> → Browser's <code>EventSource</code> auto-reconnects →
-					Writer re-added to Map
+					<strong>The extension</strong> uses it while you are signed in with a browser session, and
+					polls on a 30-second alarm in device-token mode, which has no cookie.
 				</li>
 				<li>
-					<strong>Worker restarts</strong> → All SSE connections lost → Browsers auto-reconnect →
-					Channels still exist in D1
+					<strong>The no-install tab</strong> polls its channel every 2 seconds and drains the queue
+					on each new event.
 				</li>
 			</ul>
+
+			<h2>Why SSE and not WebSocket</h2>
+			<ProtocolCompare />
+			<p>
+				The relay only needs to push; answers go back as ordinary signed <code>POST</code>s. SSE is
+				plain HTTP, reconnects on its own and passes through proxies and CDNs that block WebSocket
+				upgrades.
+			</p>
+
+			<Callout icon="🧠" title="Why the queue matters more than the stream" color="#FF5C26">
+				Streams drop: laptops sleep, service workers are stopped, networks change. Because delivery
+				reads <code>GET /api/channels/:id/events?pending=1</code> and claims each event, a forwarder
+				that reconnects after an hour picks up exactly where it left off, in order.
+			</Callout>
 		</>
 	);
 }

@@ -9,18 +9,36 @@ const NAV_SECTIONS = [
 		],
 	},
 	{
+		title: "Build with AI",
+		items: [
+			{ id: "ai-agents", label: "AI agents (MCP)" },
+			{ id: "agent-instructions", label: "AGENTS.md snippet" },
+			{ id: "sync-responses", label: "Sync responses" },
+		],
+	},
+	{
+		title: "Provider Guides",
+		items: [
+			{ id: "openai", label: "OpenAI" },
+			{ id: "elevenlabs", label: "ElevenLabs" },
+			{ id: "vapi", label: "Vapi" },
+			{ id: "stripe", label: "Stripe" },
+			{ id: "github", label: "GitHub" },
+		],
+	},
+	{
 		title: "Core Concepts",
 		items: [
 			{ id: "how-it-works", label: "How It Works" },
-			{ id: "sse-technology", label: "SSE Technology" },
-			{ id: "browser-bridge", label: "The Browser Bridge" },
+			{ id: "sse-technology", label: "Live updates (SSE)" },
+			{ id: "browser-bridge", label: "No-install mode" },
 		],
 	},
 	{
 		title: "Security",
 		items: [
 			{ id: "security-model", label: "Security Model" },
-			{ id: "channel-secrets", label: "Channel Secrets" },
+			{ id: "channel-secrets", label: "Channel Keys" },
 			{ id: "path-allowlist", label: "Path Allowlist" },
 		],
 	},
@@ -45,7 +63,6 @@ const NAV_SECTIONS = [
 	{
 		title: "API Reference",
 		items: [
-			{ id: "ai-agents", label: "AI agents (MCP)" },
 			{ id: "relay-api", label: "Relay API" },
 			{ id: "sse-events", label: "SSE Events" },
 		],
@@ -268,7 +285,7 @@ export function Layout({
 				{/* Top bar */}
 				<div className="sticky top-0 z-10 bg-background/80 backdrop-blur-xl border-b border-white/[0.04] px-12 py-3 flex items-center justify-between">
 					<div className="text-[11px] font-bold text-zinc-500 font-body">{currentLabel}</div>
-					<div className="text-[10px] text-zinc-600 font-mono">bridgehook-docs.pages.dev</div>
+					<div className="text-[10px] text-zinc-600 font-mono">docs.bridgehook.dev</div>
 				</div>
 
 				<div className="max-w-3xl mx-auto px-12 py-12 prose" data-docs-content>
