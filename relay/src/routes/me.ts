@@ -14,6 +14,12 @@ import { Hono } from "hono";
 import { checkReplay, finiteOrNull, loadDailyEventCount, loadUserAccess } from "../access.js";
 import { type Auth, getSessionUser } from "../auth.js";
 import type { DB } from "../db.js";
+import {
+	loadOwnedEvent,
+	queueReplay,
+	safeJsonObject,
+	serializeEventDetail,
+} from "../event-store.js";
 import { resolveCaller } from "../identity.js";
 import { clampSyncTimeout, isResponseMode } from "../sync.js";
 import { buildWebhookUrl } from "../webhook-url.js";
@@ -24,8 +30,6 @@ const MAX_FEED_LIMIT = 100;
 /** Per-filter list cap; keeps every query well under D1's 100 bound parameters. */
 const MAX_FILTER_IDS = 20;
 const DEFAULT_FEED_LIMIT = 50;
-const EVENT_ID_LEN = 16;
-const MAX_REPLAY_BODY_BYTES = 1_048_576; // 1 MB
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
@@ -53,7 +57,10 @@ export interface MeEnv {
  * Caller for read endpoints: a device token (`Authorization: Bearer dvc_…`)
  * or the session cookie. A paired extension has to work with no dashboard
  * session at all, and it reads identity, plan, usage and its channels here.
- * Mutations (channel edits, key rotation, replays, deletes) stay session-only.
+ * Key rotation also accepts device tokens, so an extension or CLI can adopt a
+ * channel created elsewhere (dashboard, MCP agent); agent tokens are refused
+ * by resolveCaller. Other mutations (channel edits, replays, deletes) stay
+ * session-only.
  */
 async function resolveReader(deps: MeEnv, request: Request): Promise<{ id: string } | null> {
 	const caller = await resolveCaller(deps.auth, deps.db, request);
@@ -275,7 +282,9 @@ export function buildMeRoutes(getDeps: (c: { env: unknown }) => MeEnv | null) {
 		const deps = getDeps(c);
 		if (!deps) return c.json({ error: "Auth not configured" }, 404);
 
-		const sessionUser = await getSessionUser(deps.auth, c.req.raw);
+		// Device tokens too: an extension or CLI adopting a channel created
+		// elsewhere (dashboard, MCP agent) rotates in its own key.
+		const sessionUser = await resolveReader(deps, c.req.raw);
 		if (!sessionUser) return c.json({ error: "Not signed in" }, 401);
 
 		const channelId = c.req.param("channelId");
@@ -576,82 +585,12 @@ export function buildMeRoutes(getDeps: (c: { env: unknown }) => MeEnv | null) {
 
 		const body = await c.req.json().catch(() => ({}));
 		const edits = (body ?? {}) as { body?: unknown; headers?: unknown };
-
-		// Body: optional override; otherwise reuse the source's body.
-		let nextBody: string | null;
-		if (edits.body === undefined || edits.body === null) {
-			nextBody = source.requestBody;
-		} else if (typeof edits.body === "string") {
-			if (edits.body.length > MAX_REPLAY_BODY_BYTES) {
-				return c.json({ error: "Body too large" }, 413);
-			}
-			nextBody = edits.body;
-		} else {
-			return c.json({ error: "body must be a string or null" }, 400);
-		}
-
-		// Headers: optional override; sanitize to a flat string→string map.
-		let nextHeaders: Record<string, string>;
-		if (edits.headers === undefined || edits.headers === null) {
-			nextHeaders = safeJsonObject(source.requestHeaders);
-		} else if (
-			edits.headers &&
-			typeof edits.headers === "object" &&
-			!Array.isArray(edits.headers)
-		) {
-			nextHeaders = {};
-			for (const [k, v] of Object.entries(edits.headers as Record<string, unknown>)) {
-				if (typeof k === "string" && typeof v === "string") {
-					nextHeaders[k] = v;
-				}
-			}
-		} else {
-			return c.json({ error: "headers must be an object or null" }, 400);
-		}
-
-		const replayId = freshEventId();
-		const [inserted] = await deps.db
-			.insert(events)
-			.values({
-				id: replayId,
-				channelId: source.channelId,
-				method: source.method,
-				path: source.path,
-				requestHeaders: JSON.stringify(nextHeaders),
-				requestBody: nextBody,
-				kind: "replay",
-				replayOf: source.id,
-				replayedByUserId: sessionUser.id,
-			})
-			.returning();
-		if (!inserted) {
-			return c.json({ error: "Could not queue replay" }, 500);
-		}
-
-		// Wake any SSE subscribers immediately. Best-effort — extension still
-		// catches it on its next 2s poll if the DO notify fails.
-		const ssePayload = JSON.stringify({
-			type: "webhook",
-			id: inserted.id,
-			channelId: source.channelId,
-			method: inserted.method,
-			path: inserted.path,
-			headers: nextHeaders,
-			body: nextBody ?? "",
-			receivedAt: inserted.receivedAt.toISOString(),
-			kind: "replay",
-			replayOf: source.id,
-		});
-		const stub = deps.notifier.getChannelDO(source.channelId);
-		stub
-			.fetch(new Request("https://do/notify", { method: "POST", body: ssePayload }))
-			.catch((err) => console.error("DO notify failed:", err));
-		deps.notifier.notifyUser(sessionUser.id, ssePayload);
-
+		const replay = await queueReplay(deps.db, deps.notifier, sessionUser.id, source, edits);
+		if (!replay.ok) return c.json({ error: replay.error }, replay.status);
 		return c.json({
-			replayId: inserted.id,
-			channelId: inserted.channelId,
-			receivedAt: inserted.receivedAt.toISOString(),
+			replayId: replay.replayId,
+			channelId: replay.channelId,
+			receivedAt: replay.receivedAt,
 		});
 	});
 
@@ -794,73 +733,7 @@ function hexToBytes(hex: string): Uint8Array<ArrayBuffer> {
 	return out;
 }
 
-function safeJsonObject(raw: string | null): Record<string, string> {
-	if (!raw) return {};
-	try {
-		const v = JSON.parse(raw);
-		if (!v || typeof v !== "object" || Array.isArray(v)) return {};
-		const out: Record<string, string> = {};
-		for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
-			if (typeof val === "string") out[k] = val;
-		}
-		return out;
-	} catch {
-		return {};
-	}
-}
-
-function freshEventId(): string {
-	return crypto.randomUUID().replace(/-/g, "").slice(0, EVENT_ID_LEN);
-}
-
 /**
  * Ownership-gated event load. Joins channels to verify the user owns the
  * event's channel; returns null otherwise.
  */
-async function loadOwnedEvent(db: DB, userId: string, eventId: string) {
-	const [row] = await db
-		.select({
-			id: events.id,
-			channelId: events.channelId,
-			method: events.method,
-			path: events.path,
-			requestHeaders: events.requestHeaders,
-			requestBody: events.requestBody,
-			responseStatus: events.responseStatus,
-			responseHeaders: events.responseHeaders,
-			responseBody: events.responseBody,
-			latencyMs: events.latencyMs,
-			error: events.error,
-			receivedAt: events.receivedAt,
-			kind: events.kind,
-			replayOf: events.replayOf,
-			replayedByUserId: events.replayedByUserId,
-			deviceId: events.deviceId,
-		})
-		.from(events)
-		.innerJoin(channels, eq(events.channelId, channels.id))
-		.where(and(eq(events.id, eventId), eq(channels.userId, userId)))
-		.limit(1);
-	return row ?? null;
-}
-
-function serializeEventDetail(r: NonNullable<Awaited<ReturnType<typeof loadOwnedEvent>>>) {
-	return {
-		id: r.id,
-		channelId: r.channelId,
-		method: r.method,
-		path: r.path,
-		requestHeaders: safeJsonObject(r.requestHeaders),
-		requestBody: r.requestBody,
-		responseStatus: r.responseStatus,
-		responseHeaders: r.responseHeaders ? safeJsonObject(r.responseHeaders) : null,
-		responseBody: r.responseBody,
-		latencyMs: r.latencyMs,
-		error: r.error,
-		receivedAt: r.receivedAt.toISOString(),
-		kind: r.kind,
-		replayOf: r.replayOf,
-		replayedByUserId: r.replayedByUserId,
-		deviceId: r.deviceId,
-	};
-}

@@ -23,7 +23,7 @@ export const CHANNEL_ID_RE = /^[a-z0-9]{1,24}$/;
  * never equal one of these (ids are 12 random hex chars, so this only guards
  * against hand-typed URLs reaching a webhook handler).
  */
-export const RESERVED_SEGMENTS = new Set(["api", "auth", "hook", "health"]);
+export const RESERVED_SEGMENTS = new Set(["api", "auth", "hook", "health", "mcp"]);
 
 /** Methods a webhook URL accepts; anything else is not forwarded. */
 export const WEBHOOK_METHODS = ["POST", "PUT", "PATCH", "DELETE"] as const;

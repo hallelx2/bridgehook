@@ -58,7 +58,7 @@ export interface MeChannel {
 
 export interface MeDevice {
 	id: string;
-	kind: "extension" | "desktop" | "cli" | "web";
+	kind: "extension" | "desktop" | "cli" | "web" | "agent";
 	label: string;
 	os: string | null;
 	userAgent: string | null;
@@ -181,6 +181,15 @@ export const me = {
 				method: "POST",
 				body: JSON.stringify({ publicKey }),
 			}),
+	},
+
+	agents: {
+		/** Mint an agent token for an MCP client; the plaintext is returned once. */
+		create: (label: string) =>
+			meFetch<{ token: string; deviceId: string; label: string; kind: "agent" }>(
+				"/devices/self-register",
+				{ method: "POST", body: JSON.stringify({ kind: "agent", label }) },
+			),
 	},
 
 	devices: {

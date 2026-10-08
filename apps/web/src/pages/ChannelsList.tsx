@@ -130,8 +130,7 @@ function ChannelsView() {
 						GitHub, OpenAI). <span className="font-mono">Your server&apos;s reply</span> holds the
 						request until your local server answers and returns that response, for tool calls from
 						voice and agent platforms (Vapi, ElevenLabs) and GET verification challenges. The
-						extension or CLI must be running; from a dashboard tab, your local server must allow
-						CORS.
+						extension must be running; from a dashboard tab, your local server must allow CORS.
 					</p>{" "}
 					<div className="rounded-lg border border-gray-900 bg-gray-950 overflow-hidden">
 						<div className="grid grid-cols-[minmax(0,1.5fr)_64px_minmax(0,2fr)_200px_48px_80px_56px] gap-3 px-4 py-2 border-b border-gray-900 text-[10px] uppercase tracking-wider text-gray-500">

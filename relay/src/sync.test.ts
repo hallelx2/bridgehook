@@ -122,6 +122,17 @@ describe("syncResponse", () => {
 		).toBe(502);
 	});
 
+	it("504 and 502 name the event so the sender can look it up", () => {
+		expect(
+			syncResponse({ kind: "timeout" }, "e1", "POST").headers.get("x-bridgehook-event-id"),
+		).toBe("e1");
+		expect(
+			syncResponse({ kind: "response", result: result(0, "refused") }, "e2", "POST").headers.get(
+				"x-bridgehook-event-id",
+			),
+		).toBe("e2");
+	});
+
 	it("cannot run script or set cookies, whatever localhost sends", async () => {
 		const res = syncResponse(
 			{

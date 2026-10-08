@@ -45,6 +45,7 @@ const NAV_SECTIONS = [
 	{
 		title: "API Reference",
 		items: [
+			{ id: "ai-agents", label: "AI agents (MCP)" },
 			{ id: "relay-api", label: "Relay API" },
 			{ id: "sse-events", label: "SSE Events" },
 		],
