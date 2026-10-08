@@ -10,7 +10,7 @@ export function Footer() {
 				<div className="mb-12 md:mb-0">
 					<Logo size="lg" />
 					<p className="text-on-surface-muted mt-4 text-xs font-bold tracking-[0.2em] uppercase">
-						Zero-install webhook testing.
+						Webhook testing for the AI era.
 					</p>
 				</div>
 

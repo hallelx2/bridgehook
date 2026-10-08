@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
+import { AgentsSection } from "./components/AgentsSection";
 import { Architecture } from "./components/Architecture";
 import { AuthGate } from "./components/AuthGate";
 import { Benefits } from "./components/Benefits";
@@ -33,6 +34,7 @@ function LandingPage() {
 			<main className="relative">
 				<BridgeHero />
 				<DashboardPreview />
+				<AgentsSection />
 				<BentoGrid />
 				<ScrollFlow />
 				<Architecture />

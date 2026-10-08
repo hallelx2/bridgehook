@@ -29,8 +29,8 @@ export function BentoGrid() {
 						Everything you need
 					</h2>
 					<p className="text-on-surface-variant text-lg leading-relaxed">
-						Stop wasting time configuring local tunnels. Capture and inspect production traffic in a
-						secure sandbox instantly.
+						Capture, inspect and replay every webhook your app receives, with your server&apos;s
+						answer beside each one.
 					</p>
 				</div>
 			</div>
@@ -47,8 +47,8 @@ export function BentoGrid() {
 								Browser-based bridge
 							</h3>
 							<p className="text-on-surface-variant text-[15px] max-w-sm leading-relaxed">
-								Your browser connects to the relay and forwards webhooks to localhost. No install,
-								no config, no CLI.
+								The BridgeHook extension, or just a dashboard tab, forwards webhooks to localhost.
+								No tunnel binary, no CLI.
 							</p>
 						</div>
 
@@ -114,8 +114,8 @@ export function BentoGrid() {
 							Zero install
 						</h3>
 						<p className="text-on-surface-variant text-[15px] leading-relaxed">
-							No CLI binary, no npm package, no account signup. Works on locked-down corporate
-							machines &mdash; if it has a browser, it works.
+							No CLI binary, no npm package. On a locked-down machine, forward straight from a
+							dashboard tab: if it has a browser, it works.
 						</p>
 					</div>
 				</Card>

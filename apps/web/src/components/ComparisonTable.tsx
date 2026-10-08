@@ -1,23 +1,23 @@
 const ROWS = [
 	{
-		capability: "Setup complexity",
-		tunnel: "CLI install + config",
-		bridgehook: "Zero-config browser",
+		capability: "Setup",
+		tunnel: "Install and run a binary",
+		bridgehook: "Extension, or a browser tab",
 	},
 	{
-		capability: "History retention",
-		tunnel: "Temporary / none",
-		bridgehook: "Permanent storage",
+		capability: "Machine offline",
+		tunnel: "Webhooks fail",
+		bridgehook: "Queued, delivered in order",
 	},
 	{
-		capability: "Request inspection",
-		tunnel: "Terminal-only",
-		bridgehook: "Rich UI + JSON",
+		capability: "Inspection",
+		tunnel: "The request",
+		bridgehook: "Request, your reply, replay",
 	},
 	{
-		capability: "Collaboration",
-		tunnel: "Single machine",
-		bridgehook: "Shared teams",
+		capability: "Coding agents",
+		tunnel: "Not a focus",
+		bridgehook: "MCP server with signed test events",
 	},
 ];
 

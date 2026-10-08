@@ -1,6 +1,6 @@
 import { ArrowRight, Check, Clipboard, Loader2, RefreshCw, Terminal, Zap } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { createChannel, pollEvents } from "../lib/relay";
+import { createDemoChannel, pollEvents } from "../lib/relay";
 import type { WebhookEventData } from "../lib/relay";
 
 type DemoState =
@@ -43,9 +43,7 @@ export function HeroLiveDemo() {
 		try {
 			setState({ kind: "creating" });
 			setEvents([]);
-			// port=3000 is a placeholder; relay requires 1-65535 but we don't forward.
-			// allowedPaths=[] means "allow all" on the relay side.
-			const channel = await createChannel(3000, []);
+			const channel = await createDemoChannel();
 			setState({
 				kind: "live",
 				channelId: channel.channelId,
@@ -136,7 +134,8 @@ function IdleBody({ onStart }: { onStart: () => void }) {
 						Get a working webhook URL in 10 seconds
 					</h3>
 					<p className="text-[13px] text-on-surface-variant leading-relaxed">
-						No signup. We spin up a real channel, you curl it, and the request appears here live.
+						No signup. A real URL that records requests for an hour: curl it and watch them land
+						here. Sign up and it becomes permanent and forwards to your localhost.
 					</p>
 				</div>
 			</div>

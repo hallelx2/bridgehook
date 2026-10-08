@@ -5,6 +5,7 @@
  * revokes existing tokens.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { DashboardLayout } from "../components/DashboardLayout";
 import { type MeDevice, me } from "../lib/me-api";
 
@@ -126,6 +127,31 @@ function AiAgentsView() {
 				test events, read exactly what your handler answered, and replay after a fix. Nothing to
 				install: BridgeHook is a remote MCP server at{" "}
 				<code className="font-mono text-gray-300">{MCP_URL}</code>.
+			</p>
+			<p className="text-sm text-gray-500 mt-2 max-w-2xl">
+				Webhooks reach your server through the BridgeHook extension or the{" "}
+				<Link to="/dashboard/bridge" className="text-cyan-400 hover:underline">
+					browser bridge
+				</Link>
+				; until one runs for the port, they queue. Add the{" "}
+				<a
+					href="https://docs.bridgehook.dev/#/agent-instructions"
+					target="_blank"
+					rel="noreferrer"
+					className="text-cyan-400 hover:underline"
+				>
+					AGENTS.md snippet
+				</a>{" "}
+				so your agent tests handlers on its own, and see the{" "}
+				<a
+					href="https://docs.bridgehook.dev/#/openai"
+					target="_blank"
+					rel="noreferrer"
+					className="text-cyan-400 hover:underline"
+				>
+					provider guides
+				</a>
+				.
 			</p>
 
 			{error && (

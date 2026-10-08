@@ -1,24 +1,24 @@
 import {
 	ArrowLeftRight,
+	Bot,
 	Download,
+	Inbox,
 	Link as LinkIcon,
-	Power,
 	Search,
 	Unlock,
-	UserX,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
 const COMPARISONS: { theirs: string; ours: string; Icon: LucideIcon }[] = [
 	{
-		theirs: "Download CLI binary",
-		ours: "Open a URL",
+		theirs: "Download a tunnel binary",
+		ours: "Install an extension, or nothing",
 		Icon: Download,
 	},
 	{
-		theirs: "Create account & login",
-		ours: "Completely anonymous",
-		Icon: UserX,
+		theirs: "Webhooks fail while you are offline",
+		ours: "Queued, delivered in order later",
+		Icon: Inbox,
 	},
 	{
 		theirs: "Blocked on corporate machines",
@@ -26,19 +26,19 @@ const COMPARISONS: { theirs: string; ours: string; Icon: LucideIcon }[] = [
 		Icon: Unlock,
 	},
 	{
-		theirs: "URL rotates on restart",
-		ours: "Stable URL forever",
+		theirs: "URL tied to a running process",
+		ours: "Permanent URL per port",
 		Icon: LinkIcon,
 	},
 	{
-		theirs: "Paid inspector add-on",
-		ours: "Built-in request inspector",
+		theirs: "Shows the request only",
+		ours: "Your handler's reply, with replay",
 		Icon: Search,
 	},
 	{
-		theirs: "Zombie tunnel processes",
-		ours: "Close tab = instant kill",
-		Icon: Power,
+		theirs: "Agents cannot see the result",
+		ours: "MCP: agents test their own handlers",
+		Icon: Bot,
 	},
 ];
 
@@ -69,11 +69,11 @@ function ComparisonRow({ item }: { item: (typeof COMPARISONS)[number] }) {
 }
 
 const STATS = [
-	{ value: "0 bytes", label: "to install" },
-	{ value: "24h", label: "auto-expiry" },
-	{ value: "60/min", label: "rate limit" },
-	{ value: "<200ms", label: "latency" },
-	{ value: "1MB", label: "max body" },
+	{ value: "0 bytes", label: "to install (tab mode)" },
+	{ value: "1 URL", label: "per port, permanent" },
+	{ value: "8", label: "MCP tools" },
+	{ value: "100 s", label: "max sync reply wait" },
+	{ value: "1 MB", label: "max body" },
 ];
 
 export function Benefits() {
@@ -85,11 +85,13 @@ export function Benefits() {
 					vs Traditional Tunnels
 				</div>
 				<h2 className="text-4xl md:text-6xl font-extrabold text-on-surface tracking-[-0.035em] mb-4">
-					The old way is over
+					Tunnels expose a port.
+					<br />
+					BridgeHook keeps the webhooks.
 				</h2>
 				<p className="text-on-surface-variant text-lg max-w-xl mx-auto leading-relaxed">
-					Every tunnel tool makes you install software, create accounts, and manage processes.
-					BridgeHook eliminates all of it.
+					A tunnel only works while its process runs, and it shows you the request. BridgeHook holds
+					every webhook until your machine can take it, and shows what your code answered.
 				</p>
 			</div>
 

@@ -16,15 +16,15 @@ export function FinalCTA() {
 						<span className="text-on-surface-variant">faster?</span>
 					</h2>
 					<p className="max-w-xl mx-auto text-on-surface-variant text-lg mb-10">
-						Ditch complex tunnels for BridgeHook's instant browser-based webhook endpoints. Zero
-						install, zero config.
+						One URL per port, nothing lost while you are away, and an agent that can test its own
+						handlers. No tunnel to keep running.
 					</p>
 					<div className="flex flex-col sm:flex-row justify-center gap-3">
 						<Link
 							to="/login?signup=1"
 							className="px-8 py-4 bg-on-surface text-background font-bold rounded-xl hover:bg-primary hover:text-on-surface transition-colors text-[15px] no-underline"
 						>
-							Get started — free
+							Get started free
 						</Link>
 						<a
 							href="#try"
