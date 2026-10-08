@@ -47,6 +47,27 @@ function LandingPage() {
 	);
 }
 
+/** Routes the marketing host serves itself; everything else belongs to the app. */
+const MARKETING_PATHS = new Set(["/", "/privacy"]);
+
+/**
+ * The apex (bridgehook.dev) serves the landing page. Signing in and the
+ * dashboard live on VITE_APP_URL, the origin the relay trusts with the
+ * session cookie, so any other route is moved there, path and all.
+ */
+function AppHostRedirect() {
+	const location = useLocation();
+	useEffect(() => {
+		const appUrl = import.meta.env.VITE_APP_URL;
+		if (!appUrl) return;
+		const app = new URL(appUrl);
+		if (window.location.origin === app.origin) return;
+		if (MARKETING_PATHS.has(location.pathname)) return;
+		window.location.replace(`${app.origin}${location.pathname}${location.search}${location.hash}`);
+	}, [location]);
+	return null;
+}
+
 /**
  * One-shot shim: people with `#/dashboard` bookmarks land at `/` with a hash;
  * convert to a real path navigation so the new BrowserRouter takes over.
@@ -72,6 +93,7 @@ export function App() {
 	return (
 		<BrowserRouter>
 			<HashCompatRedirect />
+			<AppHostRedirect />
 			<Routes>
 				<Route path="/" element={<LandingPage />} />
 				<Route path="/login" element={<Login />} />
