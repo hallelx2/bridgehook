@@ -11,7 +11,7 @@
 
 import { deleteChannelKey, generateChannelKey, signedFetch } from "./crypto";
 
-import type { ForwardOutcome } from "./drain";
+import type { ForwardOutcome, LocalhostState } from "./drain";
 
 const RELAY_URL = import.meta.env.VITE_RELAY_URL || "http://localhost:8787";
 
@@ -268,15 +268,14 @@ export const LOCALHOST_TIMEOUT_MS = 5 * 60 * 1000;
 /**
  * Forward an event and classify what happened, for the queue drainer.
  *
- * A page can only read a localhost response if the local server sends CORS
- * headers, and every failure surfaces as the same TypeError. Two probes tell
- * the cases apart:
- *   • a plain CORS GET of "/" succeeds → the server allows this origin, so the
- *     request itself failed (crash, reset): count it as a failed attempt
- *   • otherwise a no-cors GET succeeds → the server is up but blocks
- *     cross-origin reads: tell the user how to allow it
- *   • both fail → the server is down (or the browser's local-network
- *     permission was refused): keep the event queued
+ * `signal` is deliberately not the bridge's lifetime: once localhost has the
+ * request, leaving the page must not abort it (the handler already ran, and a
+ * retry would run it twice). Only the timeout ends it.
+ *
+ * A page can only read a localhost response if the local server allows it
+ * (CORS), and every failure surfaces as the same TypeError, so a failure is
+ * classified by {@link probeLocalhost}: readable → the request itself failed
+ * (crash, reset); reachable but unreadable → CORS; neither → down.
  */
 export async function forwardForDrain(
 	event: WebhookEventData,
@@ -294,31 +293,59 @@ export async function forwardForDrain(
 		const latencyMs = Math.round(performance.now() - started);
 		if (timeout.aborted) {
 			return {
-				kind: "failed",
+				kind: "timeout",
 				message: `localhost:${port} did not answer within ${LOCALHOST_TIMEOUT_MS / 60000} minutes`,
 				latencyMs,
 			};
 		}
-		const base = `http://localhost:${port}/`;
-		const probe = (init: RequestInit) =>
-			fetch(base, { ...init, signal: AbortSignal.timeout(3000) }).then(
-				() => true,
-				() => false,
-			);
-		if (await probe({ method: "GET" })) {
-			return { kind: "failed", message: errorText(err), latencyMs };
-		}
-		if (await probe({ method: "GET", mode: "no-cors" })) {
-			return {
-				kind: "cors",
-				message: `Your server on localhost:${port} is running but does not allow ${location.origin} to read its responses (CORS).`,
-			};
-		}
+		const probe = await probeLocalhost(event, port);
+		if (probe.state === "ok") return { kind: "failed", message: errorText(err), latencyMs };
+		return { kind: probe.state, message: probe.message ?? errorText(err) };
+	}
+}
+
+/**
+ * Can this page deliver the event to localhost right now, without sending it?
+ *
+ * The readability probe is a GET of the event's path carrying the event's own
+ * header names, so the browser sends the same CORS preflight the real
+ * forward needs (a server that only answers simple requests fails it here
+ * too). Its answer is never used. If that fails, a no-cors GET tells "up but
+ * blocking" from "down".
+ */
+export async function probeLocalhost(
+	event: WebhookEventData,
+	port: number,
+	signal?: AbortSignal,
+): Promise<{ state: LocalhostState; message?: string }> {
+	const req = localRequest(event);
+	const url = `http://localhost:${port}${req.path}`;
+	const attempt = (init: RequestInit) => {
+		const timeout = AbortSignal.timeout(3000);
+		return fetch(url, {
+			...init,
+			signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+		}).then(
+			() => true,
+			(err) => {
+				if (signal?.aborted) throw err;
+				return false;
+			},
+		);
+	};
+	const probeHeaders: Record<string, string> = { "X-BridgeHook-Probe": "1" };
+	for (const k of Object.keys(req.headers)) probeHeaders[k] = "probe";
+	if (await attempt({ method: "GET", headers: probeHeaders })) return { state: "ok" };
+	if (await attempt({ method: "GET", mode: "no-cors" })) {
 		return {
-			kind: "down",
-			message: `Can't reach localhost:${port}. Is your server running? (Chrome may also ask to allow local network access.)`,
+			state: "cors",
+			message: `Your server on localhost:${port} is running but does not allow ${location.origin} to read its responses (CORS).`,
 		};
 	}
+	return {
+		state: "down",
+		message: `Can't reach localhost:${port}. Is your server running? (Chrome may also ask to allow local network access.)`,
+	};
 }
 
 function errorText(err: unknown): string {
@@ -399,48 +426,11 @@ export async function forwardToLocalhost(
 	signal?: AbortSignal,
 ): Promise<{ status: number; headers: Record<string, string>; body: string; latencyMs: number }> {
 	const start = performance.now();
-
-	// The relay stores the path localhost should receive. Only rows written
-	// before it did still carry the legacy `/hook/<thisChannelId>` prefix;
-	// strip exactly that, never a real `/hook/...` route of the user's app.
-	const legacyPrefix = `/hook/${event.channelId}`;
-	const eventPath =
-		(event.path === legacyPrefix || event.path.startsWith(`${legacyPrefix}/`)
-			? event.path.slice(legacyPrefix.length)
-			: event.path) || "/";
-
-	const rawHeaders: Record<string, string> =
-		"requestHeaders" in event
-			? safeParseJson<Record<string, string>>(event.requestHeaders, {})
-			: event.headers;
-
-	const skipHeaders = new Set([
-		"host",
-		"cf-ray",
-		"cf-connecting-ip",
-		"cf-ipcountry",
-		"cf-visitor",
-		"x-real-ip",
-		"x-forwarded-proto",
-		"x-forwarded-for",
-		"connection",
-		"accept-encoding",
-		"content-length",
-	]);
-	const headers: Record<string, string> = {};
-	for (const [k, v] of Object.entries(rawHeaders)) {
-		if (!skipHeaders.has(k.toLowerCase())) {
-			headers[k] = v;
-		}
-	}
-
-	const body = "requestBody" in event ? event.requestBody : event.body;
-	const method = event.method;
-
-	const response = await fetch(`http://localhost:${port}${eventPath}`, {
-		method,
-		headers,
-		body: body || undefined,
+	const req = localRequest(event);
+	const response = await fetch(`http://localhost:${port}${req.path}`, {
+		method: req.method,
+		headers: req.headers,
+		body: req.body || undefined,
 		signal,
 	});
 
@@ -452,6 +442,42 @@ export async function forwardToLocalhost(
 	});
 
 	return { status: response.status, headers: respHeaders, body: respBody, latencyMs };
+}
+
+const SKIP_FORWARD_HEADERS = new Set([
+	"host",
+	"cf-ray",
+	"cf-connecting-ip",
+	"cf-ipcountry",
+	"cf-visitor",
+	"x-real-ip",
+	"x-forwarded-proto",
+	"x-forwarded-for",
+	"connection",
+	"accept-encoding",
+	"content-length",
+]);
+
+/** The request localhost receives for an event: path, method, headers, body. */
+function localRequest(event: SSEWebhookEvent | WebhookEventData) {
+	// The relay stores the path localhost should receive. Only rows written
+	// before it did still carry the legacy `/hook/<thisChannelId>` prefix;
+	// strip exactly that, never a real `/hook/...` route of the user's app.
+	const legacyPrefix = `/hook/${event.channelId}`;
+	const path =
+		(event.path === legacyPrefix || event.path.startsWith(`${legacyPrefix}/`)
+			? event.path.slice(legacyPrefix.length)
+			: event.path) || "/";
+	const rawHeaders: Record<string, string> =
+		"requestHeaders" in event
+			? safeParseJson<Record<string, string>>(event.requestHeaders, {})
+			: event.headers;
+	const headers: Record<string, string> = {};
+	for (const [k, v] of Object.entries(rawHeaders)) {
+		if (!SKIP_FORWARD_HEADERS.has(k.toLowerCase())) headers[k] = v;
+	}
+	const body = "requestBody" in event ? event.requestBody : event.body;
+	return { path, method: event.method, headers, body };
 }
 
 // ── Claim event for this executor (signed) ────────────────────────────────
@@ -525,13 +551,44 @@ export async function sendResponse(
 	response: { status: number; headers: Record<string, string>; body: string; latencyMs: number },
 	signal?: AbortSignal,
 ): Promise<void> {
-	const body = JSON.stringify({ eventId, ...response });
-	await signedFetch(channelId, `${RELAY_URL}/hook/${encodeURIComponent(channelId)}/response`, {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body,
-		signal,
-	});
+	const post = (r: typeof response) =>
+		signedFetch(channelId, `${RELAY_URL}/hook/${encodeURIComponent(channelId)}/response`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ eventId, ...r }),
+			signal,
+		});
+	let res = await post(response);
+	// The relay keeps at most 1 MB of body and 32 KB of headers. Store what
+	// fits rather than leave the event queued (it would be delivered again).
+	if (res.status === 413 || res.status === 431) res = await post(fitResponse(response));
+	if (!res.ok) throw new Error(`Relay did not store the answer: ${res.status}`);
+}
+
+const MAX_STORED_BODY_BYTES = 1_048_576;
+
+function fitResponse(r: {
+	status: number;
+	headers: Record<string, string>;
+	body: string;
+	latencyMs: number;
+}) {
+	const enc = new TextEncoder();
+	const bytes = enc.encode(r.body);
+	const note = `\n\n[BridgeHook: response body truncated from ${bytes.length} bytes]`;
+	const room = MAX_STORED_BODY_BYTES - enc.encode(note).length - 1024;
+	const body =
+		bytes.length > room
+			? new TextDecoder().decode(bytes.slice(0, room)).replace(/\uFFFD+$/, "") + note
+			: r.body;
+	const headers: Record<string, string> = {};
+	let size = 0;
+	for (const [k, v] of Object.entries(r.headers)) {
+		size += enc.encode(k).length + enc.encode(v).length + 4;
+		if (size > 16 * 1024) break;
+		headers[k] = v;
+	}
+	return { ...r, body, headers };
 }
 
 export { RELAY_URL };

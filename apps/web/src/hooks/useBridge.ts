@@ -11,6 +11,7 @@ import {
 	getEvents,
 	getPendingEvents,
 	pollEvents,
+	probeLocalhost,
 	safeParseJson,
 	sendResponse,
 } from "../lib/relay";
@@ -217,8 +218,8 @@ export function useBridge() {
 	}, []);
 
 	/**
-	 * Run the ordered drain now; when it stopped on a local-server problem,
-	 * try again in 5s (outages and missing CORS do not consume attempts).
+	 * Run the ordered drain now, and again later when it stopped on a problem
+	 * (outages and missing CORS do not consume attempts).
 	 */
 	const wakeDrainRef = useRef<() => void>(() => {});
 	const wakeDrain = useCallback(() => wakeDrainRef.current(), []);
@@ -231,10 +232,14 @@ export function useBridge() {
 		}
 		drainer
 			.wake()
-			.then((ok) => {
-				if (!ok && drainerRef.current === drainer) {
-					drainTimerRef.current = setTimeout(() => wakeDrainRef.current(), 5000);
-				}
+			.then((result) => {
+				if (result === "idle" || drainerRef.current !== drainer) return;
+				// retry: local server or relay trouble. blocked: another executor
+				// holds the oldest event; its claim goes stale after 60s.
+				drainTimerRef.current = setTimeout(
+					() => wakeDrainRef.current(),
+					result === "retry" ? 5000 : 15000,
+				);
 			})
 			.catch((err) => {
 				if (err instanceof DOMException && err.name === "AbortError") return;
@@ -324,13 +329,19 @@ export function useBridge() {
 					...s,
 					events: s.events.map((e) => (e.id === id ? { ...e, ...patch } : e)),
 				}));
-			drainerRef.current = new QueueDrainer<WebhookEventData>({
+			safeSetState((s) => ({ ...s, localhost: { state: "ok", message: null } }));
+			const drainer: QueueDrainer<WebhookEventData> = new QueueDrainer<WebhookEventData>({
 				fetchPending: (after) => getPendingEvents(channelId, after, signal),
 				claim: async (eventId) => {
 					const clientId = getClientId();
 					const c = await claimEvent(channelId, eventId, clientId, signal);
 					return c.claimed || c.claimerId === clientId;
 				},
+				probe: async (evt) =>
+					mockRef.current.enabled ? { state: "ok" } : probeLocalhost(evt, portRef.current, signal),
+				// No bridge signal on the forward or the report: once localhost
+				// has the request, leaving the page must not cut it off, or the
+				// event would be claimed and run again on return.
 				forward: async (evt) => {
 					const mock = mockRef.current;
 					if (mock.enabled) {
@@ -339,9 +350,9 @@ export function useBridge() {
 							result: { status: mock.status, headers: mock.headers, body: mock.body, latencyMs: 0 },
 						};
 					}
-					return forwardForDrain(evt, portRef.current, signal);
+					return forwardForDrain(evt, portRef.current);
 				},
-				report: (evt, result) => sendResponse(channelId, evt.id, result, signal),
+				report: (evt, result) => sendResponse(channelId, evt.id, result),
 				onDelivered: (evt, r) =>
 					patchEvent(evt.id, {
 						responseStatus: r.status,
@@ -350,12 +361,15 @@ export function useBridge() {
 						error: null,
 					}),
 				onSkipped: (evt, message) => patchEvent(evt.id, { error: message }),
-				onLocalhost: (localhostState, message) =>
+				onLocalhost: (localhostState, message) => {
+					if (drainerRef.current !== drainer) return;
 					safeSetState((s) => ({
 						...s,
 						localhost: { state: localhostState, message: message ?? null },
-					})),
+					}));
+				},
 			});
+			drainerRef.current = drainer;
 			wakeDrain();
 
 			const stopPolling = pollEvents(
