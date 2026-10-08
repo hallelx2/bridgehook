@@ -79,7 +79,9 @@ export const channels = sqliteTable(
 		index("channels_user").on(t.userId),
 		index("channels_device").on(t.deviceId).where(sql`device_id IS NOT NULL`),
 		// The hourly cleanup and the live-demo cap scan expiring channels only.
-		index("channels_expires").on(t.expiresAt).where(sql`expires_at IS NOT NULL`),
+		index("channels_expires")
+			.on(t.expiresAt)
+			.where(sql`expires_at IS NOT NULL`),
 	],
 );
 
