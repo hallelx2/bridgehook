@@ -51,7 +51,7 @@ Docs: `docs/` builds `llms.txt`, `llms-full.txt` and one `.md` per page from the
 ```bash
 cd relay && yes | npx wrangler d1 migrations apply bridgehook --remote   # before code that needs it
 cd relay && npx wrangler deploy
-VITE_RELAY_URL=https://relay.bridgehook.dev pnpm --filter @bridgehook/web build && npx wrangler pages deploy apps/web/dist --project-name=bridgehook-web --branch=main
+VITE_RELAY_URL=https://relay.bridgehook.dev VITE_APP_URL=https://app.bridgehook.dev pnpm --filter @bridgehook/web build && npx wrangler pages deploy apps/web/dist --project-name=bridgehook-web --branch=main
 VITE_RELAY_URL=https://relay.bridgehook.dev pnpm --filter @bridgehook/docs build && npx wrangler pages deploy docs/dist --project-name=bridgehook-docs --branch=main
 ```
 
