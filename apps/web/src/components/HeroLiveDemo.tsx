@@ -48,10 +48,13 @@ export function HeroLiveDemo() {
 	}, [copied]);
 
 	const channelRef = useRef<string | null>(null);
+	/** Bumped by every teardown, so a create that finishes late knows it is stale. */
+	const generationRef = useRef(0);
 	const expiryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
 	/** Stop polling and forget this demo channel's key. */
 	const teardown = useCallback(() => {
+		generationRef.current++;
 		stopPollRef.current?.();
 		stopPollRef.current = null;
 		if (expiryTimerRef.current) clearTimeout(expiryTimerRef.current);
@@ -70,12 +73,21 @@ export function HeroLiveDemo() {
 
 	const start = useCallback(async () => {
 		teardown();
+		const generation = generationRef.current;
 		try {
 			setState({ kind: "creating" });
 			setEvents([]);
 			const channel = await createDemoChannel();
-			const expiresAt = channel.expiresAt ? Date.parse(channel.expiresAt) : Date.now() + 3_600_000;
+			if (generationRef.current !== generation) {
+				// Reset or unmounted while creating: drop this channel quietly.
+				deleteChannelKey(channel.channelId).catch(() => {});
+				return;
+			}
+			// From the relay's TTL, not its clock: a skewed local clock must not
+			// expire the card early or late.
+			const expiresAt = Date.now() + (channel.ttlSeconds ?? 3600) * 1000;
 			channelRef.current = channel.channelId;
+			const demoId = channel.channelId;
 			setState({
 				kind: "live",
 				channelId: channel.channelId,
@@ -87,7 +99,7 @@ export function HeroLiveDemo() {
 			stopPollRef.current = pollEvents(
 				channel.channelId,
 				(evts) => {
-					if (evts.length > 0) setEvents(evts);
+					if (channelRef.current === demoId && evts.length > 0) setEvents(evts);
 				},
 				(err) => {
 					// The cron deletes expired demo channels: a 404 means it is gone.
@@ -97,7 +109,9 @@ export function HeroLiveDemo() {
 				2000,
 			);
 		} catch (err) {
-			setState({ kind: "error", message: (err as Error).message });
+			if (generationRef.current === generation) {
+				setState({ kind: "error", message: (err as Error).message });
+			}
 		}
 	}, [teardown, expire]);
 

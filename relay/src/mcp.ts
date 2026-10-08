@@ -25,7 +25,7 @@ import {
 	queueReplay,
 	serializeEventDetail,
 } from "./event-store.js";
-import { SYNC_TIMEOUT_ERROR, SYNC_UNREACHABLE_ERROR, clampSyncTimeout } from "./sync.js";
+import { RELAY_ANSWER_HEADER, clampSyncTimeout } from "./sync.js";
 import { TEST_PROVIDERS, buildTestEvent } from "./test-events.js";
 import { buildWebhookUrl } from "./webhook-url.js";
 
@@ -61,14 +61,17 @@ Forwarding to localhost is done by the user's BridgeHook Chrome extension or by 
 const BODY_LIMIT = 16_000;
 
 /** "timeout" / "unreachable" when a sync reply is the relay's own, not the handler's. */
-function relaySyncError(status: number, body: string): "timeout" | "unreachable" | null {
-	if (status !== 504 && status !== 502) return null;
+function relaySyncError(res: Response): "timeout" | "unreachable" | null {
+	const tag = res.headers.get(RELAY_ANSWER_HEADER);
+	return tag === "timeout" || tag === "unreachable" ? tag : null;
+}
+
+function relayDetail(body: string): string {
 	try {
-		const err = (JSON.parse(body) as { error?: unknown }).error;
-		if (status === 504 && err === SYNC_TIMEOUT_ERROR) return "timeout";
-		if (status === 502 && err === SYNC_UNREACHABLE_ERROR) return "unreachable";
+		const detail = (JSON.parse(body) as { detail?: unknown }).detail;
+		if (typeof detail === "string" && detail) return detail;
 	} catch {}
-	return null;
+	return "no detail reported";
 }
 
 /** What to tell the agent when its test event has no answer yet. */
@@ -380,7 +383,7 @@ export function buildMcpServer(ctx: McpContext): McpServer {
 				const body = await raced.text();
 				// The relay's own 504/502 means the handler never answered:
 				// say so, rather than let it read as the handler's status.
-				const relayAnswer = relaySyncError(raced.status, body);
+				const relayAnswer = relaySyncError(raced);
 				if (relayAnswer) {
 					return text({
 						sent: testEvent.description,
@@ -390,7 +393,7 @@ export function buildMcpServer(ctx: McpContext): McpServer {
 						[relayAnswer === "timeout" ? "not_answered_yet" : "localhost_unreachable"]:
 							relayAnswer === "timeout"
 								? notAnsweredHint(ch.port, ch.syncTimeoutMs)
-								: `localhost:${ch.port} could not be reached by the forwarder. Is the server running on that port?`,
+								: `The forwarder could not get an answer from localhost:${ch.port}: ${relayDetail(body)}`,
 					});
 				}
 				return text({

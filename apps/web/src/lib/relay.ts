@@ -127,7 +127,9 @@ export async function createChannel(port: number, allowedPaths: string[]): Promi
  * dozen small requests and never forwards them. The key stays in this
  * browser, so only this visitor can read what arrives.
  */
-export async function createDemoChannel(): Promise<ChannelInfo & { maxEvents?: number }> {
+export async function createDemoChannel(): Promise<
+	ChannelInfo & { maxEvents?: number; ttlSeconds?: number }
+> {
 	const tempId = `pending-${crypto.randomUUID()}`;
 	const publicKey = await generateChannelKey(tempId);
 	try {
@@ -144,7 +146,7 @@ export async function createDemoChannel(): Promise<ChannelInfo & { maxEvents?: n
 					: `Could not create a demo URL (${res.status})${text ? `: ${text}` : ""}`,
 			);
 		}
-		const data = (await res.json()) as ChannelInfo & { maxEvents?: number };
+		const data = (await res.json()) as ChannelInfo & { maxEvents?: number; ttlSeconds?: number };
 		await renameKey(tempId, data.channelId);
 		return data;
 	} catch (err) {
@@ -413,6 +415,7 @@ export function pollEvents(
 		if (stopped) return;
 		try {
 			const events = await getEvents(channelId, 50, signal);
+			if (stopped) return;
 			consecutiveErrors = 0;
 			if (events.length > 0 && events[0].id !== lastSeenId) {
 				lastSeenId = events[0].id;

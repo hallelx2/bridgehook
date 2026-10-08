@@ -43,7 +43,14 @@ export type SyncOutcome = { kind: "response"; result: SyncResult } | { kind: "ti
  * Headers the relay must not copy from localhost's response onto its own:
  * hop-by-hop headers, and framing the Worker recomputes for the body it sends.
  */
+/**
+ * Set on the relay's own sync answers (timeout, unreachable) and stripped
+ * from handler replies, so nothing a handler sends can pass for one.
+ */
+export const RELAY_ANSWER_HEADER = "X-BridgeHook-Relay-Answer";
+
 const DROP_HEADERS = new Set([
+	"x-bridgehook-relay-answer",
 	"connection",
 	"keep-alive",
 	"proxy-authenticate",
@@ -112,7 +119,11 @@ export function syncResponse(
 			},
 			{
 				status: 504,
-				headers: { "Access-Control-Allow-Origin": corsOrigin, "X-BridgeHook-Event-Id": eventId },
+				headers: {
+					"Access-Control-Allow-Origin": corsOrigin,
+					"X-BridgeHook-Event-Id": eventId,
+					[RELAY_ANSWER_HEADER]: "timeout",
+				},
 			},
 		);
 	}
@@ -128,7 +139,11 @@ export function syncResponse(
 			},
 			{
 				status: 502,
-				headers: { "Access-Control-Allow-Origin": corsOrigin, "X-BridgeHook-Event-Id": eventId },
+				headers: {
+					"Access-Control-Allow-Origin": corsOrigin,
+					"X-BridgeHook-Event-Id": eventId,
+					[RELAY_ANSWER_HEADER]: "unreachable",
+				},
 			},
 		);
 	}

@@ -84,9 +84,10 @@ const RELAY_VERSION = "0.1.0";
 // ── Limits ─────────────────────────────────────────────────────────────────
 const CHANNEL_ID_LEN = 12;
 /**
- * Landing-page demo URLs: no account, so every limit is tight. Worst case
- * storage is DEMO_MAX_LIVE × DEMO_MAX_EVENTS × (body + headers) ≈ 240 MB,
- * whatever the traffic, and the hourly cron reclaims it.
+ * Landing-page demo URLs: no account, so every limit is tight. Demo
+ * channels that still hold events (live, or expired within the hour before
+ * the cron sweeps them) are capped at DEMO_MAX_LIVE, so worst-case storage
+ * is DEMO_MAX_LIVE × DEMO_MAX_EVENTS × (body + headers) ≈ 240 MB.
  */
 const DEMO_TTL_MS = 60 * 60 * 1000;
 const DEMO_MAX_EVENTS = 50;
@@ -756,9 +757,7 @@ app.post("/api/demo/channels", async (c) => {
 	if (!(await checkRateLimit(env, c.req.raw, "demo"))) {
 		return c.json({ error: "Rate limit exceeded" }, 429);
 	}
-	if (!(await checkHourlyQuota(env, c.req.raw, "demo-hour", DEMO_PER_IP_PER_HOUR))) {
-		return c.json({ error: "Demo limit for this network reached. Try again in an hour." }, 429);
-	}
+
 	const body = (await c.req.json().catch(() => null)) as { publicKey?: unknown } | null;
 	const publicKey = body?.publicKey;
 	if (typeof publicKey !== "string" || !isHex(publicKey, PUBLIC_KEY_HEX_LEN)) {
@@ -779,9 +778,16 @@ app.post("/api/demo/channels", async (c) => {
 	const [{ live }] = await db
 		.select({ live: sql<number>`count(*)` })
 		.from(channels)
-		.where(and(isNull(channels.userId), gt(channels.expiresAt, new Date())));
+		// Expired channels keep their events until the hourly cron runs, so
+		// they count for an hour after expiry too.
+		.where(and(isNull(channels.userId), gt(channels.expiresAt, new Date(Date.now() - 3_600_000))));
 	if (Number(live) >= DEMO_MAX_LIVE) {
 		return c.json({ error: "The live demo is busy. Try again in a few minutes." }, 503);
+	}
+	// Spent only on a create that will succeed, so a busy demo or a bad
+	// request never uses up a network's hourly allowance.
+	if (!(await checkHourlyQuota(env, c.req.raw, "demo-hour", DEMO_PER_IP_PER_HOUR))) {
+		return c.json({ error: "Demo limit for this network reached. Try again in an hour." }, 429);
 	}
 	const channelId = crypto.randomUUID().replace(/-/g, "").slice(0, CHANNEL_ID_LEN);
 	const expiresAt = new Date(Date.now() + DEMO_TTL_MS);
@@ -804,6 +810,7 @@ app.post("/api/demo/channels", async (c) => {
 			expiresAt: expiresAt.toISOString(),
 			webhookUrl: buildWebhookUrl(channelId, new URL(c.req.url), env.TUNNEL_DOMAIN),
 			responseMode: "async",
+			ttlSeconds: DEMO_TTL_MS / 1000,
 			maxEvents: DEMO_MAX_EVENTS,
 			authScheme: "ecdsa",
 		},
