@@ -104,7 +104,7 @@ export function syncResponse(
 			{
 				error: "Your local server did not answer in time",
 				eventId,
-				hint: "Is the BridgeHook extension, dashboard tab or CLI running for this URL? The event stays queued and will still be delivered.",
+				hint: "Is the BridgeHook extension (or a dashboard tab) running for this URL? The event stays queued and will still be delivered.",
 			},
 			{ status: 504, headers: { "Access-Control-Allow-Origin": corsOrigin } },
 		);

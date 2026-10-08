@@ -21,6 +21,7 @@ const NAV = [
 	{ to: "/dashboard/events", label: "Events" },
 	{ to: "/dashboard/channels", label: "Channels" },
 	{ to: "/dashboard/devices", label: "Devices" },
+	{ to: "/dashboard/agents", label: "AI agents" },
 	{ to: "/dashboard/billing", label: "Billing" },
 	{ to: "/dashboard/settings", label: "Settings" },
 ];

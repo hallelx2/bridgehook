@@ -25,7 +25,8 @@ function DevicesView() {
 	useEffect(() => {
 		me.devices
 			.list()
-			.then((d) => setDevices(d.devices))
+			// Agent tokens are listed on the AI agents page.
+			.then((d) => setDevices(d.devices.filter((x) => x.kind !== "agent")))
 			.catch((err) => setError(err instanceof Error ? err.message : String(err)));
 	}, []);
 

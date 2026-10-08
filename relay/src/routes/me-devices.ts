@@ -5,7 +5,7 @@
  * implicit single-user setup has no concept of "my devices."
  */
 import { devices } from "@bridgehook/shared/db/schema";
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, count, desc, eq, isNull } from "drizzle-orm";
 import { Hono } from "hono";
 import { checkDevicePair, loadUserAccess } from "../access.js";
 import { type Auth, getSessionUser } from "../auth.js";
@@ -25,7 +25,9 @@ async function sha256Hex(input: string): Promise<string> {
 	return out;
 }
 
-const DEVICE_KIND_RE = /^(extension|desktop|cli|web)$/;
+const DEVICE_KIND_RE = /^(extension|desktop|cli|web|agent)$/;
+/** Agent tokens (MCP clients) are API keys, not devices: capped separately. */
+const MAX_AGENT_TOKENS = 10;
 
 export function buildMeDevicesRoutes(getDeps: (c: { env: unknown }) => MeDevicesEnv | null) {
 	const app = new Hono();
@@ -73,7 +75,7 @@ export function buildMeDevicesRoutes(getDeps: (c: { env: unknown }) => MeDevices
 		const raw = (body ?? {}) as { kind?: unknown; label?: unknown; userAgent?: unknown };
 		const kind = typeof raw.kind === "string" ? raw.kind : "extension";
 		if (!DEVICE_KIND_RE.test(kind)) {
-			return c.json({ error: "kind must be 'extension'|'desktop'|'cli'|'web'" }, 400);
+			return c.json({ error: "kind must be 'extension'|'desktop'|'cli'|'web'|'agent'" }, 400);
 		}
 		const labelInput =
 			typeof raw.label === "string" && raw.label.trim().length > 0
@@ -85,8 +87,18 @@ export function buildMeDevicesRoutes(getDeps: (c: { env: unknown }) => MeDevices
 		// session-authed shortcut to skip the Hobby/Pro device cap.
 		const access = await loadUserAccess(deps.db, sessionUser.id);
 		if (!access) return c.json({ error: "User not found" }, 404);
-		const gate = await checkDevicePair(deps.db, access);
-		if (!gate.ok) return c.json({ error: gate.error, code: "quota" }, gate.status);
+		if (kind === "agent") {
+			const n = await countActiveAgentTokens(deps.db, sessionUser.id);
+			if (n >= MAX_AGENT_TOKENS) {
+				return c.json(
+					{ error: `At most ${MAX_AGENT_TOKENS} agent tokens. Revoke one first.`, code: "quota" },
+					402,
+				);
+			}
+		} else {
+			const gate = await checkDevicePair(deps.db, access);
+			if (!gate.ok) return c.json({ error: gate.error, code: "quota" }, gate.status);
+		}
 
 		const token = newDeviceToken();
 		const tokenHash = await sha256Hex(token);
@@ -174,4 +186,12 @@ export function buildMeDevicesRoutes(getDeps: (c: { env: unknown }) => MeDevices
 	});
 
 	return app;
+}
+
+async function countActiveAgentTokens(db: DB, userId: string): Promise<number> {
+	const [{ n }] = await db
+		.select({ n: count() })
+		.from(devices)
+		.where(and(eq(devices.userId, userId), eq(devices.kind, "agent"), isNull(devices.revokedAt)));
+	return Number(n);
 }
