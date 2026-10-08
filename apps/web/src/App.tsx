@@ -12,6 +12,7 @@ import { FinalCTA } from "./components/FinalCTA";
 import { Footer } from "./components/Footer";
 import { Nav } from "./components/Nav";
 import { ScrollFlow } from "./components/ScrollFlow";
+import { appHostTarget } from "./lib/app-host";
 import { AiAgents } from "./pages/AiAgents";
 import { AuthCallback } from "./pages/AuthCallback";
 import { Billing } from "./pages/Billing";
@@ -47,25 +48,18 @@ function LandingPage() {
 	);
 }
 
-/** Routes the marketing host serves itself; everything else belongs to the app. */
-const MARKETING_PATHS = new Set(["/", "/privacy"]);
-
 /**
- * The apex (bridgehook.dev) serves the landing page. Signing in and the
- * dashboard live on VITE_APP_URL, the origin the relay trusts with the
- * session cookie, so any other route is moved there, path and all.
+ * Client-side navigation to an app route on the marketing host (a "Get
+ * started" link): leave for the app origin before the route renders, so
+ * no dashboard component mounts here even for a frame.
  */
-function AppHostRedirect() {
+function AppHost({ children }: { children: React.ReactNode }) {
 	const location = useLocation();
+	const target = appHostTarget(location);
 	useEffect(() => {
-		const appUrl = import.meta.env.VITE_APP_URL;
-		if (!appUrl) return;
-		const app = new URL(appUrl);
-		if (window.location.origin === app.origin) return;
-		if (MARKETING_PATHS.has(location.pathname)) return;
-		window.location.replace(`${app.origin}${location.pathname}${location.search}${location.hash}`);
-	}, [location]);
-	return null;
+		if (target) window.location.replace(target);
+	}, [target]);
+	return target ? null : <>{children}</>;
 }
 
 /**
@@ -93,97 +87,98 @@ export function App() {
 	return (
 		<BrowserRouter>
 			<HashCompatRedirect />
-			<AppHostRedirect />
-			<Routes>
-				<Route path="/" element={<LandingPage />} />
-				<Route path="/login" element={<Login />} />
-				<Route path="/login/check-email" element={<LoginCheckEmail />} />
-				<Route path="/auth/callback" element={<AuthCallback />} />
-				<Route path="/privacy" element={<Privacy />} />
-				<Route
-					path="/connect"
-					element={
-						<AuthGate>
-							<Connect />
-						</AuthGate>
-					}
-				/>
-				<Route
-					path="/dashboard"
-					element={
-						<AuthGate>
-							<DashboardHome />
-						</AuthGate>
-					}
-				/>
-				<Route
-					path="/dashboard/events"
-					element={
-						<AuthGate>
-							<EventsFeed />
-						</AuthGate>
-					}
-				/>
-				<Route
-					path="/dashboard/events/:id"
-					element={
-						<AuthGate>
-							<EventDetail />
-						</AuthGate>
-					}
-				/>
-				<Route
-					path="/dashboard/channels"
-					element={
-						<AuthGate>
-							<ChannelsList />
-						</AuthGate>
-					}
-				/>
-				{/* No-install mode: this tab forwards webhooks to localhost. */}
-				<Route
-					path="/dashboard/bridge"
-					element={
-						<AuthGate>
-							<BrowserBridge />
-						</AuthGate>
-					}
-				/>
-				<Route
-					path="/dashboard/devices"
-					element={
-						<AuthGate>
-							<DevicesList />
-						</AuthGate>
-					}
-				/>
-				<Route
-					path="/dashboard/agents"
-					element={
-						<AuthGate>
-							<AiAgents />
-						</AuthGate>
-					}
-				/>
-				<Route
-					path="/dashboard/settings"
-					element={
-						<AuthGate>
-							<Settings />
-						</AuthGate>
-					}
-				/>
-				<Route
-					path="/dashboard/billing"
-					element={
-						<AuthGate>
-							<Billing />
-						</AuthGate>
-					}
-				/>
-				{/* Channel detail (/dashboard/channels/:id) lands in a later commit. */}
-				<Route path="*" element={<Navigate to="/" replace />} />
-			</Routes>
+			<AppHost>
+				<Routes>
+					<Route path="/" element={<LandingPage />} />
+					<Route path="/login" element={<Login />} />
+					<Route path="/login/check-email" element={<LoginCheckEmail />} />
+					<Route path="/auth/callback" element={<AuthCallback />} />
+					<Route path="/privacy" element={<Privacy />} />
+					<Route
+						path="/connect"
+						element={
+							<AuthGate>
+								<Connect />
+							</AuthGate>
+						}
+					/>
+					<Route
+						path="/dashboard"
+						element={
+							<AuthGate>
+								<DashboardHome />
+							</AuthGate>
+						}
+					/>
+					<Route
+						path="/dashboard/events"
+						element={
+							<AuthGate>
+								<EventsFeed />
+							</AuthGate>
+						}
+					/>
+					<Route
+						path="/dashboard/events/:id"
+						element={
+							<AuthGate>
+								<EventDetail />
+							</AuthGate>
+						}
+					/>
+					<Route
+						path="/dashboard/channels"
+						element={
+							<AuthGate>
+								<ChannelsList />
+							</AuthGate>
+						}
+					/>
+					{/* No-install mode: this tab forwards webhooks to localhost. */}
+					<Route
+						path="/dashboard/bridge"
+						element={
+							<AuthGate>
+								<BrowserBridge />
+							</AuthGate>
+						}
+					/>
+					<Route
+						path="/dashboard/devices"
+						element={
+							<AuthGate>
+								<DevicesList />
+							</AuthGate>
+						}
+					/>
+					<Route
+						path="/dashboard/agents"
+						element={
+							<AuthGate>
+								<AiAgents />
+							</AuthGate>
+						}
+					/>
+					<Route
+						path="/dashboard/settings"
+						element={
+							<AuthGate>
+								<Settings />
+							</AuthGate>
+						}
+					/>
+					<Route
+						path="/dashboard/billing"
+						element={
+							<AuthGate>
+								<Billing />
+							</AuthGate>
+						}
+					/>
+					{/* Channel detail (/dashboard/channels/:id) lands in a later commit. */}
+					<Route path="*" element={<Navigate to="/" replace />} />
+				</Routes>
+			</AppHost>
 		</BrowserRouter>
 	);
 }
