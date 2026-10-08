@@ -122,6 +122,9 @@ importers:
       vite:
         specifier: ^6.4.4
         version: 6.4.4(@types/node@25.5.2)(jiti@1.21.7)(tsx@4.21.0)
+      vitest:
+        specifier: ^5
+        version: 5.0.3(@types/node@25.5.2)(vite@6.4.4(@types/node@25.5.2)(jiti@1.21.7)(tsx@4.21.0))
 
   docs:
     dependencies:

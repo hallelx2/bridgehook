@@ -11,6 +11,7 @@ import {
 	Terminal,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import { Logo } from "../components/Logo";
 import { CommandPalette, useCommandPaletteShortcut } from "../components/dashboard/CommandPalette";
 import type { CommandAction } from "../components/dashboard/CommandPalette";
@@ -20,6 +21,7 @@ import { EventDetail } from "../components/dashboard/EventDetail";
 import { EventRow, EventRowHeader } from "../components/dashboard/EventRow";
 import { DEFAULT_FILTERS, FilterBar, applyFilters } from "../components/dashboard/FilterBar";
 import type { Filters } from "../components/dashboard/FilterBar";
+import { LocalhostBanner } from "../components/dashboard/LocalhostBanner";
 import { MockResponseSettings } from "../components/dashboard/MockResponseSettings";
 import { ReplayEditor } from "../components/dashboard/ReplayEditor";
 import { SecretsModal } from "../components/dashboard/SecretsModal";
@@ -123,6 +125,8 @@ function ConnectForm({ onConnect }: { onConnect: (port: number, paths: string[])
 					</div>
 					<p className="text-on-surface-variant text-sm">
 						Enter your localhost port to start receiving webhooks.
+						<br />
+						Nothing to install: this tab forwards them. Close it and they wait in the queue.
 					</p>
 				</div>
 
@@ -358,7 +362,9 @@ export function Dashboard() {
 		<div className="h-screen flex flex-col bg-background text-on-surface">
 			{/* ── Top bar ─────────────────────────────────────────── */}
 			<div className="flex items-center justify-between px-5 py-3 border-b border-border-subtle bg-surface-muted">
-				<Logo size="sm" />
+				<Link to="/dashboard" aria-label="Back to your dashboard">
+					<Logo size="sm" />
+				</Link>
 				<div className="flex items-center gap-2">
 					<StatusIndicator status={bridge.status} />
 					{!showConnectForm && (
@@ -506,6 +512,14 @@ export function Dashboard() {
 							error={bridge.error}
 							pollFailures={bridge.pollFailures}
 						/>
+						{bridge.status === "connected" && (
+							<LocalhostBanner
+								state={bridge.localhost.state}
+								message={bridge.localhost.message}
+								port={bridge.port}
+								queued={bridge.events.filter((e) => e.responseStatus === null && !e.error).length}
+							/>
+						)}
 
 						{bridge.events.length === 0 ? (
 							<EmptyState webhookUrl={bridge.webhookUrl} onFireTest={fireTest} />

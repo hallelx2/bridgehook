@@ -20,6 +20,7 @@ const NAV = [
 	{ to: "/dashboard", label: "Overview", end: true },
 	{ to: "/dashboard/events", label: "Events" },
 	{ to: "/dashboard/channels", label: "Channels" },
+	{ to: "/dashboard/bridge", label: "Browser bridge" },
 	{ to: "/dashboard/devices", label: "Devices" },
 	{ to: "/dashboard/agents", label: "AI agents" },
 	{ to: "/dashboard/billing", label: "Billing" },
