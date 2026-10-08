@@ -274,6 +274,10 @@ export function Tradeoffs() {
 					7.5 seconds in mind.
 				</li>
 				<li>
+					<strong>Handler time.</strong> The extension waits up to 25 seconds for your server (a
+					Chrome limit on extension background work); a dashboard tab waits up to 5 minutes.
+				</li>
+				<li>
 					<strong>CORS in no-install mode.</strong> A dashboard tab needs one CORS rule on your
 					server; the extension does not.
 				</li>

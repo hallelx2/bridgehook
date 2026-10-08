@@ -37,12 +37,16 @@ const channelWebhookUrl = (channelId) => `https://${channelId}.${WEBHOOK_DOMAIN}
 /** Events fetched per page when draining a channel's delivery queue. */
 const PENDING_PAGE_SIZE = 100;
 /**
- * Longest a local handler may take. Generous on purpose: stepping through a
- * handler on a breakpoint must not fail the webhook (the claim heartbeat
- * keeps it ours meanwhile). A timeout is recorded once and not resent, since
- * the handler may still be running.
+ * Longest a local handler may take. Chrome stops an extension service worker
+ * when a fetch() response takes more than 30 seconds (measured from Chrome's
+ * service-worker lifecycle docs on 2026-10-08), so the extension records its
+ * own timeout first. A timeout is recorded once and not resent, since the
+ * handler may still be running. The dashboard tab waits 5 minutes, for
+ * breakpoints.
  */
-const LOCALHOST_TIMEOUT_MS = 5 * 60 * 1000;
+const LOCALHOST_TIMEOUT_MS = 25 * 1000;
+/** chrome.storage.session key of forwards in flight, by event id. */
+const INFLIGHT_KEY = "bh_inflight_v1";
 const WEB_URL = "https://app.bridgehook.dev";
 
 // ── Storage keys ─────────────────────────────────────────────────────
@@ -120,11 +124,7 @@ async function refreshAccount() {
 				});
 			}
 			// Kick off (or keep) the push-based stream.
-			if (prevSource !== "session") {
-				startUserStream().catch((err) => {
-					console.warn("[BridgeHook] start stream failed:", err);
-				});
-			}
+			ensureUserStream();
 			return account;
 		}
 	} catch {
@@ -153,11 +153,7 @@ async function refreshAccount() {
 				// a paired extension gets push delivery with no dashboard
 				// session. A stream opened with the cookie stays valid (same
 				// user); a new one authenticates with the token.
-				if (!userStreamController) {
-					startUserStream().catch((err) => {
-						console.warn("[BridgeHook] start stream failed:", err);
-					});
-				}
+				ensureUserStream();
 				return account;
 			}
 		} catch {
@@ -216,6 +212,18 @@ let userStreamController = null;
 let userStreamBackoffMs = 1000;
 /** True between the "connected" frame and stream teardown. */
 let userStreamConnected = false;
+/** The user the open stream belongs to; a different sign-in restarts it. */
+let userStreamUserId = null;
+
+/** Start the stream, or restart it if it belongs to another user. */
+function ensureUserStream() {
+	if (userStreamController && userStreamUserId !== (account.user?.id ?? null)) stopUserStream();
+	if (!userStreamController) {
+		startUserStream().catch((err) => {
+			console.warn("[BridgeHook] start stream failed:", err);
+		});
+	}
+}
 
 /**
  * @typedef {Object} BridgeService
@@ -746,7 +754,7 @@ async function forwardToLocalhost(event, port, servicePath) {
 		const latencyMs = Math.round(performance.now() - start);
 		const msg =
 			err?.name === "TimeoutError"
-				? `localhost:${port} did not respond within ${LOCALHOST_TIMEOUT_MS / 60000} minutes.`
+				? `localhost:${port} did not respond within ${LOCALHOST_TIMEOUT_MS / 1000} seconds (the extension's limit; the dashboard tab waits 5 minutes).`
 				: err.message?.includes("Failed to fetch")
 					? `Connection refused — is localhost:${port} running?`
 					: err.message;
@@ -801,6 +809,7 @@ async function startUserStream() {
 
 	const controller = new AbortController();
 	userStreamController = controller;
+	userStreamUserId = account.user?.id ?? null;
 
 	try {
 		const res = await fetch(
@@ -869,6 +878,7 @@ function stopUserStream() {
 		userStreamController = null;
 	}
 	userStreamConnected = false;
+	userStreamUserId = null;
 }
 
 // ── Bridge loop (ordered queue drain, woken by SSE, backed by polling) ──
@@ -921,8 +931,35 @@ function noteLocalhostDown(service, message) {
 	broadcastStatus();
 }
 
-function drainerFor(service) {
+/**
+ * Forwards in flight survive in chrome.storage.session. If Chrome stopped the
+ * worker mid-forward anyway, the event is recorded as timed out on restart
+ * instead of being sent to a handler that may still be running.
+ */
+async function markInflight(eventId, startedAt) {
+	const out = await chrome.storage.session.get(INFLIGHT_KEY);
+	const map = out[INFLIGHT_KEY] ?? {};
+	if (startedAt === null) delete map[eventId];
+	else map[eventId] = startedAt;
+	await chrome.storage.session.set({ [INFLIGHT_KEY]: map });
+}
+
+async function inflightSince(eventId) {
+	const out = await chrome.storage.session.get(INFLIGHT_KEY);
+	return out[INFLIGHT_KEY]?.[eventId] ?? null;
+}
+
+function drainerFor(service, signal) {
 	const refused = `Connection refused — is localhost:${service.port} running?`;
+	// A stopped bridge's last in-flight work must not touch the service's
+	// status: the user turned it off.
+	const live = () => !signal.aborted;
+	const showRetry = (message) => {
+		if (!live()) return;
+		service.status = "error";
+		service.error = message;
+		broadcastStatus();
+	};
 	return new QueueDrainer({
 		fetchPending: (after) => fetchPendingPage(service.channelId, after),
 		claim: (eventId) => claimEvent(service.channelId, eventId),
@@ -931,7 +968,22 @@ function drainerFor(service) {
 				? { state: "ok" }
 				: { state: "down", message: refused },
 		forward: async (evt) => {
-			const r = await forwardToLocalhost(evt, service.port, service.path);
+			const since = await inflightSince(evt.id);
+			if (since !== null) {
+				await markInflight(evt.id, null);
+				return {
+					kind: "timeout",
+					message: `Chrome stopped the extension while localhost:${service.port} was still handling this webhook (no answer within about 30 seconds). It was not resent; forward slow handlers from the dashboard tab.`,
+					latencyMs: Date.now() - since,
+				};
+			}
+			await markInflight(evt.id, Date.now());
+			let r;
+			try {
+				r = await forwardToLocalhost(evt, service.port, service.path);
+			} finally {
+				await markInflight(evt.id, null);
+			}
 			if (!r.error) {
 				return {
 					kind: "response",
@@ -940,13 +992,21 @@ function drainerFor(service) {
 			}
 			if (r.timedOut) return { kind: "timeout", message: r.error, latencyMs: r.latencyMs };
 			if (!(await localhostReachable(service.port))) return { kind: "down", message: r.error };
+			showRetry(`${r.error} (retrying, up to 3 attempts)`);
 			return { kind: "failed", message: r.error, latencyMs: r.latencyMs };
 		},
-		report: (evt, result) => sendResponseToRelay(service.channelId, evt.id, result),
+		report: async (evt, result) => {
+			try {
+				await sendResponseToRelay(service.channelId, evt.id, result);
+			} catch (err) {
+				showRetry(`Could not store the answer on the relay: ${err.message}. Retrying.`);
+				throw err;
+			}
+		},
 		onDelivered: (_evt, result) => {
 			service.eventCount = (service.eventCount || 0) + 1;
 			if (result.status >= 400) service.errorCount = (service.errorCount || 0) + 1;
-			broadcastStatus();
+			if (live()) broadcastStatus();
 		},
 		onSkipped: (evt, message) => {
 			service.errorCount = (service.errorCount || 0) + 1;
@@ -956,9 +1016,10 @@ function drainerFor(service) {
 				title: "BridgeHook",
 				message: `${service.name}: ${evt.method || "POST"} ${evt.path || "/"} was not delivered (${message.length > 120 ? `${message.slice(0, 117)}…` : message}). Replay it from the dashboard.`,
 			});
-			broadcastStatus();
+			if (live()) broadcastStatus();
 		},
 		onLocalhost: (state, message) => {
+			if (!live()) return;
 			if (state === "down") noteLocalhostDown(service, message ?? refused);
 			else if (state === "ok") service._localhostDown = false;
 		},
@@ -970,8 +1031,13 @@ function startBridge(service) {
 
 	const controller = new AbortController();
 	pollingControllers.set(service.id, controller);
-	const drainer = drainerFor(service);
+	const drainer = drainerFor(service, controller.signal);
+	// A pass of the previous drainer may still be forwarding (stop() lets it
+	// finish); the new one waits for it, so the same event is never in flight
+	// twice from this install.
+	const previousPass = service._pass ?? Promise.resolve();
 	service._drainer = drainer;
+	service._localhostDown = false;
 	let consecutiveErrors = 0;
 	let running = false;
 	let timer = null;
@@ -986,14 +1052,19 @@ function startBridge(service) {
 		clearTimeout(timer);
 		let result = "idle";
 		try {
-			result = await drainer.wake();
+			await previousPass.catch(() => {});
+			const pass = drainer.wake();
+			service._pass = pass;
+			result = await pass;
 			consecutiveErrors = 0;
+			if (controller.signal.aborted) return;
 			if (result !== "retry") {
 				service.status = "connected";
 				service.error = null;
 			}
 			broadcastStatus();
 		} catch (err) {
+			if (controller.signal.aborted) return;
 			consecutiveErrors++;
 			service.status = err?.kind === "quota" ? "limit" : "error";
 			service.error = err.message;

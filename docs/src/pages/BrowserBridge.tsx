@@ -117,6 +117,12 @@ app.add_middleware(CORSMiddleware, allow_origins=["https://app.bridgehook.dev"],
 				</tbody>
 			</table>
 			<p>
+				The extension applies the same rules with one difference: it waits 25 seconds, not 5
+				minutes, because Chrome stops an extension&apos;s background worker when a request takes
+				longer than 30 seconds. To step through a handler on a breakpoint, forward from a dashboard
+				tab.
+			</p>
+			<p>
 				While the tab cannot deliver, it checks your server <em>before</em> claiming, so it never
 				holds an event the extension could deliver. A tab that leaves the page mid-request still
 				reports the answer it got, so nothing runs twice.
