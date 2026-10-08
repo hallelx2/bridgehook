@@ -9,35 +9,37 @@ manifest, code, and /privacy page.
 
 **Title** — `BridgeHook` (auto, from package)
 
-**Summary** — `Forward webhooks from the cloud to your localhost — no CLI, no tunnel, no install.` (auto, from package)
+**Summary** — `Webhook testing for apps built with AI: a permanent URL per local port, forwarded to localhost, queued while you're offline.` (set in the dashboard; max 132 characters)
 
 > ⚠️ **Rejected once (3 Jun 2026, "Yellow Argon" — Spam / excessive keywords).**
 > Cause: the old description listed many provider brand names
 > (Stripe, Paystack, GitHub, …), which Chrome reads as keyword stuffing.
-> The description below removes that list. Do **not** re-add a brand-name list.
+> The description below names no providers or AI products. Do **not** re-add a brand-name list.
 
-**Description** (max 16,000):
+**Description** (max 16,000), for v0.2.0:
 
 ```
-BridgeHook delivers real webhooks from the internet straight to a server running on your own machine — no CLI to install, no tunnel to keep running, no firewall changes.
+BridgeHook is webhook testing for apps built with AI, and for the coding agents building them.
 
-Point your webhook provider at the unique URL BridgeHook gives you. We receive the request on our relay and the extension forwards it to your local development server (http://localhost:PORT) in milliseconds, then sends your server's response back. You build and debug webhook integrations locally, exactly as they behave in production.
+Every local port gets a permanent public URL. Webhooks sent to it are received by the BridgeHook relay and this extension delivers them to the server on your own machine (http://localhost:PORT), then records your server's answer. No CLI, no tunnel process, no firewall changes, and no CORS changes to your server.
 
 WHY BRIDGEHOOK
-• Zero install friction — it's a browser extension, not a binary or a tunnel daemon.
-• Stable URL — your endpoint stays the same across restarts, so you set it once.
-• Real-time — incoming requests stream over a live connection and forward instantly.
-• Inspect and replay — see each request's method, headers, and body, and replay any one against your local server.
-• Multiple services at once — bridge several local ports in parallel.
-• Status at a glance — the toolbar badge shows active bridges, errors, and limits.
+• A URL you set once: the same port always keeps the same URL.
+• Nothing lost while you're away: webhooks that arrive while your computer is off wait in a queue and are delivered in order when you're back.
+• See your side: every request with your server's status, body and timing, and replay any of them.
+• Replies for agent and voice tools: in sync mode the sender receives your local server's actual reply.
+• Built for coding agents: BridgeHook includes an MCP server, so an AI coding assistant can send signed test webhooks to your handler, read what it returned, fix the code and try again.
+• Several ports at once, with status on the toolbar badge.
 
 HOW IT WORKS
-1. Sign in and create a channel — you get a stable public URL.
-2. Point your provider at that URL.
-3. Keep the extension running. Incoming requests are forwarded to your local server and the response goes back to the sender.
+1. Sign in and add the port your dev server listens on. You get a permanent URL.
+2. Point your webhook provider at that URL.
+3. Keep Chrome open. Webhooks are forwarded to your server and its answer is recorded, or returned to the sender in sync mode.
+
+No extension? The BridgeHook dashboard can also forward from a browser tab.
 
 PRIVACY
-The extension talks to only two places: your own localhost (to forward the request) and the BridgeHook relay (to receive events and report responses). It does not read, modify, or inject into any website you browse. No analytics and no ad trackers. Full policy: https://bridgehook-web.pages.dev/privacy
+The extension talks to only two places: your own localhost (to deliver each webhook) and the BridgeHook relay (to receive events and report your server's answers). It does not read, modify, or inject into any website you browse. No analytics and no ad trackers. Full policy: https://app.bridgehook.dev/privacy
 ```
 
 **Category** — `Developer Tools`
@@ -68,20 +70,18 @@ The extension talks to only two places: your own localhost (to forward the reque
 
 ## Additional fields
 
-> ⚠️ **bridgehook.dev is not purchased yet.** Until it is, every URL here must
-> point at the **live Cloudflare Pages domain** (`bridgehook-web.pages.dev`),
-> not `bridgehook.dev` — the store rejects dead URLs. Swap them all over once
-> the domain is live.
+> bridgehook.dev is live (2026-10-07), but the apex does not serve a page yet
+> (HAL-2400). Use the `app.` host for every listing URL until it does.
 
-- **Official URL** — skip for now (you can't verify a domain you don't own yet).
-- **Homepage URL** — `https://bridgehook-web.pages.dev`
-- **Support URL** — `https://bridgehook-web.pages.dev`  (or a dedicated support/contact page — `mailto:` is not accepted here, use an https page)
+- **Official URL** — verify `bridgehook.dev` in Search Console, then select it.
+- **Homepage URL** — `https://app.bridgehook.dev`
+- **Support URL** — `https://docs.bridgehook.dev`
 
 ---
 
 ## Privacy tab
 
-**Privacy policy URL** — `https://bridgehook-web.pages.dev/privacy`  *(this is the live page today; switch to `https://bridgehook.dev/privacy` after you buy the domain. Confirm it loads publicly before submitting.)*
+**Privacy policy URL** — `https://app.bridgehook.dev/privacy` *(live, checked 2026-10-08).*
 
 ### Single purpose description
 ```
@@ -109,7 +109,8 @@ The Manifest V3 service worker uses chrome.alarms to periodically re-establish t
 ```
 BridgeHook forwards webhooks from our relay to the user's own machine, so it needs:
 • http://localhost/* — to deliver each received webhook to the local development server the user is bridging (on any port they choose).
-• https://bridgehook-relay.halleluyaholudele.workers.dev/* and https://relay.bridgehook.dev/* — to open the authenticated event stream that delivers incoming webhooks and to report the local server's response back. (The workers.dev host is the current relay; the bridgehook.dev host is the production domain we are migrating to.)
+• https://relay.bridgehook.dev/* (and the older https://bridgehook-relay.halleluyaholudele.workers.dev/* address of the same relay) — to read the queue of incoming webhooks and to report the local server's response back.
+• https://app.bridgehook.dev/* — the BridgeHook dashboard, where the extension sends the user to sign in or view events. The extension reads nothing from its pages.
 The extension does not request access to, read, or inject into any third-party website the user visits.
 ```
 
@@ -131,15 +132,9 @@ The extension does not request access to, read, or inject into any third-party w
 
 ## Before you click "Submit for review"
 
-1. **Switch "remote code" to No** (biggest win — removes the in-depth-review warning).
-2. **Keep the `*.workers.dev` / `*.pages.dev` hosts** — these are the live endpoints
-   until `bridgehook.dev` is purchased. Do NOT strip them. (The `relay.bridgehook.dev`
-   / `app.bridgehook.dev` entries are harmless forward-compat; leave them so you don't
-   need a re-review when the domain goes live.)
-3. Verify the privacy URL is **live and public** — today that's
-   `https://bridgehook-web.pages.dev/privacy`.
-4. All listing URLs (homepage, support, privacy) must use `bridgehook-web.pages.dev`
-   for now, since `bridgehook.dev` does not resolve yet.
-5. Upload the rebuilt `bridgehook-extension-v0.1.0.zip` (redesigned popup + valid localhost pattern).
-```
-```
+1. **Remote code: No.**
+2. Listing URLs (homepage, support, privacy) use `app.bridgehook.dev` /
+   `docs.bridgehook.dev`; confirm each loads publicly.
+3. Update the Summary and Description above, and replace the screenshots with the
+   current popup and dashboard.
+4. Upload the rebuilt `bridgehook-extension-v0.2.0.zip` (HAL-2385).

@@ -15,6 +15,13 @@
       "when": 1791417246316,
       "tag": "0001_channel_response_mode",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1791425619397,
+      "tag": "0002_channels_expires_index",
+      "breakpoints": true
     }
   ]
 }

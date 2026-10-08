@@ -5,83 +5,111 @@ export function SecurityModel() {
 		<>
 			<h1>Security Model</h1>
 			<p>
-				The webhook URL is semi-public — you paste it into Stripe, GitHub, etc. Here's why that's
-				safe and what protections are in place.
+				A webhook URL is meant to be public: you paste it into Stripe, OpenAI or Vapi. This page is
+				about what that exposes and what it does not.
 			</p>
 
-			<Callout icon="🔒" title="Key Principle" color="#9093ff">
-				<strong>The relay is a dumb pipe. The browser is the smart gatekeeper.</strong> The relay
-				server never touches your machine. It only holds events in a mailbox. Your browser decides
-				what reaches localhost. All security decisions happen client-side.
+			<Callout icon="🔒" title="Key principle" color="#9093ff">
+				<strong>The relay never connects to your machine.</strong> It stores events. Only a
+				forwarder you run (the extension or a dashboard tab) can reach localhost, and only for the
+				port you gave it.
 			</Callout>
 
-			<h2>What an Attacker Can and Cannot Do</h2>
-			<p>
-				<strong>With just the webhook URL:</strong>
-			</p>
+			<h2>What someone with your URL can do</h2>
 			<ul>
-				<li>Can send fake webhooks to the relay (they get buffered)</li>
-				<li>Cannot read any responses from your server</li>
-				<li>Cannot connect to your SSE stream</li>
-				<li>Cannot reach your localhost — the browser hasn't forwarded it</li>
-				<li>Cannot open paths you haven't allowed — the browser filters them</li>
+				<li>Send requests to allowed paths. They are stored and forwarded like any webhook.</li>
+				<li>Use up your plan&apos;s daily event cap by flooding it.</li>
+				<li>
+					Read the channel&apos;s public settings from <code>GET /api/channels/:id</code>: its port,
+					allowed paths and reply mode. No events, keys or account details.
+				</li>
+				<li>
+					On a <a href="#/sync-responses">sync channel</a>, see whatever your server answers to
+					those requests, because the reply goes back to the sender. Verify signatures before acting
+					or returning data.
+				</li>
 			</ul>
-
-			<p>
-				<strong>With physical access to your browser tab:</strong>
-			</p>
+			<h2>What they cannot do</h2>
 			<ul>
 				<li>
-					They already have access to your machine — the webhook bridge is the least of your
-					concerns
+					Read your event history, other senders&apos; payloads, or your server&apos;s replies on an
+					async channel.
 				</li>
-				<li>Close the tab = instant kill switch, bridge dies immediately</li>
+				<li>Reach a path outside the allowlist: the relay answers 403 and stores nothing.</li>
+				<li>
+					Claim events or report answers: those requests must be signed with the channel&apos;s key.
+				</li>
+				<li>Reach any other port or host on your machine.</li>
+				<li>
+					Receive cookies: sync replies drop <code>Set-Cookie</code>.
+				</li>
 			</ul>
 
-			<h2>Five Security Layers</h2>
+			<h2>Layers</h2>
 			<SecurityLayers />
 
-			<h2>Threat Model Summary</h2>
+			<h2>Threats</h2>
 			<table>
 				<thead>
 					<tr>
 						<th>Threat</th>
-						<th>Mitigated By</th>
+						<th>Mitigation</th>
 					</tr>
 				</thead>
 				<tbody>
 					<tr>
-						<td>Someone finds your webhook URL</td>
-						<td>They can only send events, not read responses or connect SSE</td>
+						<td>Forged webhooks</td>
+						<td>
+							Verify the provider&apos;s signature in your handler (see the provider guides).
+							BridgeHook forwards bodies and signature headers unchanged so verification works.
+						</td>
 					</tr>
 					<tr>
-						<td>Malicious webhook targets /admin</td>
-						<td>Path allowlist blocks it in the browser — never reaches localhost</td>
+						<td>
+							Probing for <code>/admin</code> and friends
+						</td>
+						<td>Path allowlist, enforced by the relay before storage</td>
 					</tr>
 					<tr>
-						<td>Channel hijacking</td>
-						<td>Channel IDs are 128-bit random, unguessable</td>
+						<td>Another forwarder taking over your channel</td>
+						<td>
+							Channel requests are signed with an ECDSA key that only your browser holds; rotating
+							it requires your signed-in account
+						</td>
 					</tr>
 					<tr>
-						<td>Relay compromise</td>
-						<td>Relay only has hashed secrets; can't impersonate your browser</td>
+						<td>A sync reply used as a phishing page on our domain</td>
+						<td>
+							Served only on <code>&lt;id&gt;.bridgehook.dev</code>, never the API host, with{" "}
+							<code>Content-Security-Policy: sandbox</code> and <code>nosniff</code>
+						</td>
 					</tr>
 					<tr>
-						<td>Stale channels</td>
-						<td>Auto-expire after 24 hours, no permanent attack surface</td>
+						<td>Your BridgeHook session leaking to your server</td>
+						<td>BridgeHook&apos;s own cookies are stripped from forwarded requests</td>
 					</tr>
 					<tr>
-						<td>DDoS via webhooks</td>
-						<td>Rate limiting: 60 req/min, 1MB max, 100 event buffer</td>
+						<td>An agent token misused</td>
+						<td>
+							Agent tokens work only on <code>/mcp</code>, cannot create forwarding channels or
+							rotate keys, and are revocable from the dashboard
+						</td>
+					</tr>
+					<tr>
+						<td>Oversized or abusive traffic</td>
+						<td>
+							1 MB bodies, 32 KB headers, a daily event cap per plan, rate-limited channel creation
+						</td>
 					</tr>
 				</tbody>
 			</table>
 
-			<Callout icon="⚡" title="Kill Switch" color="#fcd34d">
-				Close the browser tab and the bridge dies instantly. The SSE connection closes, forwarding
-				stops, and no more events reach localhost. There are no zombie processes, no background
-				daemons, no residual network tunnels.
-			</Callout>
+			<h2>Data you send through BridgeHook</h2>
+			<p>
+				Webhook requests and your server&apos;s replies are stored so you can inspect and replay
+				them, for as long as your plan&apos;s retention. Treat them like logs: use test-mode
+				providers, and do not route production customer traffic through a development URL.
+			</p>
 		</>
 	);
 }

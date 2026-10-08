@@ -1,0 +1,1 @@
+CREATE INDEX `channels_expires` ON `channels` (`expires_at`) WHERE expires_at IS NOT NULL;

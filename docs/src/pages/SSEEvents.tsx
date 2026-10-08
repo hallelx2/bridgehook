@@ -1,71 +1,66 @@
 export function SSEEvents() {
 	return (
 		<>
-			<h1>SSE Event Types</h1>
-			<p>The relay pushes three types of events through the SSE stream.</p>
+			<h1>SSE Events</h1>
+			<p>
+				<code>GET /api/me/stream</code> is a per-user Server-Sent Events stream covering all of your
+				channels. It accepts the session cookie or a device token (
+				<code>Authorization: Bearer dvc_…</code>). Frames are JSON in <code>data:</code> lines, and
+				a comment frame every 20 seconds keeps the connection open.
+			</p>
 
-			<h2>Connected</h2>
-			<p>Sent immediately when the SSE connection is established.</p>
+			<h2>connected</h2>
+			<p>Sent once when the stream opens.</p>
 			<pre>
-				<code>{`{
-  "type": "connected",
-  "channelId": "ch_9x4kf2m"
-}`}</code>
+				<code>{`{ "type": "connected" }`}</code>
 			</pre>
 
-			<h2>Webhook</h2>
-			<p>Sent when an external service (Stripe, GitHub, etc.) POSTs to your webhook URL.</p>
+			<h2>webhook</h2>
+			<p>A webhook arrived on one of your channels, or a replay was queued.</p>
 			<pre>
 				<code>{`{
   "type": "webhook",
-  "id": "evt_abc123",
-  "channelId": "ch_9x4kf2m",
+  "id": "…",
+  "channelId": "8f3a2c1d9e4b",
   "method": "POST",
-  "path": "/webhook/stripe",
-  "headers": {
-    "content-type": "application/json",
-    "stripe-signature": "t=1234..."
-  },
+  "path": "/api/webhooks/stripe",
+  "headers": { "content-type": "application/json", "stripe-signature": "t=…,v1=…" },
   "body": "{\\"type\\":\\"checkout.session.completed\\"}",
-  "receivedAt": "2026-04-09T22:31:00Z"
+  "receivedAt": "2026-10-08T09:31:00.000Z"
 }`}</code>
 			</pre>
 
-			<h2>Response</h2>
-			<p>Sent when a browser sends back the local server's response, confirming the round-trip.</p>
+			<h2>claimed</h2>
+			<p>A forwarder claimed an event and is delivering it.</p>
 			<pre>
-				<code>{`{
-  "type": "response",
-  "eventId": "evt_abc123",
-  "status": 200,
-  "latencyMs": 12
-}`}</code>
+				<code>{`{ "type": "claimed", "eventId": "…", "channelId": "8f3a2c1d9e4b",
+  "claimerId": "web_…", "claimedAt": "…" }`}</code>
 			</pre>
 
-			<h2>Handling Events</h2>
+			<h2>response</h2>
+			<p>Your server&apos;s answer was reported.</p>
 			<pre>
-				<code>{`const source = new EventSource(\`\${relayUrl}/hook/\${channelId}/events\`);
+				<code>{`{ "type": "response", "eventId": "…", "channelId": "8f3a2c1d9e4b",
+  "status": 200, "latencyMs": 12 }`}</code>
+			</pre>
+
+			<h2>Using it</h2>
+			<pre>
+				<code>{`const source = new EventSource("https://relay.bridgehook.dev/api/me/stream", {
+  withCredentials: true,
+});
 
 source.onmessage = (msg) => {
   const event = JSON.parse(msg.data);
-
-  switch (event.type) {
-    case "connected":
-      console.log("Bridge connected to channel", event.channelId);
-      break;
-
-    case "webhook":
-      // Forward to localhost
-      forwardToLocalhost(event);
-      break;
-
-    case "response":
-      // Update UI with response status
-      updateEventStatus(event.eventId, event.status, event.latencyMs);
-      break;
-  }
+  if (event.type === "webhook") drainQueue(event.channelId);   // read ?pending=1, claim, forward
+  if (event.type === "response") markAnswered(event.eventId, event.status);
 };`}</code>
 			</pre>
+			<p>
+				Treat a <code>webhook</code> frame as a signal to read the delivery queue, not as the work
+				itself: the queue is ordered and survives disconnects, the stream does not. Forwarders also
+				poll on a timer, so a dropped stream only delays delivery.
+			</p>
 		</>
 	);
 }

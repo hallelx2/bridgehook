@@ -70,6 +70,8 @@ bearer_token_env_var = "BRIDGEHOOK_TOKEN"   # export BRIDGEHOOK_TOKEN=dvc_…`}<
 						<td>
 							Realistic Stripe, GitHub, OpenAI, ElevenLabs, Vapi or generic webhook, signed like the
 							provider when you pass the endpoint secret, then waits for your handler&apos;s answer.
+							For Vapi, <code>vapi_auth</code> picks <code>Authorization: Bearer</code> (Vapi&apos;s
+							default credential) or the legacy <code>X-Vapi-Secret</code> header.
 						</td>
 					</tr>
 					<tr>
@@ -90,7 +92,10 @@ bearer_token_env_var = "BRIDGEHOOK_TOKEN"   # export BRIDGEHOOK_TOKEN=dvc_…`}<
 						<td>
 							<code>replay_event</code>
 						</td>
-						<td>Send an earlier webhook again (optionally edited) and return the new answer.</td>
+						<td>
+							Send an earlier webhook again (optionally edited) and return the new answer. The
+							original signature headers are sent unchanged; see the note below.
+						</td>
 					</tr>
 					<tr>
 						<td>
@@ -112,10 +117,26 @@ bearer_token_env_var = "BRIDGEHOOK_TOKEN"   # export BRIDGEHOOK_TOKEN=dvc_…`}<
 
 			<h2>How forwarding happens</h2>
 			<p>
-				Webhooks reach localhost through the BridgeHook Chrome extension. A URL created by an agent
-				is picked up the moment you add the same port in the extension, which keeps the URL.
-				Webhooks that arrive before then, or while your machine is off, are queued and delivered in
-				order.
+				Webhooks reach localhost through the BridgeHook Chrome extension or a dashboard tab in{" "}
+				<a href="#/browser-bridge">no-install mode</a>. A URL your agent creates is picked up as
+				soon as you add the same port in either one, and it keeps the URL. Webhooks that arrive
+				before then, or while your machine is off, wait in the queue and are delivered in order.
+				Until something is forwarding, <code>send_test_event</code> reports that the event is queued
+				rather than answered.
+			</p>
+
+			<Callout icon="⏱️" title="Replays and signature timestamps" color="#fcd34d">
+				<code>replay_event</code> resends the original headers, including the provider&apos;s
+				signature. Stripe and OpenAI (5 minutes by default in their SDKs) and ElevenLabs (30
+				minutes) sign a timestamp and reject an older one, so a replay after a long fix fails
+				verification. For those providers, have the agent call <code>send_test_event</code> with the
+				signing secret instead: it signs a fresh event every time. GitHub signs no timestamp, so its
+				replays verify.
+			</Callout>
+
+			<p>
+				Put the loop in your repository&apos;s agent instructions so every session uses it: see{" "}
+				<a href="#/agent-instructions">AGENTS.md snippet</a>.
 			</p>
 
 			<h2>Example prompt</h2>
@@ -123,7 +144,7 @@ bearer_token_env_var = "BRIDGEHOOK_TOKEN"   # export BRIDGEHOOK_TOKEN=dvc_…`}<
 				<code>
 					Use BridgeHook to send a signed Stripe checkout.session.completed to my app on port 3000
 					at /api/webhooks/stripe (secret whsec_…), then fix whatever the handler gets wrong and
-					replay until it returns 200.
+					send it again until it returns 200.
 				</code>
 			</pre>
 		</>

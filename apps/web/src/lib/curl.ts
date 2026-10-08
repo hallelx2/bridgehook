@@ -8,7 +8,7 @@
 
 interface CurlInput {
 	method: string;
-	path: string; // relay path, e.g. /2324radf23r/webhook/stripe
+	path: string; // relay path, e.g. /8f3a2c1d9e4b/webhook/stripe
 	requestHeaders: Record<string, string>;
 	requestBody: string | null;
 }
