@@ -71,6 +71,7 @@ export async function resolveCaller(
 	auth: Auth | null,
 	db: DB,
 	request: Request,
+	opts: { allowAgentTokens?: boolean } = {},
 ): Promise<ResolvedCaller | null> {
 	// 1. Device token bearer
 	const authHeader = request.headers.get("Authorization") || request.headers.get("authorization");
@@ -83,7 +84,10 @@ export async function resolveCaller(
 				.from(devices)
 				.where(and(eq(devices.tokenHash, tokenHash), isNull(devices.revokedAt)))
 				.limit(1);
-			if (device) {
+			// Agent tokens (MCP clients) are scoped to /mcp: anywhere else they
+			// could run as an uncapped device or rotate a channel's key out from
+			// under the user's extension.
+			if (device && (device.kind !== "agent" || opts.allowAgentTokens)) {
 				return { userId: device.userId, deviceId: device.id, via: "device-token" };
 			}
 		}

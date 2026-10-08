@@ -20,7 +20,7 @@
  */
 import { PLANS, type PlanId } from "@bridgehook/shared";
 import { events, channels, devices, subscriptions, user } from "@bridgehook/shared/db/schema";
-import { and, count, eq, gte, isNull } from "drizzle-orm";
+import { and, count, eq, gte, isNull, ne } from "drizzle-orm";
 import type { DB } from "./db.js";
 
 export interface UserAccess {
@@ -195,7 +195,7 @@ async function countActiveDevices(db: DB, userId: string): Promise<number> {
 	const [{ n }] = await db
 		.select({ n: count() })
 		.from(devices)
-		.where(and(eq(devices.userId, userId), isNull(devices.revokedAt)));
+		.where(and(eq(devices.userId, userId), isNull(devices.revokedAt), ne(devices.kind, "agent")));
 	return Number(n);
 }
 

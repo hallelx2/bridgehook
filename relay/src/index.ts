@@ -14,6 +14,7 @@ import { createAuth, getAvailableAuthProviders, getSessionUser } from "./auth.js
 import { createPolarClient } from "./billing.js";
 import { type DB, getDb } from "./db.js";
 import { getOrCreateSelfHostUser, resolveCaller, touchDevice } from "./identity.js";
+import { handleMcpRequest } from "./mcp.js";
 import { originPolicy } from "./origin-policy.js";
 import { buildAuthDeviceRoutes, cleanupExpiredDeviceCodes } from "./routes/auth-device.js";
 import { buildBillingRoutes } from "./routes/billing.js";
@@ -607,6 +608,49 @@ app.all("/auth/*", async (c) => {
 	const auth = createAuth(c.env);
 	if (!auth) return c.json({ error: "Auth not configured" }, 404);
 	return auth.handler(c.req.raw);
+});
+
+// ── MCP server for AI coding agents ──
+// Stateless Streamable HTTP at /mcp. Auth: agent token (Bearer dvc_…) from
+// the dashboard's AI agents page, any device token, or the session.
+app.all("/mcp", async (c) => {
+	const env = c.env;
+	const db = getDb(env);
+	const auth = createAuth(env);
+	let userId: string;
+	let deviceId: string | null = null;
+	if (auth) {
+		const caller = await resolveCaller(auth, db, c.req.raw, { allowAgentTokens: true });
+		if (!caller) {
+			return c.json(
+				{
+					error:
+						"BridgeHook MCP needs an agent token: create one at https://app.bridgehook.dev/dashboard/agents and send it as Authorization: Bearer <token>.",
+				},
+				401,
+				{ "WWW-Authenticate": 'Bearer realm="BridgeHook"' },
+			);
+		}
+		userId = caller.userId;
+		deviceId = caller.deviceId;
+		if (deviceId) await touchDevice(db, deviceId);
+	} else {
+		userId = await getOrCreateSelfHostUser(db, env);
+	}
+	return handleMcpRequest(c.req.raw, {
+		db,
+		userId,
+		deviceId,
+		requestUrl: new URL(c.req.url),
+		tunnelDomain: env.TUNNEL_DOMAIN,
+		notifier: {
+			getChannelDO: (channelId: string) => getChannelDO(env, channelId),
+			notifyUser: (uid: string | null, payload: string) => notifyUserDO(env, uid, payload),
+		},
+		deliver: (channelId: string, forwardPath: string, request: Request) =>
+			handleWebhookIntake(channelId, forwardPath, request, env),
+		waitUntil: (p: Promise<unknown>) => c.executionCtx.waitUntil(p),
+	});
 });
 
 // ── Health ──

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Layout } from "./components/Layout";
+import { AiAgents } from "./pages/AiAgents";
 import { Architecture } from "./pages/Architecture";
 import { Auth } from "./pages/Auth";
 import { Billing } from "./pages/Billing";
@@ -35,6 +36,7 @@ const PAGES: Record<string, () => React.JSX.Element> = {
 	"vs-cloudflare-tunnel": VsCloudflareTunnel,
 	"vs-localtunnel": VsLocaltunnel,
 	tradeoffs: Tradeoffs,
+	"ai-agents": AiAgents,
 	"relay-api": RelayAPI,
 	"sse-events": SSEEvents,
 	"self-hosting": SelfHosting,

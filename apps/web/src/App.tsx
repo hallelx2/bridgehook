@@ -11,6 +11,7 @@ import { FinalCTA } from "./components/FinalCTA";
 import { Footer } from "./components/Footer";
 import { Nav } from "./components/Nav";
 import { ScrollFlow } from "./components/ScrollFlow";
+import { AiAgents } from "./pages/AiAgents";
 import { AuthCallback } from "./pages/AuthCallback";
 import { Billing } from "./pages/Billing";
 import { ChannelsList } from "./pages/ChannelsList";
@@ -129,6 +130,14 @@ export function App() {
 					element={
 						<AuthGate>
 							<DevicesList />
+						</AuthGate>
+					}
+				/>
+				<Route
+					path="/dashboard/agents"
+					element={
+						<AuthGate>
+							<AiAgents />
 						</AuthGate>
 					}
 				/>
