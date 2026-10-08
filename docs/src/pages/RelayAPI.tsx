@@ -119,11 +119,12 @@ Content-Type: application/json
 				and the relay holds the request until an executor reports your local server&apos;s answer,
 				then returns that status, headers and body to the sender. Use it for tool-call webhooks from
 				voice and agent platforms and for GET verification challenges, which sync channels forward.
-				If no answer arrives within <code>syncTimeoutMs</code> (1–100 s, default 25 s) the sender
-				gets <code>504</code> and the event stays queued; if your server cannot be reached it gets{" "}
-				<code>502</code>. Sync channels answer only on their own host (
-				<code>&lt;id&gt;.bridgehook.dev</code>); the relay-host form returns <code>421</code>.
-				Replies are served with <code>Content-Security-Policy: sandbox</code> and never set cookies.
+				If no answer arrives within <code>syncTimeoutMs</code> (milliseconds; rounded and clamped to
+				1–100 s, default 25 s; a non-number is rejected with 400) the sender gets <code>504</code>{" "}
+				and the event stays queued; if your server cannot be reached it gets <code>502</code>. Sync
+				channels answer only on their own host (<code>&lt;id&gt;.bridgehook.dev</code>); the
+				relay-host form returns <code>421</code>. Replies are served with{" "}
+				<code>Content-Security-Policy: sandbox</code> and never set cookies.
 			</p>
 			<pre>
 				<code>{`PATCH /api/me/channels/2324radf23r

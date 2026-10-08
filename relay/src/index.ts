@@ -1217,7 +1217,7 @@ async function channelHostResponse(
 		status: 405,
 		headers: {
 			"Content-Type": "application/json",
-			Allow: [...WEBHOOK_METHODS, "GET", "OPTIONS"].join(", "),
+			Allow: [...WEBHOOK_METHODS, "GET", "HEAD", "OPTIONS"].join(", "),
 		},
 	});
 }
