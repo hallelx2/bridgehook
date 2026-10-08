@@ -649,6 +649,7 @@ app.all("/mcp", async (c) => {
 		},
 		deliver: (channelId: string, forwardPath: string, request: Request) =>
 			handleWebhookIntake(channelId, forwardPath, request, env),
+		waitUntil: (p: Promise<unknown>) => c.executionCtx.waitUntil(p),
 	});
 });
 

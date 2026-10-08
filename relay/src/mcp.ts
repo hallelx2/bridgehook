@@ -17,7 +17,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { and, asc, desc, eq, gt, like, sql } from "drizzle-orm";
 import { z } from "zod";
-import { checkChannelCreate, loadUserAccess } from "./access.js";
+import { checkChannelCreate, checkReplay, loadUserAccess } from "./access.js";
 import type { DB } from "./db.js";
 import {
 	type ReplayNotifier,
@@ -42,6 +42,8 @@ export interface McpContext {
 	 * (full intake: allow-list, quota, storage, sync wait).
 	 */
 	deliver(channelId: string, forwardPath: string, request: Request): Promise<Response>;
+	/** Keep work alive after the response (Workers `ctx.waitUntil`). */
+	waitUntil?(promise: Promise<unknown>): void;
 }
 
 const INSTRUCTIONS = `BridgeHook delivers real webhooks to the user's local server through a permanent URL per port, even while their machine is off (queued, delivered in order). Use it to build and debug webhook handlers end to end.
@@ -178,8 +180,13 @@ export function buildMcpServer(ctx: McpContext): McpServer {
 			},
 		},
 		async ({ port, label, reply_mode, sync_timeout_seconds }) => {
-			const patch: { responseMode?: "async" | "sync"; syncTimeoutMs?: number; label?: string } = {};
+			const patch: {
+				responseMode?: "async" | "sync";
+				syncTimeoutMs?: number;
+				label?: string | null;
+			} = {};
 			if (reply_mode) patch.responseMode = reply_mode;
+			if (label !== undefined) patch.label = label.trim() || null;
 			if (sync_timeout_seconds !== undefined) {
 				patch.syncTimeoutMs = clampSyncTimeout(sync_timeout_seconds * 1000) ?? undefined;
 			}
@@ -213,7 +220,7 @@ export function buildMcpServer(ctx: McpContext): McpServer {
 				allowedPaths: "[]",
 				userId: ctx.userId,
 				deviceId: ctx.deviceId,
-				label: label ?? null,
+				label: patch.label ?? null,
 				expiresAt: null,
 				responseMode: patch.responseMode ?? "async",
 				syncTimeoutMs: patch.syncTimeoutMs ?? 25_000,
@@ -310,8 +317,28 @@ export function buildMcpServer(ctx: McpContext): McpServer {
 			if (ch.responseMode === "sync") {
 				// The sender is held up to the channel's sync timeout; the agent
 				// waits at most wait_seconds and can look the event up afterwards.
+				// Relay-side rejections (allow-list 403, daily cap 429) answer at
+				// once, so the race always gives them a moment even at wait 0.
 				const delivered = ctx.deliver(ch.id, p, req);
-				const raced = await Promise.race([delivered, sleep(waitMs).then(() => null)]);
+				const settled = delivered.then(
+					(res) => ({ res, err: null as unknown }),
+					(err: unknown) => ({ res: null, err }),
+				);
+				ctx.waitUntil?.(settled);
+				const outcome = await Promise.race([
+					settled,
+					sleep(Math.max(waitMs, 2000)).then(() => null),
+				]);
+				if (outcome?.err) {
+					return fail(
+						`Relay error: ${outcome.err instanceof Error ? outcome.err.message : String(outcome.err)}`,
+					);
+				}
+				const raced = outcome?.res ?? null;
+				if (raced && !raced.headers.get("x-bridgehook-event-id")) {
+					// No event id: the relay refused it before storing anything.
+					return fail(`Relay refused the event (${raced.status}): ${clip(await raced.text())}`);
+				}
 				if (!raced) {
 					return text({
 						sent: testEvent.description,
@@ -487,6 +514,12 @@ export function buildMcpServer(ctx: McpContext): McpServer {
 			},
 		},
 		async ({ event_id, body, headers, wait_seconds }) => {
+			// Same gate as the dashboard: read-only accounts (expired trial,
+			// canceled plan) can read past events but not queue new ones.
+			const access = await loadUserAccess(ctx.db, ctx.userId);
+			if (!access) return fail("Account not found");
+			const gate = checkReplay(access);
+			if (!gate.ok) return fail(gate.error);
 			const source = await loadOwnedEvent(ctx.db, ctx.userId, event_id);
 			if (!source) return fail("Event not found");
 			const replay = await queueReplay(ctx.db, ctx.notifier, ctx.userId, source, { body, headers });

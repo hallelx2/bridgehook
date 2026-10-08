@@ -57,7 +57,10 @@ export interface MeEnv {
  * Caller for read endpoints: a device token (`Authorization: Bearer dvc_…`)
  * or the session cookie. A paired extension has to work with no dashboard
  * session at all, and it reads identity, plan, usage and its channels here.
- * Mutations (channel edits, key rotation, replays, deletes) stay session-only.
+ * Key rotation also accepts device tokens, so an extension or CLI can adopt a
+ * channel created elsewhere (dashboard, MCP agent); agent tokens are refused
+ * by resolveCaller. Other mutations (channel edits, replays, deletes) stay
+ * session-only.
  */
 async function resolveReader(deps: MeEnv, request: Request): Promise<{ id: string } | null> {
 	const caller = await resolveCaller(deps.auth, deps.db, request);
