@@ -11,6 +11,7 @@ bridgehook-extension-*.zip
 
 # Tauri
 apps/desktop/src-tauri/target/
+/target/
 
 # Environment
 .env
