@@ -1,7 +1,22 @@
 import { scryptSync } from "node:crypto";
 import { betterAuth } from "better-auth";
 import { memoryAdapter } from "better-auth/adapters/memory";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+// Count scrypt calls made by password.ts, so "every failed sign-in costs the
+// same" is checked as a count of the expensive step, not a wall-clock ratio
+// that a loaded machine can skew.
+const scryptCalls = vi.hoisted(() => ({ n: 0 }));
+vi.mock("node:crypto", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("node:crypto")>();
+	return {
+		...actual,
+		scrypt: (...args: Parameters<typeof actual.scrypt>) => {
+			scryptCalls.n++;
+			return (actual.scrypt as (...a: unknown[]) => void)(...args);
+		},
+	};
+});
 import { rehashOnSignIn } from "./password-rehash.js";
 import {
 	SCRYPT_PARAMS,
@@ -104,30 +119,29 @@ describe("wrapping legacy hashes", () => {
 		expect(await wrapLegacyHash("not-a-hash")).toBeNull();
 	});
 
-	it("makes a wrong password on a legacy account cost about as much as an unknown email", async () => {
-		// Better-Auth runs hashPassword() for an unknown email; a legacy account
-		// runs verifyPassword(). Before the fix the second was ~20x cheaper.
+	it("spends exactly one scrypt on every failed sign-in path", async () => {
+		// Better-Auth runs hashPassword() for an unknown email and verifyPassword()
+		// for an account. Before the fix a legacy account ran no scrypt at all
+		// (a 10k PBKDF2 only), which made it ~35x cheaper and told the accounts apart.
 		const legacy = await legacyHash("correct horse battery");
 		const wrapped = String(await wrapLegacyHash(legacy));
-		const median = async (fn: () => Promise<unknown>) => {
-			const times: number[] = [];
-			for (let i = 0; i < 5; i++) {
-				const t0 = performance.now();
-				await fn();
-				times.push(performance.now() - t0);
-			}
-			return times.sort((a, b) => a - b)[2];
+		const current = await hashPassword("correct horse battery");
+		const scryptsFor = async (fn: () => Promise<unknown>) => {
+			scryptCalls.n = 0;
+			await fn();
+			return scryptCalls.n;
 		};
-		const unknownEmail = await median(() => hashPassword("guess-1234"));
-		const plainLegacy = await median(() =>
-			verifyPassword({ password: "guess-1234", hash: legacy }),
+		expect(await scryptsFor(() => hashPassword("guess-1234"))).toBe(1);
+		expect(await scryptsFor(() => verifyPassword({ password: "guess-1234", hash: current }))).toBe(
+			1,
 		);
-		const wrappedLegacy = await median(() =>
-			verifyPassword({ password: "guess-1234", hash: wrapped }),
+		expect(await scryptsFor(() => verifyPassword({ password: "guess-1234", hash: legacy }))).toBe(
+			1,
 		);
-		expect(plainLegacy / unknownEmail).toBeGreaterThan(0.6);
-		expect(wrappedLegacy / unknownEmail).toBeGreaterThan(0.6);
-	}, 30_000);
+		expect(await scryptsFor(() => verifyPassword({ password: "guess-1234", hash: wrapped }))).toBe(
+			1,
+		);
+	});
 });
 
 describe("rehash on sign-in", () => {

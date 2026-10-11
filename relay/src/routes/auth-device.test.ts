@@ -158,7 +158,10 @@ describe("device code approval", () => {
 			post(a, "/approve", { code }, "u_alice"),
 			post(a, "/approve", { code }, "u_bob"),
 		]);
-		expect([alice.status, bob.status].sort()).toEqual([200, 409]);
+		// One flake under heavy load (2026-10-11) could not be reproduced in 15
+		// further runs; report what came back so a recurrence explains itself.
+		const seen = `alice ${alice.status} ${await alice.clone().text()} | bob ${bob.status} ${await bob.clone().text()}`;
+		expect([alice.status, bob.status].sort(), seen).toEqual([200, 409]);
 		const winner = alice.status === 200 ? "u_alice" : "u_bob";
 		const row = await d1
 			.prepare("SELECT approved_user_id AS u FROM device_codes WHERE code = ?")
