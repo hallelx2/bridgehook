@@ -41,6 +41,13 @@ export const BILLING_WEBHOOK_BODY_LIMIT = 256 * 1024;
  * MAX_BODY_SIZE_BYTES) inside a JSON-RPC string, plus room for the envelope.
  */
 export const MCP_BODY_LIMIT = MAX_BODY_AS_JSON_STRING + 64 * 1024;
+/**
+ * Dashboard replay (POST /api/me/events/:id/replay) takes an edited body of up
+ * to MAX_REPLAY_BODY_BYTES (1 MiB, event-store.ts) and edited headers, so it
+ * is sized like an MCP call rather than the general API cap.
+ */
+export const REPLAY_BODY_LIMIT = MAX_BODY_AS_JSON_STRING + 64 * 1024;
+const REPLAY_PATH = /^\/api\/me\/events\/[^/]+\/replay$/;
 
 /** Caps for the ECDSA-signed executor routes, by what they carry. */
 export const SIGNED_BODY_LIMITS = {
@@ -103,6 +110,7 @@ export async function readBodyLimited(request: Request, maxBytes: number): Promi
 export function apiBodyLimitFor(path: string): number | null {
 	if (path === "/mcp") return MCP_BODY_LIMIT;
 	if (path === "/api/billing/webhook") return BILLING_WEBHOOK_BODY_LIMIT;
+	if (REPLAY_PATH.test(path)) return REPLAY_BODY_LIMIT;
 	if (path.startsWith("/api/") || path.startsWith("/auth/")) return API_BODY_LIMIT;
 	return null;
 }

@@ -4,6 +4,7 @@ import {
 	API_BODY_LIMIT,
 	BILLING_WEBHOOK_BODY_LIMIT,
 	MCP_BODY_LIMIT,
+	REPLAY_BODY_LIMIT,
 	SIGNED_BODY_LIMITS,
 	apiBodyLimitFor,
 	limitApiBodies,
@@ -86,6 +87,16 @@ describe("apiBodyLimitFor", () => {
 		expect(apiBodyLimitFor("/auth/sign-in/email")).toBe(API_BODY_LIMIT);
 		expect(apiBodyLimitFor("/api/billing/webhook")).toBe(BILLING_WEBHOOK_BODY_LIMIT);
 		expect(apiBodyLimitFor("/mcp")).toBe(MCP_BODY_LIMIT);
+		expect(apiBodyLimitFor("/api/me/events/ev123/replay")).toBe(REPLAY_BODY_LIMIT);
+		expect(apiBodyLimitFor("/api/me/events/ev123")).toBe(API_BODY_LIMIT);
+	});
+
+	it("lets a dashboard replay carry a 1 MiB edited body, escaped in the worst case", () => {
+		const payload = JSON.stringify({
+			body: "\u0000".repeat(1_048_576),
+			headers: { "content-type": "application/octet-stream", "x-pad": "h".repeat(30_000) },
+		});
+		expect(payload.length).toBeLessThanOrEqual(REPLAY_BODY_LIMIT);
 	});
 
 	it("leaves routes that read their own bodies to their own caps", () => {
