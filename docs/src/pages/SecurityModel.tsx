@@ -98,7 +98,9 @@ export function SecurityModel() {
 					<tr>
 						<td>Oversized or abusive traffic</td>
 						<td>
-							1 MB bodies, 32 KB headers, a daily event cap per plan, rate-limited channel creation
+							1 MB bodies, 32 KB headers, a daily event cap per plan, rate-limited channel creation.
+							API, sign-in and executor requests have their own size caps (64 KB for API and sign-in
+							calls, 4 KB for a claim), refused with <code>413</code> before the body is read
 						</td>
 					</tr>
 				</tbody>
