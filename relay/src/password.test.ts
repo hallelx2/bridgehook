@@ -3,7 +3,13 @@ import { betterAuth } from "better-auth";
 import { memoryAdapter } from "better-auth/adapters/memory";
 import { describe, expect, it } from "vitest";
 import { rehashOnSignIn } from "./password-rehash.js";
-import { SCRYPT_PARAMS, hashPassword, needsRehash, verifyPassword } from "./password.js";
+import {
+	SCRYPT_PARAMS,
+	hashPassword,
+	needsRehash,
+	verifyPassword,
+	wrapLegacyHash,
+} from "./password.js";
 
 // Builds a hash the way the launch code did (10,000 iterations), independently
 // of password.ts, so the tests do not trust the module they are checking.
@@ -78,6 +84,50 @@ describe("password hashing", () => {
 	});
 });
 
+describe("wrapping legacy hashes", () => {
+	it("wraps a PBKDF2 hash as scrypt without the password, and the wrap verifies", async () => {
+		const legacy = await legacyHash("correct horse battery");
+		const wrapped = await wrapLegacyHash(legacy);
+		expect(wrapped?.split("$").slice(0, 2)).toEqual(["scrypt-pbkdf2", "10000"]);
+		const hash = String(wrapped);
+		expect(await verifyPassword({ password: "correct horse battery", hash })).toBe(true);
+		expect(await verifyPassword({ password: "wrong password", hash })).toBe(false);
+		expect(needsRehash(hash)).toBe(true);
+	});
+
+	it("only wraps plain legacy hashes", async () => {
+		expect(await wrapLegacyHash(await hashPassword("pw-123456"))).toBeNull();
+		const wrapped = String(await wrapLegacyHash(await legacyHash("pw-123456")));
+		expect(await wrapLegacyHash(wrapped)).toBeNull();
+		expect(await wrapLegacyHash("not-a-hash")).toBeNull();
+	});
+
+	it("makes a wrong password on a legacy account cost about as much as an unknown email", async () => {
+		// Better-Auth runs hashPassword() for an unknown email; a legacy account
+		// runs verifyPassword(). Before the fix the second was ~20x cheaper.
+		const legacy = await legacyHash("correct horse battery");
+		const wrapped = String(await wrapLegacyHash(legacy));
+		const median = async (fn: () => Promise<unknown>) => {
+			const times: number[] = [];
+			for (let i = 0; i < 5; i++) {
+				const t0 = performance.now();
+				await fn();
+				times.push(performance.now() - t0);
+			}
+			return times.sort((a, b) => a - b)[2];
+		};
+		const unknownEmail = await median(() => hashPassword("guess-1234"));
+		const plainLegacy = await median(() =>
+			verifyPassword({ password: "guess-1234", hash: legacy }),
+		);
+		const wrappedLegacy = await median(() =>
+			verifyPassword({ password: "guess-1234", hash: wrapped }),
+		);
+		expect(plainLegacy / unknownEmail).toBeGreaterThan(0.6);
+		expect(wrappedLegacy / unknownEmail).toBeGreaterThan(0.6);
+	}, 30_000);
+});
+
 describe("rehash on sign-in", () => {
 	function makeAuth() {
 		const db: Record<string, Record<string, unknown>[]> = {
@@ -130,6 +180,16 @@ describe("rehash on sign-in", () => {
 		const stored = String(account.password);
 		expect(schemeOf(stored)).toBe("scrypt");
 		expect(needsRehash(stored)).toBe(false);
+		expect(await verifyPassword({ password, hash: stored })).toBe(true);
+	});
+
+	it("replaces a wrapped legacy hash with plain scrypt after a correct sign-in", async () => {
+		const { auth, account } = await seedLegacyUser();
+		account.password = await wrapLegacyHash(String(account.password));
+		const res = await post(auth, "/sign-in/email", { email, password });
+		expect(res.status).toBe(200);
+		const stored = String(account.password);
+		expect(schemeOf(stored)).toBe("scrypt");
 		expect(await verifyPassword({ password, hash: stored })).toBe(true);
 	});
 
