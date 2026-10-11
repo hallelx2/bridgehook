@@ -10,7 +10,11 @@ bridgehook whoami
 bridgehook logout             # revokes this machine's token on the relay
 ```
 
-Running `forward` again for the same target reuses its channel, so the URL you registered with Stripe or GitHub stays the same. If your account already has a channel on that port (made by the extension, say), the CLI adopts it and its key moves to this machine; `--new` makes a separate URL instead.
+Running `forward` again for the same target reuses its channel, so the URL you registered with Stripe or GitHub stays the same. `--path` (repeatable) limits which paths the URL accepts and is applied to a reused channel too; `--any-path` lifts the limit; with neither, the channel keeps what it had.
+
+If your account already has a channel on that port made by another client (the extension, another machine), taking it over keeps its URL but moves its key here, so that client stops forwarding it. On a terminal the CLI asks first; in a script it refuses unless you pass `--adopt`. `--new` makes a separate URL instead.
+
+Logging in again (or with `--force`) revokes the token it replaces, so re-pairing never leaves an orphan device using up a slot.
 
 | Flag / variable | |
 |---|---|

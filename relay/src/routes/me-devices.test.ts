@@ -12,6 +12,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { Auth } from "../auth.js";
 import type { DB } from "../db.js";
 import { buildMeDevicesRoutes } from "./me-devices.js";
+import { buildMeRoutes } from "./me.js";
 
 let mf: Miniflare;
 let d1: D1Database;
@@ -134,5 +135,69 @@ describe("DELETE /api/me/devices/:id", () => {
 
 	it("answers 401 with no credentials", async () => {
 		expect((await del(IDS.aliceCli, {})).status).toBe(401);
+	});
+});
+
+describe("PATCH /api/me/channels/:id with a device token", () => {
+	const meApp = () =>
+		buildMeRoutes(() => ({
+			auth: fakeAuth(),
+			db,
+			notifier: {
+				getChannelDO: () => ({ fetch: async () => new Response("") }),
+				notifyUser: () => {},
+			},
+			tunnelDomain: null,
+		}));
+	const patch = (id: string, body: unknown, headers: Record<string, string>) =>
+		meApp().request(`/channels/${id}`, {
+			method: "PATCH",
+			headers: { "content-type": "application/json", ...headers },
+			body: JSON.stringify(body),
+		});
+	const row = (id: string) =>
+		d1
+			.prepare("SELECT allowed_paths, label FROM channels WHERE id = ?")
+			.bind(id)
+			.first<{ allowed_paths: string; label: string | null }>();
+	const bearer = { authorization: `Bearer ${TOKENS.aliceCli}` };
+
+	beforeEach(async () => {
+		await d1.prepare("DELETE FROM channels").run();
+		for (const [id, user] of [
+			["chalice", "u_alice"],
+			["chbob", "u_bob"],
+		]) {
+			await d1
+				.prepare(
+					"INSERT INTO channels (id, public_key, port, user_id, created_at) VALUES (?, ?, 3000, ?, ?)",
+				)
+				.bind(id, "04".padEnd(130, "a"), user, Date.now())
+				.run();
+		}
+	});
+
+	it("sets allowedPaths on the token owner's channel", async () => {
+		const res = await patch("chalice", { allowedPaths: ["/stripe"] }, bearer);
+		expect(res.status).toBe(200);
+		expect((await row("chalice"))?.allowed_paths).toBe('["/stripe"]');
+	});
+
+	it("refuses any other field, and another user's channel", async () => {
+		expect((await patch("chalice", { label: "x" }, bearer)).status).toBe(403);
+		expect((await row("chalice"))?.label).toBeNull();
+		expect(
+			(await patch("chalice", { allowedPaths: ["/a"], responseMode: "sync" }, bearer)).status,
+		).toBe(403);
+		expect((await row("chalice"))?.allowed_paths).toBe("[]");
+		expect((await patch("chbob", { allowedPaths: ["/x"] }, bearer)).status).toBe(404);
+		expect((await row("chbob"))?.allowed_paths).toBe("[]");
+	});
+
+	it("still lets a session change the label", async () => {
+		expect((await patch("chalice", { label: "api" }, { "x-test-user": "u_alice" })).status).toBe(
+			200,
+		);
+		expect((await row("chalice"))?.label).toBe("api");
 	});
 });

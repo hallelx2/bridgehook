@@ -189,6 +189,20 @@ async fn login(session: &Session, out: Out, force: bool, no_browser: bool) -> Re
         relay: session.relay_url.clone(),
     };
     config::save_token(&session.paths, &token)?;
+    // The token this one replaces (re-pairing, or another relay) would
+    // otherwise live on as an orphan device holding a slot: revoke it, now
+    // that the new pairing is safely stored.
+    if let Some(previous) = session.stored.as_ref().filter(|p| p.token != token.token) {
+        let old = RelayClient::new(&previous.relay, Some(previous.token.clone()))?;
+        match old.revoke_device(&previous.device_id).await {
+            Ok(()) | Err(RelayError::Unauthorized) => {}
+            Err(e) => out.note(&format!(
+                "{} could not revoke the previous token on {} ({e}); revoke it from that dashboard's Devices page.",
+                out.yellow("warning:"),
+                previous.relay
+            )),
+        }
+    }
     let email = RelayClient::new(&session.relay_url, Some(token.token.clone()))?
         .me()
         .await

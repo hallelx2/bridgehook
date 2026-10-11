@@ -16,6 +16,9 @@ pub enum RelayError {
     Quota { message: String },
     #[error("not signed in to this relay (HTTP 401); run `bridgehook login`")]
     Unauthorized,
+    /// The channel was deleted or expired (404 "Channel not found", 410).
+    #[error("the channel was deleted or has expired")]
+    ChannelGone,
     #[error("relay answered {status}: {message}")]
     Status { status: u16, message: String },
     #[error("could not reach the relay: {0}")]
@@ -46,6 +49,18 @@ pub struct ChannelInfo {
     pub webhook_url: String,
     #[serde(default)]
     pub allowed_paths: Vec<String>,
+    /// The device that created the channel, if any.
+    #[serde(default)]
+    pub device: Option<ChannelDevice>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ChannelDevice {
+    pub id: String,
+    #[serde(default)]
+    pub label: Option<String>,
+    #[serde(default)]
+    pub kind: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -248,6 +263,22 @@ impl RelayClient {
         ok_or_error(res).await
     }
 
+    /// Restricts which paths the channel accepts (`[]` accepts any). A device
+    /// token may change this field only.
+    pub async fn set_allowed_paths(
+        &self,
+        channel_id: &str,
+        allowed_paths: &[String],
+    ) -> Result<(), RelayError> {
+        let body = serde_json::json!({ "allowedPaths": allowed_paths });
+        let res = self
+            .authed(Method::PATCH, &format!("/api/me/channels/{channel_id}"))
+            .json(&body)
+            .send()
+            .await?;
+        ok_or_error(res).await
+    }
+
     /// The public URL of a channel, from the channel's own endpoint (answers
     /// without sign-in, so it works on a self-hosted relay too). `None` when
     /// the channel is gone or expired.
@@ -372,7 +403,8 @@ impl RelayClient {
                 let v: serde_json::Value = res.json().await.unwrap_or_default();
                 Ok(v.get("claimerId").and_then(|c| c.as_str()) == Some(client_id))
             }
-            StatusCode::NOT_FOUND => Ok(false),
+            // 404 is the channel or the event gone: an error, so the pass
+            // stops and the next read of the queue no longer has it.
             _ => Err(status_error(res).await),
         }
     }
@@ -460,6 +492,9 @@ async fn status_error(res: Response) -> RelayError {
         .as_ref()
         .and_then(|v| v.get("error").and_then(|e| e.as_str()).map(str::to_string))
         .unwrap_or(text);
+    if status == 410 || (status == 404 && message == "Channel not found") {
+        return RelayError::ChannelGone;
+    }
     if status == 402
         && parsed
             .as_ref()

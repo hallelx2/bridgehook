@@ -11,6 +11,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+/// Longest gap between bytes before the stream counts as dead (the relay's
+/// heartbeat is every 20 s).
+pub const READ_TIMEOUT: Duration = Duration::from_secs(45);
+
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Frame {
@@ -65,7 +69,10 @@ pub async fn run(
                 backoff = Duration::from_secs(1);
                 let mut body = res.bytes_stream();
                 let mut buffer = String::new();
-                while let Some(chunk) = body.next().await {
+                // The relay sends a heartbeat every 20 s; silence past
+                // READ_TIMEOUT means a dead connection (sleep, NAT expiry),
+                // so reconnect rather than trust it.
+                while let Ok(Some(chunk)) = tokio::time::timeout(READ_TIMEOUT, body.next()).await {
                     if stop.load(Ordering::Relaxed) {
                         break;
                     }

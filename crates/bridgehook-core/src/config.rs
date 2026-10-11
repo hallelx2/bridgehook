@@ -78,13 +78,24 @@ pub fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
+/// Creates `dir` (and missing parents) as 0700. A directory that already
+/// exists keeps its mode: `--config-dir $HOME` must not lock down $HOME.
+/// The files inside are 0600 either way.
 fn create_private_dir(dir: &Path) -> Result<()> {
-    fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+    if dir.is_dir() {
+        return Ok(());
+    }
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(dir, fs::Permissions::from_mode(0o700))?;
+        use std::os::unix::fs::DirBuilderExt;
+        fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(dir)
+            .with_context(|| format!("creating {}", dir.display()))?;
     }
+    #[cfg(not(unix))]
+    fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
     Ok(())
 }
 
@@ -205,6 +216,28 @@ mod tests {
         }
         assert!(remove_token(&paths).unwrap());
         assert!(!remove_token(&paths).unwrap());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_existing_config_dir_keeps_its_mode() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = temp_dir();
+        fs::create_dir_all(&dir).unwrap();
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).unwrap();
+        let paths = Paths::at(&dir);
+        executor_id(&paths).unwrap();
+        let mode = fs::metadata(&dir).unwrap().permissions().mode();
+        assert_eq!(
+            mode & 0o777,
+            0o755,
+            "a directory the user gave must not be chmodded"
+        );
+        let file_mode = fs::metadata(paths.executor_file())
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(file_mode & 0o777, 0o600);
     }
 
     #[test]

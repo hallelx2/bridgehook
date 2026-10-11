@@ -11,10 +11,14 @@
  *   3. `forward` prints a webhook URL; with nothing forwarding, 20 webhooks
  *      sent to it wait on the relay and all arrive at localhost, in order,
  *      once `forward` runs again;
- *   4. a live webhook arrives within 2 s (the stream wakes the drain);
+ *   4. once the stream reports connected, live webhooks arrive within 2 s
+ *      (the stream wakes the drain);
  *   5. with the local server down, webhooks wait and then arrive in order
  *      when it is back;
- *   6. Ctrl-C stops cleanly; `logout` revokes the token on the relay.
+ *   6. a channel another client made on a port: refused to a script without
+ *      `--adopt`; `--adopt --path` keeps its URL and applies the paths;
+ *   7. Ctrl-C stops within 3 s; `login --force` revokes the token it
+ *      replaces; `logout` revokes the token on the relay.
  *
  * Production needs the QA account in the repo's gitignored .env
  * (BRIDGEHOOK_TEST_EMAIL, BRIDGEHOOK_TEST_PASSWORD) or the environment. Setup
@@ -23,6 +27,7 @@
  * or a password.
  */
 import { execFileSync, spawn } from "node:child_process";
+import { createECDH } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import http from "node:http";
 import { tmpdir } from "node:os";
@@ -401,8 +406,13 @@ try {
 	);
 	step(`all ${OFFLINE_COUNT} delivered in order`);
 
-	// 4. live delivery latency (the stream wakes the drain). Let the stream connect first.
-	await sleep(3000);
+	// 4. live delivery latency. Wait for the stream: polling alone (every 2 s)
+	// can land under 2 s by luck, so only a connected stream proves the wake-up.
+	await fwd.waitFor(
+		(e) => e.event === "stream" && e.connected === true,
+		30_000,
+		"stream connected",
+	);
 	const liveLatencies = [];
 	for (let i = 0; i < 3; i++) {
 		const before = received.length;
@@ -435,13 +445,90 @@ try {
 	);
 	step("server down: held, then delivered in order once back");
 
-	// 6. Ctrl-C, then logout revokes the token on the relay.
+	// 6. taking over a channel another client made on a port: a script is
+	// refused without --adopt; --adopt --path takes it (same URL) and applies
+	// the paths.
+	const takeoverPort = PORT + 1;
+	const ecdh = createECDH("prime256v1");
+	ecdh.generateKeys();
+	const made = await api("/api/channels", {
+		method: "POST",
+		body: JSON.stringify({
+			publicKey: ecdh.getPublicKey("hex"),
+			port: takeoverPort,
+			allowedPaths: [],
+		}),
+	});
+	check(made.ok, `dashboard-style channel answered ${made.status}`);
+	const other = await made.json();
+	const refused = await run(["forward", String(takeoverPort)]);
+	check(
+		refused.code === 1 &&
+			refused.events.some((e) => e.event === "error" && /--adopt/.test(e.message)),
+		"a script is refused a takeover without --adopt",
+	);
+	const hits = [];
+	const second = http.createServer((req, res) => {
+		hits.push(req.url);
+		res.writeHead(200).end("ok");
+	});
+	await new Promise((r) => second.listen(takeoverPort, "127.0.0.1", r));
+	cleanup.push(() => new Promise((r) => second.close(() => r())));
+	const adopt = cli(["forward", String(takeoverPort), "--adopt", "--path", "/only"]);
+	const adopted = await adopt.waitFor((e) => e.event === "ready", 30_000, "ready (adopt)");
+	check(
+		adopted.channel === "adopted" && adopted.channelId === other.channelId,
+		"--adopt keeps the same channel",
+	);
+	check(adopted.webhookUrl === other.webhookUrl, "--adopt keeps the same URL");
+	const { channels: listedAfter = [] } = await (await api("/api/me/channels")).json();
+	const paths = listedAfter.find((c) => c.id === other.channelId)?.allowedPaths;
+	check(
+		JSON.stringify(paths) === '["/only"]',
+		`--path is applied to an adopted channel (got ${JSON.stringify(paths)})`,
+	);
+	const blocked = await fetch(`${other.webhookUrl}/elsewhere`, { method: "POST", body: "{}" });
+	check(blocked.status === 403, `a path outside --path is refused (got ${blocked.status})`);
+	const allowed = await fetch(`${other.webhookUrl}/only/x`, { method: "POST", body: "{}" });
+	check(allowed.status < 300, `a path inside --path is accepted (got ${allowed.status})`);
+	await adopt.waitFor((e) => e.event === "delivered", 15_000, "delivery on the adopted channel");
+	check(hits.includes("/only/x"), "the adopted channel delivers to localhost");
+	adopt.child.kill("SIGINT");
+	check((await adopt.exited) === 0, "adopted forward stops cleanly");
+	step("takeover: refused without --adopt; --adopt keeps the URL and applies --path");
+
+	// 7. Ctrl-C stops promptly, then a second login revokes the token it
+	// replaces, and logout revokes the token on the relay.
+	const ctrlC = Date.now();
 	fwd.child.kill("SIGINT");
 	check((await fwd.exited) === 0, "forward stops cleanly");
+	check(Date.now() - ctrlC < 3000, `Ctrl-C stops within 3 s (took ${Date.now() - ctrlC} ms)`);
 	check(
 		fwd.events.some((e) => e.event === "stopped"),
 		"forward reports stopped",
 	);
+
+	const firstToken = JSON.parse(readFileSync(join(CONFIG, "token.json"), "utf8")).token;
+	const relogin = cli(["login", "--no-browser", "--force"]);
+	const code2 = (
+		await relogin.waitFor((e) => e.event === "pairing", 30_000, "a second pairing code")
+	).code;
+	const approve2 = await api("/auth/device/approve", {
+		method: "POST",
+		body: JSON.stringify({ code: code2 }),
+	});
+	check(approve2.ok, `second approve answered ${approve2.status}`);
+	check((await relogin.exited) === 0, "login --force exits 0");
+	const replaced = await fetch(`${RELAY}/api/me`, {
+		headers: { authorization: `Bearer ${firstToken}` },
+	});
+	check(
+		replaced.status === 401,
+		`login --force revokes the token it replaces (got ${replaced.status})`,
+	);
+	const { devices: devs = [] } = await (await api("/api/me/devices")).json();
+	check(devs.filter((d) => !d.revokedAt).length === 1, "one active device after re-pairing");
+	step("login --force: the replaced token is revoked, no orphan device");
 
 	const token = JSON.parse(readFileSync(join(CONFIG, "token.json"), "utf8")).token;
 	const out = await run(["logout"]);

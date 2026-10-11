@@ -59,8 +59,9 @@ export interface MeEnv {
  * session at all, and it reads identity, plan, usage and its channels here.
  * Key rotation also accepts device tokens, so an extension or CLI can adopt a
  * channel created elsewhere (dashboard, MCP agent); agent tokens are refused
- * by resolveCaller. Other mutations (channel edits, replays, deletes) stay
- * session-only.
+ * by resolveCaller. A device token may also set a channel's allowedPaths
+ * (`bridgehook forward --path`). Other mutations (labels, response mode,
+ * replays, deletes) stay session-only.
  */
 async function resolveReader(deps: MeEnv, request: Request): Promise<{ id: string } | null> {
 	const caller = await resolveCaller(deps.auth, deps.db, request);
@@ -206,8 +207,12 @@ export function buildMeRoutes(getDeps: (c: { env: unknown }) => MeEnv | null) {
 		const deps = getDeps(c);
 		if (!deps) return c.json({ error: "Auth not configured" }, 404);
 
-		const sessionUser = await getSessionUser(deps.auth, c.req.raw);
-		if (!sessionUser) return c.json({ error: "Not signed in" }, 401);
+		// A device token may set allowedPaths only (`bridgehook forward
+		// --path`): it can already rotate the channel's key, which is more.
+		// Label and response mode stay with the dashboard session.
+		const caller = await resolveCaller(deps.auth, deps.db, c.req.raw);
+		if (!caller) return c.json({ error: "Not signed in" }, 401);
+		const sessionUser = { id: caller.userId };
 
 		const channelId = c.req.param("channelId");
 		if (!/^[a-z0-9]{1,24}$/.test(channelId)) {
@@ -221,6 +226,14 @@ export function buildMeRoutes(getDeps: (c: { env: unknown }) => MeEnv | null) {
 			responseMode?: unknown;
 			syncTimeoutMs?: unknown;
 		};
+		if (
+			caller.via === "device-token" &&
+			(patch.label !== undefined ||
+				patch.responseMode !== undefined ||
+				patch.syncTimeoutMs !== undefined)
+		) {
+			return c.json({ error: "A device token can change allowedPaths only" }, 403);
+		}
 
 		const update: {
 			label?: string | null;
