@@ -95,8 +95,20 @@ const EMAIL_KEYED_PATHS = new Set([
 async function targetEmail(request: Request): Promise<string | null> {
 	try {
 		// A clone, so the body is still unread when Better-Auth handles it.
-		const body = (await request.clone().json()) as { email?: unknown } | null;
-		const email = body && typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
+		// Better-Auth accepts form posts as well as JSON on sign-in and
+		// sign-up, so read the email from either; otherwise a form-encoded
+		// guess would skip the per-email limits.
+		const type = request.headers.get("content-type")?.toLowerCase() ?? "";
+		let raw: unknown;
+		if (
+			type.includes("application/x-www-form-urlencoded") ||
+			type.includes("multipart/form-data")
+		) {
+			raw = (await request.clone().formData()).get("email");
+		} else {
+			raw = ((await request.clone().json()) as { email?: unknown } | null)?.email;
+		}
+		const email = typeof raw === "string" ? raw.trim().toLowerCase() : "";
 		return email.length > 0 ? email : null;
 	} catch {
 		return null;

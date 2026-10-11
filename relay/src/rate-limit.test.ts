@@ -122,6 +122,33 @@ describe("rateLimitAuth", () => {
 		expect([...signin.seen.keys()]).toEqual(["signin:victim@example.com"]);
 	});
 
+	it("counts form-encoded and multipart sign-ins against the same email", async () => {
+		const signin = fakeLimiter(100);
+		const emailIp = fakeLimiter(100);
+		const { hit } = makeApp({
+			...generous(),
+			RL_SIGNIN_EMAIL: signin.limiter,
+			RL_AUTH_EMAIL_IP: emailIp.limiter,
+		});
+		await hit("/auth/sign-in/email", {
+			headers: { "content-type": "application/x-www-form-urlencoded" },
+			body: "email=Victim%40Example.com&password=guess",
+		});
+		const multipart = new FormData();
+		multipart.set("email", "victim@example.com");
+		multipart.set("password", "guess");
+		const app = new Hono<{ Bindings: RateLimitEnv }>();
+		app.use("/auth/*", rateLimitAuth());
+		app.post("/auth/sign-in/email", (c) => c.json({ ok: true }));
+		await app.request(
+			"/auth/sign-in/email",
+			{ method: "POST", body: multipart, headers: { "cf-connecting-ip": "203.0.113.7" } },
+			{ ...generous(), RL_SIGNIN_EMAIL: signin.limiter, RL_AUTH_EMAIL_IP: emailIp.limiter },
+		);
+		expect(signin.seen.get("signin:victim@example.com")).toBe(2);
+		expect(emailIp.seen.get("email-ip:victim@example.com|203.0.113.7")).toBe(2);
+	});
+
 	it("keeps recovery open while password sign-in for that email is being flooded", async () => {
 		const { hit } = makeApp({ ...generous(), RL_SIGNIN_EMAIL: fakeLimiter(0).limiter });
 		expect((await hit("/auth/sign-in/email", signIn("victim@example.com"))).status).toBe(429);
