@@ -68,10 +68,22 @@ namespace_id = "2001"
 simple = { limit = 30, period = 60 }
 
 [[unsafe.bindings]]
-name = "RL_AUTH_EMAIL"
+name = "RL_AUTH_EMAIL_IP"
 type = "ratelimit"
-namespace_id = "2002"
+namespace_id = "2006"
 simple = { limit = 10, period = 60 }
+
+[[unsafe.bindings]]
+name = "RL_SIGNIN_EMAIL"
+type = "ratelimit"
+namespace_id = "2007"
+simple = { limit = 60, period = 60 }
+
+[[unsafe.bindings]]
+name = "RL_AUTH_MAIL"
+type = "ratelimit"
+namespace_id = "2008"
+simple = { limit = 5, period = 60 }
 
 [[unsafe.bindings]]
 name = "RL_DEVICE"

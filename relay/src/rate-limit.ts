@@ -21,9 +21,17 @@ export interface RateLimiter {
 
 /**
  * Bindings, each with its own limit in wrangler.toml (period 60 s):
- *   RL_AUTH_IP          30  sign-in, sign-up, resets, magic links, per IP
- *   RL_AUTH_EMAIL       10  the same, per target email (password guessing
- *                           spread across many IPs)
+ *   RL_AUTH_IP          30  every POST under /auth/ (sign-in, sign-up, resets,
+ *                           magic links), per IP
+ *   RL_AUTH_EMAIL_IP    10  email-keyed auth routes, per (target email, IP):
+ *                           one attacker guessing one account
+ *   RL_SIGNIN_EMAIL     60  password sign-in only, per target email: guessing
+ *                           spread across many IPs. Generous on purpose, so
+ *                           locking someone out takes a sustained 60/min from
+ *                           the victim's Cloudflare location
+ *   RL_AUTH_MAIL         5  mail-sending routes only (magic link, reset,
+ *                           verification), per target email: stops inbox
+ *                           bombing, and cannot block password sign-in
  *   RL_DEVICE           10  device pairing start and approve, per IP and route
  *   RL_DEVICE_EXCHANGE  30  device token exchange, per IP (an extension polls
  *                           every 5 s, 12 a minute)
@@ -31,7 +39,9 @@ export interface RateLimiter {
  */
 export interface RateLimitEnv {
 	RL_AUTH_IP?: RateLimiter;
-	RL_AUTH_EMAIL?: RateLimiter;
+	RL_AUTH_EMAIL_IP?: RateLimiter;
+	RL_SIGNIN_EMAIL?: RateLimiter;
+	RL_AUTH_MAIL?: RateLimiter;
 	RL_DEVICE?: RateLimiter;
 	RL_DEVICE_EXCHANGE?: RateLimiter;
 	RL_CHANNEL_CREATE?: RateLimiter;
@@ -67,14 +77,19 @@ export function tooManyRequests(c: Context) {
 	});
 }
 
-/** Better-Auth routes whose JSON body names a target account by email. */
-const EMAIL_KEYED_PATHS = new Set([
-	"/auth/sign-in/email",
-	"/auth/sign-up/email",
+const PASSWORD_SIGN_IN_PATH = "/auth/sign-in/email";
+/** Better-Auth routes that send mail to the email in their body. */
+const MAIL_SENDING_PATHS = new Set([
 	"/auth/sign-in/magic-link",
 	"/auth/request-password-reset",
 	"/auth/forget-password",
 	"/auth/send-verification-email",
+]);
+/** Better-Auth routes whose JSON body names a target account by email. */
+const EMAIL_KEYED_PATHS = new Set([
+	PASSWORD_SIGN_IN_PATH,
+	"/auth/sign-up/email",
+	...MAIL_SENDING_PATHS,
 ]);
 
 async function targetEmail(request: Request): Promise<string | null> {
@@ -90,8 +105,11 @@ async function targetEmail(request: Request): Promise<string | null> {
 
 /**
  * Limits every POST under /auth/ (Better-Auth: sign-in, sign-up, resets,
- * magic links, verification mail) per IP, and per target email where the body
- * names one. Device pairing under /auth/device/ has its own limits
+ * magic links, verification mail) per IP; where the body names a target
+ * email, also per (email, IP), and per email on separate counters for
+ * password sign-in and for mail sends (see {@link RateLimitEnv}). Keeping
+ * those apart means flooding one cannot lock a user out of the other.
+ * Device pairing under /auth/device/ has its own limits
  * ({@link rateLimitRoute}); reads such as get-session are not limited.
  */
 export function rateLimitAuth(): MiddlewareHandler<{ Bindings: RateLimitEnv }> {
@@ -102,8 +120,23 @@ export function rateLimitAuth(): MiddlewareHandler<{ Bindings: RateLimitEnv }> {
 		}
 		if (EMAIL_KEYED_PATHS.has(c.req.path)) {
 			const email = await targetEmail(c.req.raw);
-			if (email && !(await allowRequest(c.env?.RL_AUTH_EMAIL, `email:${email}`))) {
-				return tooManyRequests(c);
+			if (email) {
+				const ip = clientIp(c.req.raw);
+				if (!(await allowRequest(c.env?.RL_AUTH_EMAIL_IP, `email-ip:${email}|${ip}`))) {
+					return tooManyRequests(c);
+				}
+				if (
+					c.req.path === PASSWORD_SIGN_IN_PATH &&
+					!(await allowRequest(c.env?.RL_SIGNIN_EMAIL, `signin:${email}`))
+				) {
+					return tooManyRequests(c);
+				}
+				if (
+					MAIL_SENDING_PATHS.has(c.req.path) &&
+					!(await allowRequest(c.env?.RL_AUTH_MAIL, `mail:${email}`))
+				) {
+					return tooManyRequests(c);
+				}
 			}
 		}
 		return next();

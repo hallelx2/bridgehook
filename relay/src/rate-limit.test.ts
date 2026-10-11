@@ -70,15 +70,22 @@ describe("allowRequest", () => {
 });
 
 describe("rateLimitAuth", () => {
-	it("returns 429 with Retry-After once an IP passes the sign-in limit", async () => {
-		const ip = fakeLimiter(3);
-		const { hit } = makeApp({ RL_AUTH_IP: ip.limiter, RL_AUTH_EMAIL: fakeLimiter(100).limiter });
+	const generous = () => ({
+		RL_AUTH_IP: fakeLimiter(1000).limiter,
+		RL_AUTH_EMAIL_IP: fakeLimiter(1000).limiter,
+		RL_SIGNIN_EMAIL: fakeLimiter(1000).limiter,
+		RL_AUTH_MAIL: fakeLimiter(1000).limiter,
+	});
+	const signIn = (email: string, ip?: string) => ({
+		ip,
+		body: JSON.stringify({ email, password: "guess" }),
+	});
+
+	it("returns 429 with Retry-After once an IP passes the auth limit", async () => {
+		const { hit } = makeApp({ ...generous(), RL_AUTH_IP: fakeLimiter(3).limiter });
 		const statuses = [];
 		for (let i = 0; i < 5; i++) {
-			statuses.push(
-				(await hit("/auth/sign-in/email", { body: JSON.stringify({ email: `a${i}@x.com` }) }))
-					.status,
-			);
+			statuses.push((await hit("/auth/sign-in/email", signIn(`a${i}@x.com`))).status);
 		}
 		expect(statuses).toEqual([200, 200, 200, 429, 429]);
 		const res = await hit("/auth/sign-up/email", { body: "{}" });
@@ -87,30 +94,61 @@ describe("rateLimitAuth", () => {
 		expect(await res.json()).toEqual({ error: "Too many requests. Try again in a minute." });
 	});
 
-	it("limits guesses at one email across many IPs", async () => {
-		const email = fakeLimiter(2);
-		const { hit } = makeApp({ RL_AUTH_IP: fakeLimiter(100).limiter, RL_AUTH_EMAIL: email.limiter });
+	it("stops one IP guessing one account, keyed on the normalised email", async () => {
+		const emailIp = fakeLimiter(2);
+		const { hit } = makeApp({ ...generous(), RL_AUTH_EMAIL_IP: emailIp.limiter });
 		const statuses = [];
 		for (let i = 0; i < 4; i++) {
-			statuses.push(
-				(
-					await hit("/auth/sign-in/email", {
-						ip: `192.0.2.${i}`,
-						body: JSON.stringify({ email: " Victim@Example.com ", password: "guess" }),
-					})
-				).status,
-			);
+			statuses.push((await hit("/auth/sign-in/email", signIn(" Victim@Example.com "))).status);
 		}
 		expect(statuses).toEqual([200, 200, 429, 429]);
-		expect([...email.seen.keys()]).toEqual(["email:victim@example.com"]);
+		expect([...emailIp.seen.keys()]).toEqual(["email-ip:victim@example.com|203.0.113.7"]);
+		// Someone else, on another IP, signing in to the same account is unaffected.
+		expect(
+			(await hit("/auth/sign-in/email", signIn("victim@example.com", "198.51.100.9"))).status,
+		).toBe(200);
 	});
 
-	it("counts password-reset and magic-link sends per email too", async () => {
-		const email = fakeLimiter(100);
-		const { hit } = makeApp({ RL_AUTH_IP: fakeLimiter(100).limiter, RL_AUTH_EMAIL: email.limiter });
-		await hit("/auth/request-password-reset", { body: JSON.stringify({ email: "r@x.com" }) });
-		await hit("/auth/sign-in/magic-link", { body: JSON.stringify({ email: "m@x.com" }) });
-		expect([...email.seen.keys()].sort()).toEqual(["email:m@x.com", "email:r@x.com"]);
+	it("caps password guessing spread across many IPs on a per-email counter", async () => {
+		const signin = fakeLimiter(3);
+		const { hit } = makeApp({ ...generous(), RL_SIGNIN_EMAIL: signin.limiter });
+		const statuses = [];
+		for (let i = 0; i < 5; i++) {
+			statuses.push(
+				(await hit("/auth/sign-in/email", signIn("victim@example.com", `192.0.2.${i}`))).status,
+			);
+		}
+		expect(statuses).toEqual([200, 200, 200, 429, 429]);
+		expect([...signin.seen.keys()]).toEqual(["signin:victim@example.com"]);
+	});
+
+	it("keeps recovery open while password sign-in for that email is being flooded", async () => {
+		const { hit } = makeApp({ ...generous(), RL_SIGNIN_EMAIL: fakeLimiter(0).limiter });
+		expect((await hit("/auth/sign-in/email", signIn("victim@example.com"))).status).toBe(429);
+		const reset = await hit("/auth/request-password-reset", {
+			body: JSON.stringify({ email: "victim@example.com" }),
+		});
+		expect(reset.status).toBe(200);
+		const magic = await hit("/auth/sign-in/magic-link", {
+			body: JSON.stringify({ email: "victim@example.com" }),
+		});
+		expect(magic.status).toBe(200);
+	});
+
+	it("limits mail sends per email without touching password sign-in", async () => {
+		const mail = fakeLimiter(2);
+		const { hit } = makeApp({ ...generous(), RL_AUTH_MAIL: mail.limiter });
+		const sends = [];
+		for (const path of [
+			"/auth/request-password-reset",
+			"/auth/sign-in/magic-link",
+			"/auth/forget-password",
+		]) {
+			sends.push((await hit(path, { body: JSON.stringify({ email: "Inbox@X.com" }) })).status);
+		}
+		expect(sends).toEqual([200, 200, 429]);
+		expect([...mail.seen.keys()]).toEqual(["mail:inbox@x.com"]);
+		expect((await hit("/auth/sign-in/email", signIn("inbox@x.com"))).status).toBe(200);
 	});
 
 	it("leaves session reads and device routes to their own limits", async () => {
@@ -133,7 +171,7 @@ describe("rateLimitAuth", () => {
 				headers: { "content-type": "application/json" },
 				body: JSON.stringify(body),
 			},
-			{ RL_AUTH_IP: fakeLimiter(10).limiter, RL_AUTH_EMAIL: fakeLimiter(10).limiter },
+			generous(),
 		);
 		expect(await res.json()).toEqual(body);
 	});

@@ -116,6 +116,27 @@ describe("device code exchange", () => {
 		expect((await post(a, "/exchange", { code })).status).toBe(410);
 	});
 
+	it("keeps the approval when minting the device fails, so the next poll succeeds", async () => {
+		const code = await seedCode("approved", "u_alice");
+		await d1
+			.prepare(
+				"CREATE TRIGGER fail_device_insert BEFORE INSERT ON devices BEGIN SELECT RAISE(ABORT, 'simulated D1 failure'); END",
+			)
+			.run();
+		try {
+			const failed = await post(app(), "/exchange", { code });
+			expect(failed.status).toBe(500);
+			expect(await count("device_codes")).toBe(1);
+			expect(await count("devices")).toBe(0);
+		} finally {
+			await d1.prepare("DROP TRIGGER fail_device_insert").run();
+		}
+		const retried = await post(app(), "/exchange", { code });
+		expect(retried.status).toBe(200);
+		expect(await count("devices")).toBe(1);
+		expect(await count("device_codes")).toBe(0);
+	});
+
 	it("refuses an expired code without minting", async () => {
 		const code = "DV-EXPI-REDD";
 		await d1

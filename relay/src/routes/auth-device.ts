@@ -16,7 +16,7 @@
  * All three endpoints 404 in self-host mode (no auth = nothing to pair to).
  */
 import { deviceCodes, devices } from "@bridgehook/shared/db/schema";
-import { and, eq, gt, isNotNull, lt } from "drizzle-orm";
+import { and, eq, gt, lt, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { customAlphabet } from "nanoid";
 import { checkDevicePair, loadUserAccess } from "../access.js";
@@ -184,52 +184,50 @@ export function buildAuthDeviceRoutes(getDeps: (c: { env: unknown }) => AuthDevi
 			return c.json({ error: "Invalid code format" }, 400);
 		}
 
-		// Claim the code and consume it in one statement. Only an approved,
-		// unexpired code is deleted, and DELETE … RETURNING hands the row to
-		// exactly one caller: concurrent exchanges cannot mint two devices.
 		const [row] = await deps.db
-			.delete(deviceCodes)
-			.where(
-				and(
-					eq(deviceCodes.code, code),
-					eq(deviceCodes.status, "approved"),
-					isNotNull(deviceCodes.approvedUserId),
-					gt(deviceCodes.expiresAt, new Date()),
-				),
-			)
-			.returning();
-		if (!row?.approvedUserId) {
-			// Not claimable: tell a pending code from a gone or expired one.
-			const [current] = await deps.db
-				.select({ status: deviceCodes.status, expiresAt: deviceCodes.expiresAt })
-				.from(deviceCodes)
+			.select()
+			.from(deviceCodes)
+			.where(eq(deviceCodes.code, code))
+			.limit(1);
+		if (!row) return c.json({ error: "Code expired or already claimed" }, 410);
+		if (row.expiresAt.getTime() <= Date.now()) {
+			// Best-effort cleanup; the cron also handles this.
+			await deps.db
+				.delete(deviceCodes)
 				.where(eq(deviceCodes.code, code))
-				.limit(1);
-			if (!current) return c.json({ error: "Code expired or already claimed" }, 410);
-			if (current.expiresAt.getTime() <= Date.now()) {
-				// Best-effort cleanup; the cron also handles this.
-				await deps.db
-					.delete(deviceCodes)
-					.where(eq(deviceCodes.code, code))
-					.catch(() => {});
-				return c.json({ error: "Code expired" }, 410);
-			}
+				.catch(() => {});
+			return c.json({ error: "Code expired" }, 410);
+		}
+		if (row.status !== "approved" || !row.approvedUserId) {
 			return c.json({ status: "pending" }, 202);
 		}
 		const approvedUserId = row.approvedUserId;
 
-		// Defensive re-check at exchange time — the user could have hit
-		// their device cap between approve and exchange (e.g. paired another
-		// device in a parallel tab), or had their plan downgraded.
-		// The code is already consumed, so a failure here also stops the
-		// extension polling on a doomed flow.
+		// Defensive re-check at exchange time: the user could have hit their
+		// device cap between approve and exchange (e.g. paired another device
+		// in a parallel tab), or had their plan downgraded. Consume the code so
+		// the extension stops polling on a doomed flow. If another exchange of
+		// this same code already minted a device (which is what pushed the
+		// count to the cap), the code is gone: say so with 410, not a quota error.
+		const consumeOr = async (status: 402 | 404, payload: Record<string, unknown>) => {
+			const gone = await deps.db
+				.delete(deviceCodes)
+				.where(eq(deviceCodes.code, code))
+				.returning({ code: deviceCodes.code });
+			if (gone.length === 0) return c.json({ error: "Code expired or already claimed" }, 410);
+			return c.json(payload, status);
+		};
 		const access = await loadUserAccess(deps.db, approvedUserId);
-		if (!access) return c.json({ error: "User not found" }, 404);
+		if (!access) return consumeOr(404, { error: "User not found" });
 		const gate = await checkDevicePair(deps.db, access);
-		if (!gate.ok) return c.json({ error: gate.error, code: "quota" }, gate.status);
+		if (!gate.ok) return consumeOr(gate.status, { error: gate.error, code: "quota" });
 
-		// Mint the device + token. The device row is the persistent record;
-		// the device_codes row is consumed.
+		// Mint the device and consume the code in one D1 batch, which is a
+		// transaction: either both happen or neither does, so a failed insert
+		// never loses the user's approval. The insert copies from the code row
+		// only while it is still claimable and the delete removes that same
+		// row; D1 runs batches one at a time, so of several concurrent
+		// exchanges exactly one finds the row and mints a device.
 		const token = newDeviceToken();
 		const tokenHash = await sha256Hex(token);
 		const deviceId = newDeviceId();
@@ -237,15 +235,38 @@ export function buildAuthDeviceRoutes(getDeps: (c: { env: unknown }) => AuthDevi
 			row.labelHint && row.labelHint.trim().length > 0
 				? row.labelHint.trim().slice(0, 96)
 				: `${row.kind} device`;
-
-		await deps.db.insert(devices).values({
-			id: deviceId,
-			userId: approvedUserId,
-			kind: row.kind,
-			label,
-			tokenHash,
-			lastSeenAt: new Date(),
-		});
+		const now = Date.now();
+		const claimable = and(
+			eq(deviceCodes.code, code),
+			eq(deviceCodes.status, "approved"),
+			eq(deviceCodes.approvedUserId, approvedUserId),
+			gt(deviceCodes.expiresAt, new Date(now)),
+		);
+		// INSERT … SELECT through the query builder: Drizzle's D1 batch cannot
+		// bind parameters on raw `sql` statements.
+		const [, consumed] = await deps.db.batch([
+			deps.db.insert(devices).select(
+				deps.db
+					.select({
+						id: sql<string>`${deviceId}`.as("id"),
+						userId: sql<string>`${deviceCodes.approvedUserId}`.as("user_id"),
+						kind: deviceCodes.kind,
+						label: sql<string>`${label}`.as("label"),
+						tokenHash: sql<string>`${tokenHash}`.as("token_hash"),
+						os: sql<null>`null`.as("os"),
+						userAgent: sql<null>`null`.as("user_agent"),
+						lastSeenAt: sql<number>`${now}`.as("last_seen_at"),
+						revokedAt: sql<null>`null`.as("revoked_at"),
+						createdAt: sql<number>`${now}`.as("created_at"),
+					})
+					.from(deviceCodes)
+					.where(claimable),
+			),
+			deps.db.delete(deviceCodes).where(claimable).returning({ code: deviceCodes.code }),
+		]);
+		if (consumed.length === 0) {
+			return c.json({ error: "Code expired or already claimed" }, 410);
+		}
 
 		return c.json({
 			token,
