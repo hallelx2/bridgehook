@@ -27,6 +27,10 @@ struct Cli {
     #[arg(long, global = true)]
     json: bool,
 
+    /// Log stream frames, drain passes and waits to stderr (for debugging).
+    #[arg(long, short = 'v', env = "BRIDGEHOOK_VERBOSE", global = true)]
+    verbose: bool,
+
     /// Where the token, keys and channel list are kept.
     #[arg(
         long,
@@ -62,7 +66,7 @@ enum Command {
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
-    let out = Out::new(cli.json);
+    let out = Out::new(cli.json, cli.verbose);
     let code = match run(cli, out).await {
         Ok(code) => code,
         Err(e) => {

@@ -134,7 +134,21 @@ pub async fn run(session: &Session, out: Out, args: ForwardArgs) -> Result<i32> 
         let ours = channel.id.clone();
         tokio::spawn(async move {
             stream::run(relay, connected, stop, move |frame| {
-                if frame.kind == "webhook" && frame.channel_id.as_deref() == Some(ours.as_str()) {
+                let mine = frame.channel_id.as_deref() == Some(ours.as_str());
+                out.debug(|| {
+                    format!(
+                        "stream frame {} channel={} id={}{}",
+                        frame.kind,
+                        frame.channel_id.as_deref().unwrap_or("-"),
+                        frame.id.as_deref().unwrap_or("-"),
+                        if frame.kind == "webhook" && mine {
+                            " (wake)"
+                        } else {
+                            ""
+                        }
+                    )
+                });
+                if frame.kind == "webhook" && mine {
                     wake.notify_one();
                 }
             })
@@ -149,7 +163,13 @@ pub async fn run(session: &Session, out: Out, args: ForwardArgs) -> Result<i32> 
         if stop.load(Ordering::SeqCst) {
             break;
         }
-        let wait = match drainer.pass(&deps, &mut notify).await {
+        let started = std::time::Instant::now();
+        let result = drainer.pass(&deps, &mut notify).await;
+        out.debug(|| match &result {
+            Ok(r) => format!("pass {r:?} in {} ms", started.elapsed().as_millis()),
+            Err(e) => format!("pass failed in {} ms: {e:#}", started.elapsed().as_millis()),
+        });
+        let wait = match result {
             Ok(PassResult::Idle) => {
                 retry = RETRY_MIN;
                 if connected.load(Ordering::Relaxed) {
@@ -198,18 +218,20 @@ pub async fn run(session: &Session, out: Out, args: ForwardArgs) -> Result<i32> 
         }
         // Wait for the timer or Ctrl-C, or for the stream to report a
         // webhook (useless while the local server is down).
-        if drainer.target_down() {
+        out.debug(|| format!("waiting up to {} ms", wait.as_millis()));
+        let woke = if drainer.target_down() {
             tokio::select! {
-                _ = stopped.notified() => {}
-                _ = tokio::time::sleep(wait) => {}
+                _ = stopped.notified() => "stop",
+                _ = tokio::time::sleep(wait) => "timer",
             }
         } else {
             tokio::select! {
-                _ = stopped.notified() => {}
-                _ = wake.notified() => {}
-                _ = tokio::time::sleep(wait) => {}
+                _ = stopped.notified() => "stop",
+                _ = wake.notified() => "stream",
+                _ = tokio::time::sleep(wait) => "timer",
             }
-        }
+        };
+        out.debug(|| format!("woken by {woke}"));
     }
     out.emit(json!({ "event": "stopped" }), || "Stopped.".into());
     Ok(0)

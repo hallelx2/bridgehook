@@ -140,9 +140,9 @@ async function api(path, init = {}) {
 		...init,
 		headers: {
 			"content-type": "application/json",
-			// A browser on the dashboard sends its origin; locally the
-			// dashboard origin (WEB_URL) is the relay itself.
-			...(LOCAL ? { origin: RELAY } : {}),
+			// The dashboard's origin, as a browser on it sends (Better-Auth
+			// refuses Node's fetch without one). Locally WEB_URL is the relay.
+			origin: LOCAL ? RELAY : (process.env.BRIDGEHOOK_WEB_URL ?? "https://app.bridgehook.dev"),
 			...(cookie ? { cookie } : {}),
 			...(init.headers ?? {}),
 		},
@@ -214,20 +214,27 @@ async function resetAccount(label) {
 const CONFIG = mkdtempSync(join(tmpdir(), "bh-cli-e2e-config-"));
 cleanup.push(() => rmSync(CONFIG, { recursive: true, force: true }));
 
+/** Every CLI run, so a failure can show what each one last reported. */
+const runs = [];
+
 function cli(args) {
 	const env = {
 		...process.env,
 		BRIDGEHOOK_CONFIG_DIR: CONFIG,
+		BRIDGEHOOK_VERBOSE: "true",
 		BRIDGEHOOK_RELAY: RELAY,
 		NO_COLOR: "1",
 	};
 	env.BRIDGEHOOK_TOKEN = "";
 	const child = spawn(BIN, ["--json", ...args], { env, stdio: ["ignore", "pipe", "pipe"] });
-	const events = [];
+	const record = { args, events: [], stderr: "" };
+	runs.push(record);
+	const events = record.events;
 	const waiters = [];
 	let stderr = "";
 	child.stderr.on("data", (d) => {
 		stderr += d;
+		record.stderr += d;
 	});
 	createInterface({ input: child.stdout }).on("line", (line) => {
 		let e;
@@ -413,20 +420,35 @@ try {
 		30_000,
 		"stream connected",
 	);
-	const liveLatencies = [];
+	// The criterion is the relay-to-localhost leg: from the relay storing the
+	// webhook (its own receivedAt) to localhost getting it. A real sender
+	// (Stripe, GitHub) posts from a data centre near Cloudflare; this
+	// machine's own upload is reported beside it, not counted. Clocks are
+	// NTP-synced; skew is a few ms.
+	const live = [];
 	for (let i = 0; i < 3; i++) {
 		const before = received.length;
 		const sent = Date.now();
 		await sendWebhook(`live-${i}`);
 		await waitReceived(before + 1, 15_000);
-		liveLatencies.push(received[before].at - sent);
+		live.push({ tag: `live-${i}`, sent, at: received[before].at });
 	}
-	const best = Math.min(...liveLatencies);
+	const { events: history = [] } = await (
+		await api(`/api/me/events?channel=${ready.channelId}&limit=50`)
+	).json();
+	const relayLeg = live.map((l) => {
+		const evt = history.find((e) => e.path.includes(`tag=${l.tag}`));
+		check(evt, `the relay's record of ${l.tag}`);
+		return l.at - new Date(evt.receivedAt).getTime();
+	});
+	const endToEnd = live.map((l) => l.at - l.sent);
 	check(
-		Math.max(...liveLatencies) < LIVE_LIMIT_MS,
-		`live delivery under ${LIVE_LIMIT_MS} ms: ${liveLatencies.join(", ")} ms`,
+		Math.max(...relayLeg) < LIVE_LIMIT_MS,
+		`live delivery under ${LIVE_LIMIT_MS} ms from the relay: ${relayLeg.join(", ")} ms`,
 	);
-	step(`live delivery: ${liveLatencies.join(", ")} ms (best ${best})`);
+	step(
+		`live delivery: ${relayLeg.join(", ")} ms from the relay accepting it (${endToEnd.join(", ")} ms from this machine's send)`,
+	);
 
 	// 5. target down: webhooks wait, then arrive in order.
 	await stopServer();
@@ -543,6 +565,13 @@ try {
 } catch (err) {
 	failed = true;
 	console.error(`\nFAIL: ${err.message}`);
+	for (const r of runs.filter((r) => r.args[0] === "forward")) {
+		const tail = r.events.slice(-12).map(({ at, ...e }) => JSON.stringify(e));
+		const log = r.stderr.trim().split("\n").slice(-30);
+		console.error(
+			`  forward ${r.args.slice(1).join(" ")}: last events\n    ${tail.join("\n    ")}\n  verbose log\n    ${log.join("\n    ")}`,
+		);
+	}
 	try {
 		await resetAccount("teardown");
 	} catch {}

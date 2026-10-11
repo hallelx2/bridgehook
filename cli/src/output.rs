@@ -8,14 +8,27 @@ use std::io::{IsTerminal, Write};
 #[derive(Clone, Copy)]
 pub struct Out {
     pub json: bool,
+    verbose: bool,
     color: bool,
 }
 
 impl Out {
-    pub fn new(json: bool) -> Self {
+    pub fn new(json: bool, verbose: bool) -> Self {
         let color =
             !json && std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none();
-        Self { json, color }
+        Self {
+            json,
+            verbose,
+            color,
+        }
+    }
+
+    /// With `--verbose`: a timestamped line on stderr (in either mode, so
+    /// `--json` stdout stays machine-readable).
+    pub fn debug(&self, s: impl FnOnce() -> String) {
+        if self.verbose {
+            eprintln!("{} {}", chrono::Local::now().format("%H:%M:%S%.3f"), s());
+        }
     }
 
     fn paint(&self, code: &str, s: &str) -> String {
