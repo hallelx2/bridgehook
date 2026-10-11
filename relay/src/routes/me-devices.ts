@@ -10,7 +10,7 @@ import { Hono } from "hono";
 import { checkDevicePair, loadUserAccess } from "../access.js";
 import { type Auth, getSessionUser } from "../auth.js";
 import type { DB } from "../db.js";
-import { newDeviceId, newDeviceToken } from "../identity.js";
+import { newDeviceId, newDeviceToken, resolveCaller } from "../identity.js";
 
 export interface MeDevicesEnv {
 	auth: Auth;
@@ -125,13 +125,20 @@ export function buildMeDevicesRoutes(getDeps: (c: { env: unknown }) => MeDevices
 		const deps = getDeps(c);
 		if (!deps) return c.json({ error: "Auth not configured" }, 404);
 
-		const sessionUser = await getSessionUser(deps.auth, c.req.raw);
-		if (!sessionUser) return c.json({ error: "Not signed in" }, 401);
+		// A browser session may revoke any device on the account. A device
+		// token (CLI, extension, agent) may revoke only itself, so
+		// `bridgehook logout` ends the token on the relay, not just locally.
+		const caller = await resolveCaller(deps.auth, deps.db, c.req.raw, { allowAgentTokens: true });
+		if (!caller) return c.json({ error: "Not signed in" }, 401);
 
 		const deviceId = c.req.param("deviceId");
+		if (caller.via === "device-token" && caller.deviceId !== deviceId) {
+			return c.json({ error: "A device token can revoke only its own device" }, 403);
+		}
 		if (!/^dev_[a-z0-9]{20}$/.test(deviceId)) {
 			return c.json({ error: "Device not found" }, 404);
 		}
+		const sessionUser = { id: caller.userId };
 
 		const body = await c.req.json().catch(() => null);
 		const label = (body as { label?: unknown } | null)?.label;
@@ -161,13 +168,20 @@ export function buildMeDevicesRoutes(getDeps: (c: { env: unknown }) => MeDevices
 		const deps = getDeps(c);
 		if (!deps) return c.json({ error: "Auth not configured" }, 404);
 
-		const sessionUser = await getSessionUser(deps.auth, c.req.raw);
-		if (!sessionUser) return c.json({ error: "Not signed in" }, 401);
+		// A browser session may revoke any device on the account. A device
+		// token (CLI, extension, agent) may revoke only itself, so
+		// `bridgehook logout` ends the token on the relay, not just locally.
+		const caller = await resolveCaller(deps.auth, deps.db, c.req.raw, { allowAgentTokens: true });
+		if (!caller) return c.json({ error: "Not signed in" }, 401);
 
 		const deviceId = c.req.param("deviceId");
+		if (caller.via === "device-token" && caller.deviceId !== deviceId) {
+			return c.json({ error: "A device token can revoke only its own device" }, 403);
+		}
 		if (!/^dev_[a-z0-9]{20}$/.test(deviceId)) {
 			return c.json({ error: "Device not found" }, 404);
 		}
+		const sessionUser = { id: caller.userId };
 
 		const [updated] = await deps.db
 			.update(devices)
