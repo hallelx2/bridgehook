@@ -26,6 +26,7 @@
  */
 
 import { QueueDrainer } from "./drain.js";
+import { pollDeviceExchange } from "./pairing.js";
 
 const RELAY_URL = "https://relay.bridgehook.dev";
 /**
@@ -651,34 +652,26 @@ async function connectDevice() {
 	const intervalMs = Math.max(2000, Number(pollInterval) * 1000 || 5000);
 	const deadline = Date.now() + Math.max(60_000, Number(expiresIn) * 1000 || 900_000);
 
-	while (Date.now() < deadline) {
-		await new Promise((r) => setTimeout(r, intervalMs));
-		const exRes = await fetch(`${RELAY_URL}/auth/device/exchange`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ code: deviceCode }),
-		});
-		if (exRes.status === 410) throw new Error("Pairing code expired or already used");
-		if (exRes.status === 202) continue;
-		if (!exRes.ok) {
-			const text = await exRes.text().catch(() => "");
-			throw new Error(`Device exchange failed (${exRes.status})${text ? `: ${text}` : ""}`);
-		}
-		const minted = await exRes.json();
-		if (minted.token && minted.deviceId && minted.userId) {
-			await storeDeviceToken({
-				token: minted.token,
-				deviceId: minted.deviceId,
-				userId: minted.userId,
-				label: minted.label || labelHint,
-				kind: minted.kind || "extension",
-				connectedAt: new Date().toISOString(),
-			});
-			await refreshAccount();
-			return minted;
-		}
+	// Polls until approved; backs off on 429 and server errors (see pairing.js).
+	const minted = await pollDeviceExchange({
+		relayUrl: RELAY_URL,
+		deviceCode,
+		intervalMs,
+		deadline,
+	});
+	if (!minted?.token || !minted.deviceId || !minted.userId) {
+		throw new Error("Pairing failed: the relay returned an incomplete device");
 	}
-	throw new Error("Pairing timed out — try again");
+	await storeDeviceToken({
+		token: minted.token,
+		deviceId: minted.deviceId,
+		userId: minted.userId,
+		label: minted.label || labelHint,
+		kind: minted.kind || "extension",
+		connectedAt: new Date().toISOString(),
+	});
+	await refreshAccount();
+	return minted;
 }
 
 async function disconnectDevice() {

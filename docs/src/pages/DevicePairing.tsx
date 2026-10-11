@@ -71,6 +71,13 @@ export function DevicePairing() {
 				<li>
 					The relay re-checks quotas at exchange time (the user might have hit their cap between
 					approve and exchange in a parallel tab) and consumes the code so it can't be used again.
+					Minting the device and consuming the code happen in one transaction, so a failed exchange
+					leaves the approval in place for the next poll.
+				</li>
+				<li>
+					Pairing endpoints are rate limited per IP. A <code>429</code> carries{" "}
+					<code>Retry-After</code>; the extension waits that long and keeps polling, and backs off
+					on server errors, until the code is approved or expires.
 				</li>
 			</ol>
 

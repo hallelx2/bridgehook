@@ -95,7 +95,7 @@ simple = { limit = 10, period = 60 }
 name = "RL_DEVICE_EXCHANGE"
 type = "ratelimit"
 namespace_id = "2004"
-simple = { limit = 30, period = 60 }
+simple = { limit = 120, period = 60 }
 
 [[unsafe.bindings]]
 name = "RL_CHANNEL_CREATE"

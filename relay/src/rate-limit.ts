@@ -33,8 +33,11 @@ export interface RateLimiter {
  *                           verification), per target email: stops inbox
  *                           bombing, and cannot block password sign-in
  *   RL_DEVICE           10  device pairing start and approve, per IP and route
- *   RL_DEVICE_EXCHANGE  30  device token exchange, per IP (an extension polls
- *                           every 5 s, 12 a minute)
+ *   RL_DEVICE_EXCHANGE 120  device token exchange, per IP. An extension polls
+ *                           every 5 s (12 a minute), so ten people pairing
+ *                           behind one office IP fit; still only 120 guesses a
+ *                           minute against a 2^40 code space. Clients back off
+ *                           on 429 (Retry-After) and keep polling.
  *   RL_CHANNEL_CREATE   10  channel and demo-channel creation, per IP
  */
 export interface RateLimitEnv {

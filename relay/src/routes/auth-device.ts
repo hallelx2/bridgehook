@@ -135,7 +135,11 @@ export function buildAuthDeviceRoutes(getDeps: (c: { env: unknown }) => AuthDevi
 			.where(eq(deviceCodes.code, code))
 			.limit(1);
 		if (!row) return c.json({ error: "Code not found" }, 404);
-		if (row.expiresAt.getTime() < Date.now()) {
+		// One instant for both the expiry check and the conditional update, so a
+		// code that expires in between cannot fail the update and be reported as
+		// "already approved": if it is unexpired here, it matches below.
+		const now = new Date();
+		if (row.expiresAt.getTime() <= now.getTime()) {
 			return c.json({ error: "Code expired" }, 410);
 		}
 		if (row.status === "approved") {
@@ -159,11 +163,13 @@ export function buildAuthDeviceRoutes(getDeps: (c: { env: unknown }) => AuthDevi
 				and(
 					eq(deviceCodes.code, code),
 					eq(deviceCodes.status, "pending"),
-					gt(deviceCodes.expiresAt, new Date()),
+					gt(deviceCodes.expiresAt, now),
 				),
 			)
 			.returning({ code: deviceCodes.code });
 		if (approved.length === 0) {
+			// Unexpired at `now` (checked above) and still not updated: someone
+			// else approved it first.
 			return c.json({ error: "Code already approved" }, 409);
 		}
 
