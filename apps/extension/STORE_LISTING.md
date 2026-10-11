@@ -70,12 +70,12 @@ The extension talks to only two places: your own localhost (to deliver each webh
 
 ## Additional fields
 
-> bridgehook.dev is live (2026-10-07), but the apex does not serve a page yet
-> (HAL-2400). Use the `app.` host for every listing URL until it does.
+Checked live on 2026-10-11: `https://bridgehook.dev` (landing page),
+`https://docs.bridgehook.dev` and `https://app.bridgehook.dev/privacy` all return 200.
 
-- **Official URL** — verify `bridgehook.dev` in Search Console, then select it.
-- **Homepage URL** — `https://app.bridgehook.dev`
-- **Support URL** — `https://docs.bridgehook.dev`
+- **Official URL**: verify `bridgehook.dev` in Search Console, then select it.
+- **Homepage URL**: `https://bridgehook.dev`
+- **Support URL**: `https://docs.bridgehook.dev`
 
 ---
 
@@ -105,18 +105,19 @@ Shows a desktop notification when a webhook cannot reach the user's local server
 The Manifest V3 service worker uses chrome.alarms to periodically re-establish the relay connection and keep the webhook event stream alive after Chrome suspends the worker. Without it, MV3 would idle the worker and webhooks would stop being forwarded until the popup was reopened.
 ```
 
-**Host permission justification**
+**Host permission justification** (v0.2.0 dropped the unused dashboard hosts,
+`app.bridgehook.dev` and `bridgehook-web.pages.dev`: the extension only opens
+tabs there, which needs no host permission)
 ```
 BridgeHook forwards webhooks from our relay to the user's own machine, so it needs:
-• http://localhost/* — to deliver each received webhook to the local development server the user is bridging (on any port they choose).
-• https://relay.bridgehook.dev/* (and the older https://bridgehook-relay.halleluyaholudele.workers.dev/* address of the same relay) — to read the queue of incoming webhooks and to report the local server's response back.
-• https://app.bridgehook.dev/* — the BridgeHook dashboard, where the extension sends the user to sign in or view events. The extension reads nothing from its pages.
-The extension does not request access to, read, or inject into any third-party website the user visits.
+• http://localhost/*: to deliver each received webhook to the local development server the user is bridging, on any port they choose.
+• https://relay.bridgehook.dev/* (and https://bridgehook-relay.halleluyaholudele.workers.dev/*, the older address of the same relay, kept so existing installs keep working): to read the queue of incoming webhooks and to report the local server's response back.
+The extension does not request access to, read, or inject into any website the user visits.
 ```
 
 ### Are you using remote code?
 **Select: `No, I am not using remote code.`**
-> All JavaScript is bundled in the package (`background.js`, `popup.js`). There are no external `<script>` tags, no `eval`, no `importScripts`, and no remotely-hosted modules. The extension fetches webhook *data* over the network — that is data, not code. (Selecting "Yes" is what triggers the in-depth-review delay warning you saw.)
+> All JavaScript is bundled in the package (`background.js`, `drain.js`, `pairing.js`, `popup.js`). There are no external `<script>` tags, no `eval`, no `importScripts`, and no remotely-hosted modules. The extension fetches webhook *data* over the network — that is data, not code. (Selecting "Yes" is what triggers the in-depth-review delay warning you saw.)
 
 ### Data usage — checkboxes to tick
 - ☑ **Personally identifiable information** — the extension displays/holds the signed-in account email.
@@ -130,11 +131,28 @@ The extension does not request access to, read, or inject into any third-party w
 
 ---
 
+## Build, check, upload
+
+```bash
+pnpm --filter @bridgehook/extension test      # unit tests, incl. the package contents
+pnpm --filter @bridgehook/extension package   # → apps/extension/dist/bridgehook-extension-v<version>.zip
+pnpm --filter @bridgehook/extension e2e       # the zip's files, end to end against production
+```
+
+`package` derives the file list from the manifest, the popup and the module
+imports, and fails if a file is missing. `e2e` loads exactly those files into
+Chromium and clicks through pairing, adding a port, live delivery and an
+offline backlog delivered in order, using the QA account in the gitignored
+`.env`. It also writes the store screenshots to `apps/extension/dist/e2e/`:
+`store-1-events.jpg`, `store-2-event-detail.jpg`, `store-3-popup.jpg`
+(1280×800 JPEG, no alpha; the detail shot has its headers collapsed so no IP
+address shows).
+
 ## Before you click "Submit for review"
 
 1. **Remote code: No.**
-2. Listing URLs (homepage, support, privacy) use `app.bridgehook.dev` /
-   `docs.bridgehook.dev`; confirm each loads publicly.
-3. Update the Summary and Description above, and replace the screenshots with the
-   current popup and dashboard.
-4. Upload the rebuilt `bridgehook-extension-v0.2.0.zip` (HAL-2385).
+2. Homepage `https://bridgehook.dev`, support `https://docs.bridgehook.dev`,
+   privacy `https://app.bridgehook.dev/privacy`: confirm each loads publicly.
+3. Paste the Description above; replace the screenshots with the three from `dist/e2e/`.
+4. Update the host permission justification (two hosts were removed in v0.2.0).
+5. Upload `bridgehook-extension-v0.2.0.zip` (HAL-2385).

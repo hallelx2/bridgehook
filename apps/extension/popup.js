@@ -343,6 +343,8 @@ $("f-path").addEventListener("keydown", (e) => {
 
 // ── Init ─────────────────────────────────────────────────────────
 
+// The version badge reads the manifest, so it cannot drift from the release.
+$("version-badge").textContent = `v${chrome.runtime.getManifest().version}`;
 loadStatus();
 refreshAccount();
 
