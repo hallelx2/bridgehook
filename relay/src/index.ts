@@ -17,6 +17,14 @@ import { type DB, getDb } from "./db.js";
 import { getOrCreateSelfHostUser, resolveCaller, touchDevice } from "./identity.js";
 import { handleMcpRequest } from "./mcp.js";
 import { originPolicy } from "./origin-policy.js";
+import {
+	type RateLimitEnv,
+	allowRequest,
+	clientIp,
+	rateLimitAuth,
+	rateLimitRoute,
+	tooManyRequests,
+} from "./rate-limit.js";
 import { buildAuthDeviceRoutes, cleanupExpiredDeviceCodes } from "./routes/auth-device.js";
 import { buildBillingRoutes } from "./routes/billing.js";
 import { buildMeDevicesRoutes } from "./routes/me-devices.js";
@@ -42,13 +50,14 @@ import {
 export { ChannelDO } from "./channel-do.js";
 export { UserDO } from "./user-do.js";
 
-export interface Env {
+/** Rate Limiting bindings (RL_*) are described in ./rate-limit.ts. */
+export interface Env extends RateLimitEnv {
 	/** Cloudflare D1: users, auth, channels, events, devices, billing. */
 	DB: D1Database;
 	CHANNEL: DurableObjectNamespace;
 	/** Per-user fan-out DO; absent in self-host mode (no auth = no concept of "me"). */
 	USER: DurableObjectNamespace;
-	/** Optional: KV namespace for rate-limit counters. Falls back to no-op if absent. */
+	/** Optional KV for the hourly demo quota and the daily event cap. Absent = no-op. */
 	RATE_LIMIT?: KVNamespace;
 	/** Auth — when unset, relay runs in self-host mode (no auth, no /auth/** routes). */
 	BETTER_AUTH_SECRET?: string;
@@ -114,10 +123,6 @@ const CHANNEL_URL_MESSAGE =
 	"This is a BridgeHook webhook URL. Point your provider at it; requests are queued and forwarded to your local server by the BridgeHook extension or dashboard, including any that arrive while your browser is closed.";
 /** An unanswered claim older than this can be taken over by another executor. */
 const CLAIM_STALE_MS = 60_000;
-
-// ── Rate limit ────────────────────────────────────────────────────────────
-const RATE_LIMIT_WINDOW_SEC = 60;
-const RATE_LIMIT_MAX_PER_IP = 10;
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 function safeJsonParse<T>(raw: string | null | undefined, fallback: T): T {
@@ -448,7 +453,7 @@ function parseLimit(raw: string | null): number {
 	return Math.min(n, MAX_BUFFERED_EVENTS);
 }
 
-/** Per-IP count over a fixed hour window (KV, best effort like checkRateLimit). */
+/** Per-IP count over a fixed hour window (KV, best effort; the Rate Limiting binding only has 10 s and 60 s periods). */
 async function checkHourlyQuota(
 	env: Env,
 	request: Request,
@@ -465,29 +470,6 @@ async function checkHourlyQuota(
 		return true;
 	} catch (err) {
 		console.error("Hourly quota KV error:", err);
-		return true;
-	}
-}
-
-// ── Rate limiting (KV-backed) ─────────────────────────────────────────────
-async function checkRateLimit(env: Env, request: Request, key: string): Promise<boolean> {
-	if (!env.RATE_LIMIT) return true;
-	const ip =
-		request.headers.get("CF-Connecting-IP") ||
-		request.headers.get("X-Forwarded-For")?.split(",")[0]?.trim() ||
-		"unknown";
-	const bucket = `rl:${key}:${ip}`;
-
-	try {
-		const current = await env.RATE_LIMIT.get(bucket);
-		const count = current ? Number.parseInt(current, 10) : 0;
-		if (count >= RATE_LIMIT_MAX_PER_IP) return false;
-		await env.RATE_LIMIT.put(bucket, String(count + 1), {
-			expirationTtl: RATE_LIMIT_WINDOW_SEC,
-		});
-		return true;
-	} catch (err) {
-		console.error("Rate limit KV error:", err);
 		return true;
 	}
 }
@@ -587,6 +569,11 @@ const app = new Hono<AppEnv>();
 // session-cookie mutations refused from anywhere else. See ./origin-policy.ts.
 app.use("*", originPolicy());
 app.use("*", limitApiBodies());
+// Per-minute limits (./rate-limit.ts). Registered before the routes they guard.
+app.use("/auth/*", rateLimitAuth());
+app.use("/auth/device/start", rateLimitRoute("RL_DEVICE", "device-start"));
+app.use("/auth/device/approve", rateLimitRoute("RL_DEVICE", "device-approve"));
+app.use("/auth/device/exchange", rateLimitRoute("RL_DEVICE_EXCHANGE", "device-exchange"));
 
 app.onError((err, c) => {
 	console.error("Relay error:", err);
@@ -770,8 +757,8 @@ app.get("/api/config", (c) => {
 app.post("/api/demo/channels", async (c) => {
 	const env = c.env;
 	if (env.DEMO_CHANNELS === "off") return c.json({ error: "Not Found" }, 404);
-	if (!(await checkRateLimit(env, c.req.raw, "demo"))) {
-		return c.json({ error: "Rate limit exceeded" }, 429);
+	if (!(await allowRequest(env.RL_CHANNEL_CREATE, `demo:${clientIp(c.req.raw)}`))) {
+		return tooManyRequests(c);
 	}
 
 	const body = (await c.req.json().catch(() => null)) as { publicKey?: unknown } | null;
@@ -846,8 +833,8 @@ app.post("/api/channels", async (c) => {
 	const db = getDb(env);
 	const auth = createAuth(env);
 
-	if (!(await checkRateLimit(env, c.req.raw, "create"))) {
-		return c.json({ error: "Rate limit exceeded" }, 429);
+	if (!(await allowRequest(env.RL_CHANNEL_CREATE, `create:${clientIp(c.req.raw)}`))) {
+		return tooManyRequests(c);
 	}
 
 	// Resolve caller identity. In self-host mode, always succeeds with the

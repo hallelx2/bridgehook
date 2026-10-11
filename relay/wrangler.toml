@@ -49,12 +49,47 @@ new_sqlite_classes = ["UserDO"]
 [triggers]
 crons = ["0 * * * *"]
 
-# ── Rate-limit KV namespace ───────────────────────────────────────────────
-# Per-IP token bucket for POST /api/channels (10 req/min).
-# Soft-fails if binding is absent, so dev still works without KV.
+# ── KV for longer-window quotas ───────────────────────────────────────────
+# The hourly demo-channel quota per IP and the daily event cap per user.
+# Soft-fails if the binding is absent, so dev still works without KV.
 [[kv_namespaces]]
 binding = "RATE_LIMIT"
 id = "647c7df6a0e64bf3882738057ad42f38"
+
+# ── Per-minute rate limits (Workers Rate Limiting binding) ────────────────
+# See src/rate-limit.ts. Each binding is one counter with its own limit; the
+# period must be 10 or 60 seconds. namespace_id is any integer unique within
+# the account. Wrangler 3 declares these as unsafe bindings; Wrangler 4 has
+# [[ratelimits]]. Self-hosters can drop them: a missing binding allows all.
+[[unsafe.bindings]]
+name = "RL_AUTH_IP"
+type = "ratelimit"
+namespace_id = "2001"
+simple = { limit = 30, period = 60 }
+
+[[unsafe.bindings]]
+name = "RL_AUTH_EMAIL"
+type = "ratelimit"
+namespace_id = "2002"
+simple = { limit = 10, period = 60 }
+
+[[unsafe.bindings]]
+name = "RL_DEVICE"
+type = "ratelimit"
+namespace_id = "2003"
+simple = { limit = 10, period = 60 }
+
+[[unsafe.bindings]]
+name = "RL_DEVICE_EXCHANGE"
+type = "ratelimit"
+namespace_id = "2004"
+simple = { limit = 30, period = 60 }
+
+[[unsafe.bindings]]
+name = "RL_CHANNEL_CREATE"
+type = "ratelimit"
+namespace_id = "2005"
+simple = { limit = 10, period = 60 }
 
 # ── Auth / billing / mailer config ────────────────────────────────────────
 # All optional. When BETTER_AUTH_SECRET is unset the relay runs in self-host

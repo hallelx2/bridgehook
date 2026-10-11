@@ -16,7 +16,7 @@
  * All three endpoints 404 in self-host mode (no auth = nothing to pair to).
  */
 import { deviceCodes, devices } from "@bridgehook/shared/db/schema";
-import { and, eq, isNull, lt, sql } from "drizzle-orm";
+import { and, eq, gt, isNotNull, lt } from "drizzle-orm";
 import { Hono } from "hono";
 import { customAlphabet } from "nanoid";
 import { checkDevicePair, loadUserAccess } from "../access.js";
@@ -149,10 +149,23 @@ export function buildAuthDeviceRoutes(getDeps: (c: { env: unknown }) => AuthDevi
 		const gate = await checkDevicePair(deps.db, access);
 		if (!gate.ok) return c.json({ error: gate.error, code: "quota" }, gate.status);
 
-		await deps.db
+		// Approve only a code that is still pending and unexpired, in one
+		// statement: of two users approving the same code at once, exactly one
+		// wins and the other gets 409 instead of silently taking it over.
+		const approved = await deps.db
 			.update(deviceCodes)
 			.set({ status: "approved", approvedUserId: sessionUser.id })
-			.where(eq(deviceCodes.code, code));
+			.where(
+				and(
+					eq(deviceCodes.code, code),
+					eq(deviceCodes.status, "pending"),
+					gt(deviceCodes.expiresAt, new Date()),
+				),
+			)
+			.returning({ code: deviceCodes.code });
+		if (approved.length === 0) {
+			return c.json({ error: "Code already approved" }, 409);
+		}
 
 		return c.json({ ok: true, kind: row.kind, labelHint: row.labelHint });
 	});
@@ -171,38 +184,49 @@ export function buildAuthDeviceRoutes(getDeps: (c: { env: unknown }) => AuthDevi
 			return c.json({ error: "Invalid code format" }, 400);
 		}
 
+		// Claim the code and consume it in one statement. Only an approved,
+		// unexpired code is deleted, and DELETE … RETURNING hands the row to
+		// exactly one caller: concurrent exchanges cannot mint two devices.
 		const [row] = await deps.db
-			.select()
-			.from(deviceCodes)
-			.where(eq(deviceCodes.code, code))
-			.limit(1);
-		if (!row) return c.json({ error: "Code expired or already claimed" }, 410);
-		if (row.expiresAt.getTime() < Date.now()) {
-			// Best-effort cleanup — cron also handles this.
-			await deps.db
-				.delete(deviceCodes)
+			.delete(deviceCodes)
+			.where(
+				and(
+					eq(deviceCodes.code, code),
+					eq(deviceCodes.status, "approved"),
+					isNotNull(deviceCodes.approvedUserId),
+					gt(deviceCodes.expiresAt, new Date()),
+				),
+			)
+			.returning();
+		if (!row?.approvedUserId) {
+			// Not claimable: tell a pending code from a gone or expired one.
+			const [current] = await deps.db
+				.select({ status: deviceCodes.status, expiresAt: deviceCodes.expiresAt })
+				.from(deviceCodes)
 				.where(eq(deviceCodes.code, code))
-				.catch(() => {});
-			return c.json({ error: "Code expired" }, 410);
-		}
-		if (row.status !== "approved" || !row.approvedUserId) {
+				.limit(1);
+			if (!current) return c.json({ error: "Code expired or already claimed" }, 410);
+			if (current.expiresAt.getTime() <= Date.now()) {
+				// Best-effort cleanup; the cron also handles this.
+				await deps.db
+					.delete(deviceCodes)
+					.where(eq(deviceCodes.code, code))
+					.catch(() => {});
+				return c.json({ error: "Code expired" }, 410);
+			}
 			return c.json({ status: "pending" }, 202);
 		}
+		const approvedUserId = row.approvedUserId;
 
 		// Defensive re-check at exchange time — the user could have hit
 		// their device cap between approve and exchange (e.g. paired another
 		// device in a parallel tab), or had their plan downgraded.
-		const access = await loadUserAccess(deps.db, row.approvedUserId);
-		if (!access) {
-			await deps.db.delete(deviceCodes).where(eq(deviceCodes.code, code));
-			return c.json({ error: "User not found" }, 404);
-		}
+		// The code is already consumed, so a failure here also stops the
+		// extension polling on a doomed flow.
+		const access = await loadUserAccess(deps.db, approvedUserId);
+		if (!access) return c.json({ error: "User not found" }, 404);
 		const gate = await checkDevicePair(deps.db, access);
-		if (!gate.ok) {
-			// Consume the code so the extension stops polling on a doomed flow.
-			await deps.db.delete(deviceCodes).where(eq(deviceCodes.code, code));
-			return c.json({ error: gate.error, code: "quota" }, gate.status);
-		}
+		if (!gate.ok) return c.json({ error: gate.error, code: "quota" }, gate.status);
 
 		// Mint the device + token. The device row is the persistent record;
 		// the device_codes row is consumed.
@@ -216,20 +240,17 @@ export function buildAuthDeviceRoutes(getDeps: (c: { env: unknown }) => AuthDevi
 
 		await deps.db.insert(devices).values({
 			id: deviceId,
-			userId: row.approvedUserId,
+			userId: approvedUserId,
 			kind: row.kind,
 			label,
 			tokenHash,
 			lastSeenAt: new Date(),
 		});
 
-		// Consume the code (one-shot).
-		await deps.db.delete(deviceCodes).where(eq(deviceCodes.code, code));
-
 		return c.json({
 			token,
 			deviceId,
-			userId: row.approvedUserId,
+			userId: approvedUserId,
 			label,
 			kind: row.kind,
 		});
@@ -249,9 +270,3 @@ export async function cleanupExpiredDeviceCodes(db: DB): Promise<number> {
 		.returning({ code: deviceCodes.code });
 	return result.length;
 }
-
-// Suppress unused-import warning for `and`/`isNull`/`sql` — kept available
-// for future filtering; trim if unused after subsequent commits.
-void and;
-void isNull;
-void sql;
