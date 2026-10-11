@@ -221,7 +221,9 @@ function cli(args) {
 	const env = {
 		...process.env,
 		BRIDGEHOOK_CONFIG_DIR: CONFIG,
-		BRIDGEHOOK_VERBOSE: "true",
+		// Only forward logs its drain (for the failure dump); other commands'
+		// stderr stays their own error lines.
+		BRIDGEHOOK_VERBOSE: args[0] === "forward" ? "true" : "false",
 		BRIDGEHOOK_RELAY: RELAY,
 		NO_COLOR: "1",
 	};
@@ -433,6 +435,21 @@ try {
 		await waitReceived(before + 1, 15_000);
 		live.push({ tag: `live-${i}`, sent, at: received[before].at });
 	}
+	// The relay leg compares the relay's clock with this machine's: refuse
+	// to measure across a skew the Date header can see (1 s resolution).
+	// A local relay shares this machine's clock; nothing to compare.
+	if (!LOCAL) {
+		const t0 = Date.now();
+		const probe = await fetch(`${RELAY}/health`);
+		const t1 = Date.now();
+		const date = probe.headers.get("date");
+		check(date, "the relay sends a Date header to check clock skew against");
+		const skew = new Date(date).getTime() + 500 - (t0 + t1) / 2;
+		check(
+			Math.abs(skew) < 1500,
+			`clock skew against the relay is about ${Math.round(skew)} ms; sync this clock (NTP) first`,
+		);
+	}
 	const { events: history = [] } = await (
 		await api(`/api/me/events?channel=${ready.channelId}&limit=50`)
 	).json();
@@ -515,8 +532,9 @@ try {
 	check(allowed.status < 300, `a path inside --path is accepted (got ${allowed.status})`);
 	await adopt.waitFor((e) => e.event === "delivered", 15_000, "delivery on the adopted channel");
 	check(hits.includes("/only/x"), "the adopted channel delivers to localhost");
-	adopt.child.kill("SIGINT");
-	check((await adopt.exited) === 0, "adopted forward stops cleanly");
+	// SIGTERM, as `docker stop` or systemd sends: the same graceful stop as Ctrl-C.
+	adopt.child.kill("SIGTERM");
+	check((await adopt.exited) === 0, "SIGTERM stops forward cleanly");
 	step("takeover: refused without --adopt; --adopt keeps the URL and applies --path");
 
 	// 7. Ctrl-C stops promptly, then a second login revokes the token it
