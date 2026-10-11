@@ -40,11 +40,12 @@ const SALT_BYTES = 16;
 const KEY_BYTES = 32;
 
 // Bounds on parameters read back from stored hashes, so a tampered row
-// cannot make verification allocate or spin without limit.
-const SCRYPT_MAX_N = 131_072;
+// cannot make verification allocate or spin without limit. scrypt needs
+// 128 * N * r bytes; a Worker isolate has 128 MB, so a stored hash may ask
+// for at most 64 MiB (the current setting uses 16 MiB).
+const SCRYPT_MAXMEM = 64 * 1024 * 1024;
 const SCRYPT_MAX_R = 16;
 const SCRYPT_MAX_P = 16;
-const SCRYPT_MAXMEM = 256 * 1024 * 1024;
 const PBKDF2_MIN_ITERS = 1_000;
 // Production Workers reject PBKDF2 above 100,000 iterations.
 const PBKDF2_MAX_ITERS = 100_000;
@@ -133,9 +134,11 @@ function isPowerOfTwo(n: number): boolean {
 
 function parseScryptParams(parts: string[]): ScryptParams | null {
 	const [N, r, p] = parts.map(Number);
-	if (!Number.isInteger(N) || !isPowerOfTwo(N) || N > SCRYPT_MAX_N) return null;
+	if (!Number.isInteger(N) || !isPowerOfTwo(N)) return null;
 	if (!Number.isInteger(r) || r < 1 || r > SCRYPT_MAX_R) return null;
 	if (!Number.isInteger(p) || p < 1 || p > SCRYPT_MAX_P) return null;
+	// Strictly below maxmem: Node and Workers refuse a request that equals it.
+	if (128 * N * r >= SCRYPT_MAXMEM) return null;
 	return { N, r, p };
 }
 

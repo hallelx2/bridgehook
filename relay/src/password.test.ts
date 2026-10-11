@@ -65,6 +65,8 @@ describe("password hashing", () => {
 			"scrypt$1$aa$bb",
 			["scrypt", "1000", ...parts.slice(2)].join("$"), // N not a power of two
 			["scrypt", String(2 ** 20), ...parts.slice(2)].join("$"), // N above the bound
+			["scrypt", "131072", "15", ...parts.slice(3)].join("$"), // ~240 MiB, over the isolate
+			["scrypt", "65536", "8", ...parts.slice(3)].join("$"), // 64 MiB, at the memory cap
 			[...parts.slice(0, 4), "zz", parts[5]].join("$"), // bad salt hex
 			"pbkdf2-sha256$600000$00$00", // above Workers' PBKDF2 cap
 		];
