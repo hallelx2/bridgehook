@@ -1,26 +1,26 @@
 /**
- * Per-minute rate limits on the relay's abusable endpoints, using Cloudflare's
- * Workers Rate Limiting binding (configured in wrangler.toml). Each `limit()`
- * call is a single counter step at the edge: no KV read-modify-write race and
- * no KV write per request.
+ * Per-minute rate limits on the relay's abusable endpoints, counted in a
+ * Durable Object per (limit, key) (./rate-limiter-do.ts): exact counts,
+ * shared across every request and machine.
  *
- * The binding counts per Cloudflare location and is eventually consistent,
- * so these limits bound abuse rather than enforce exact quotas. Exact
- * per-user quotas stay in D1/KV (see access.ts and checkHourlyQuota).
+ * History: PR #15 used the Workers Rate Limiting binding. Measured in
+ * production on 2026-10-11 it never counted across separate requests (70 of
+ * 70 allowed against a limit of 10), so these limits only held in
+ * `wrangler dev` (HAL-2679).
  *
- * A missing or failing binding allows the request: self-hosters and
- * `wrangler dev` without the binding keep working, and an outage of the
- * limiter does not take sign-in down with it.
+ * A missing RATE_LIMITER binding or a failing Durable Object allows the
+ * request: self-hosters keep working, and a limiter outage does not take
+ * sign-in down with it.
  */
 import type { Context, MiddlewareHandler } from "hono";
 
-/** The shape of a Workers Rate Limiting binding. */
+/** One named limit, checked per key. */
 export interface RateLimiter {
 	limit(options: { key: string }): Promise<{ success: boolean }>;
 }
 
 /**
- * Bindings, each with its own limit in wrangler.toml (period 60 s):
+ * The limits (period 60 s each):
  *   RL_AUTH_IP          30  every POST under /auth/ (sign-in, sign-up, resets,
  *                           magic links), per IP
  *   RL_AUTH_EMAIL_IP    10  email-keyed auth routes, per (target email, IP):
@@ -40,14 +40,81 @@ export interface RateLimiter {
  *                           on 429 (Retry-After) and keep polling.
  *   RL_CHANNEL_CREATE   10  channel and demo-channel creation, per IP
  */
-export interface RateLimitEnv {
-	RL_AUTH_IP?: RateLimiter;
-	RL_AUTH_EMAIL_IP?: RateLimiter;
-	RL_SIGNIN_EMAIL?: RateLimiter;
-	RL_AUTH_MAIL?: RateLimiter;
-	RL_DEVICE?: RateLimiter;
-	RL_DEVICE_EXCHANGE?: RateLimiter;
-	RL_CHANNEL_CREATE?: RateLimiter;
+export const LIMITS = {
+	RL_AUTH_IP: { limit: 30, period: 60 },
+	RL_AUTH_EMAIL_IP: { limit: 10, period: 60 },
+	RL_SIGNIN_EMAIL: { limit: 60, period: 60 },
+	RL_AUTH_MAIL: { limit: 5, period: 60 },
+	RL_DEVICE: { limit: 10, period: 60 },
+	RL_DEVICE_EXCHANGE: { limit: 120, period: 60 },
+	RL_CHANNEL_CREATE: { limit: 10, period: 60 },
+} as const;
+export type LimiterName = keyof typeof LIMITS;
+
+export type RateLimitEnv = {
+	/** Durable Object namespace for RateLimiterDO (wrangler.toml). */
+	RATE_LIMITER?: DurableObjectNamespace;
+} & {
+	/** Per-limit overrides, used by tests to inject a limiter. */
+	[K in LimiterName]?: RateLimiter;
+};
+
+/**
+ * Keys this isolate has seen refused, with the time their window resets.
+ * A refusal cannot change before then, so later requests for that key are
+ * refused here without calling the Durable Object: a flood from one key
+ * costs one object call per window per isolate, and cannot overload it.
+ * Bounded so a spray of distinct keys cannot grow it without limit.
+ */
+const BLOCKED_MAX = 10_000;
+const blocked = new Map<string, number>();
+
+function rememberBlocked(id: string, resetAt: number): void {
+	if (blocked.size >= BLOCKED_MAX) {
+		const now = Date.now();
+		for (const [k, until] of blocked) if (until <= now) blocked.delete(k);
+		// Still full of live entries: drop the oldest inserted.
+		if (blocked.size >= BLOCKED_MAX) blocked.delete(blocked.keys().next().value as string);
+	}
+	blocked.set(id, resetAt);
+}
+
+/** Test hook: forget refusals this isolate remembers. */
+export function clearBlockedCache(): void {
+	blocked.clear();
+}
+
+/**
+ * The limiter for a named limit: an injected override if present, otherwise
+ * the Durable Object for (name, key), or undefined when there is no binding.
+ */
+export function limiterFor(
+	env: RateLimitEnv | undefined,
+	name: LimiterName,
+): RateLimiter | undefined {
+	const override = env?.[name];
+	if (override) return override;
+	const ns = env?.RATE_LIMITER;
+	if (!ns) return undefined;
+	const { limit, period } = LIMITS[name];
+	return {
+		async limit({ key }) {
+			const id = `${name}:${key}`;
+			const until = blocked.get(id);
+			if (until !== undefined) {
+				if (Date.now() < until) return { success: false };
+				blocked.delete(id);
+			}
+			const stub = ns.get(ns.idFromName(id));
+			const res = await stub.fetch(`https://rate-limiter/hit?limit=${limit}&period=${period}`, {
+				method: "POST",
+			});
+			if (!res.ok) throw new Error(`rate limiter answered ${res.status}`);
+			const out = (await res.json()) as { success: boolean; resetAt?: number };
+			if (!out.success && typeof out.resetAt === "number") rememberBlocked(id, out.resetAt);
+			return { success: out.success };
+		},
+	};
 }
 
 export const RETRY_AFTER_SECONDS = 60;
@@ -60,7 +127,12 @@ export function clientIp(request: Request): string {
 	return request.headers.get("cf-connecting-ip") || "unknown";
 }
 
-/** True when the request may proceed. */
+/**
+ * True when the request may proceed. A limiter error allows the request (an
+ * outage must not take sign-in down) except when the Durable Object reports
+ * it is overloaded: that only happens under a flood on that key, which is
+ * exactly when the limit has to hold, so it refuses.
+ */
 export async function allowRequest(
 	limiter: RateLimiter | undefined,
 	key: string,
@@ -69,9 +141,18 @@ export async function allowRequest(
 	try {
 		return (await limiter.limit({ key })).success;
 	} catch (err) {
+		if (isOverloaded(err)) return false;
 		console.error("Rate limiter error:", err);
 		return true;
 	}
+}
+
+/** Durable Object overload errors carry `overloaded: true` (and say so). */
+export function isOverloaded(err: unknown): boolean {
+	if (err && typeof err === "object" && (err as { overloaded?: unknown }).overloaded === true) {
+		return true;
+	}
+	return /overloaded/i.test(String((err as { message?: unknown })?.message ?? err));
 }
 
 export function tooManyRequests(c: Context) {
@@ -130,25 +211,27 @@ async function targetEmail(request: Request): Promise<string | null> {
 export function rateLimitAuth(): MiddlewareHandler<{ Bindings: RateLimitEnv }> {
 	return async (c, next) => {
 		if (c.req.method !== "POST" || c.req.path.startsWith("/auth/device/")) return next();
-		if (!(await allowRequest(c.env?.RL_AUTH_IP, `auth:${clientIp(c.req.raw)}`))) {
+		if (!(await allowRequest(limiterFor(c.env, "RL_AUTH_IP"), `auth:${clientIp(c.req.raw)}`))) {
 			return tooManyRequests(c);
 		}
 		if (EMAIL_KEYED_PATHS.has(c.req.path)) {
 			const email = await targetEmail(c.req.raw);
 			if (email) {
 				const ip = clientIp(c.req.raw);
-				if (!(await allowRequest(c.env?.RL_AUTH_EMAIL_IP, `email-ip:${email}|${ip}`))) {
+				if (
+					!(await allowRequest(limiterFor(c.env, "RL_AUTH_EMAIL_IP"), `email-ip:${email}|${ip}`))
+				) {
 					return tooManyRequests(c);
 				}
 				if (
 					c.req.path === PASSWORD_SIGN_IN_PATH &&
-					!(await allowRequest(c.env?.RL_SIGNIN_EMAIL, `signin:${email}`))
+					!(await allowRequest(limiterFor(c.env, "RL_SIGNIN_EMAIL"), `signin:${email}`))
 				) {
 					return tooManyRequests(c);
 				}
 				if (
 					MAIL_SENDING_PATHS.has(c.req.path) &&
-					!(await allowRequest(c.env?.RL_AUTH_MAIL, `mail:${email}`))
+					!(await allowRequest(limiterFor(c.env, "RL_AUTH_MAIL"), `mail:${email}`))
 				) {
 					return tooManyRequests(c);
 				}
@@ -158,13 +241,13 @@ export function rateLimitAuth(): MiddlewareHandler<{ Bindings: RateLimitEnv }> {
 	};
 }
 
-/** Limits one route per IP on the named binding, keyed by `scope`. */
+/** Limits one route per IP on the named limit, keyed by `scope`. */
 export function rateLimitRoute(
-	binding: keyof RateLimitEnv,
+	name: LimiterName,
 	scope: string,
 ): MiddlewareHandler<{ Bindings: RateLimitEnv }> {
 	return async (c, next) => {
-		if (!(await allowRequest(c.env?.[binding], `${scope}:${clientIp(c.req.raw)}`))) {
+		if (!(await allowRequest(limiterFor(c.env, name), `${scope}:${clientIp(c.req.raw)}`))) {
 			return tooManyRequests(c);
 		}
 		return next();

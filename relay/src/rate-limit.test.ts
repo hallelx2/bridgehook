@@ -1,15 +1,19 @@
 import { Hono } from "hono";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import {
 	type RateLimitEnv,
 	type RateLimiter,
 	allowRequest,
+	clearBlockedCache,
 	clientIp,
+	isOverloaded,
+	limiterFor,
 	rateLimitAuth,
 	rateLimitRoute,
 } from "./rate-limit.js";
+import { RateLimiterDO } from "./rate-limiter-do.js";
 
-// Counts calls per key and refuses past `limit`, like the Workers binding.
+// Counts calls per key and refuses past `limit`, like an injected limiter.
 function fakeLimiter(limit: number) {
 	const seen = new Map<string, number>();
 	const limiter: RateLimiter = {
@@ -219,5 +223,130 @@ describe("rateLimitRoute", () => {
 		}
 		expect(exchanges).toEqual([200, 200, 200, 200, 429]);
 		expect([...device.seen.keys()]).toEqual(["device-start:203.0.113.7"]);
+	});
+});
+
+describe("limiterFor with the Durable Object", () => {
+	beforeEach(() => clearBlockedCache());
+
+	// A DurableObjectNamespace stand-in: one real RateLimiterDO per name, with
+	// in-memory storage, reached through fetch exactly as in production.
+	function fakeNamespace() {
+		const objects = new Map<string, RateLimiterDO>();
+		const ns = {
+			idFromName: (name: string) => name,
+			get: (id: string) => {
+				let obj = objects.get(id);
+				if (!obj) {
+					const data = new Map<string, unknown>();
+					const state = {
+						storage: {
+							get: async (k: string) => data.get(k),
+							put: async (k: string, v: unknown) => {
+								data.set(k, v);
+							},
+							deleteAll: async () => {
+								data.clear();
+							},
+							setAlarm: async () => {},
+						},
+					};
+					obj = new RateLimiterDO(state as unknown as DurableObjectState, {});
+					objects.set(id, obj);
+				}
+				const target = obj;
+				return {
+					fetch: (url: string, init: RequestInit) => target.fetch(new Request(url, init)),
+				};
+			},
+		};
+		return { ns: ns as unknown as DurableObjectNamespace, objects };
+	}
+
+	it("counts across separate calls, per key, per limit", async () => {
+		const { ns, objects } = fakeNamespace();
+		const env = { RATE_LIMITER: ns };
+		const create = limiterFor(env, "RL_CHANNEL_CREATE");
+		const results = [];
+		for (let i = 0; i < 12; i++) results.push(await allowRequest(create, "create:203.0.113.7"));
+		expect(results.filter(Boolean)).toHaveLength(10);
+		expect(results.slice(10)).toEqual([false, false]);
+		// Another IP, and the same IP on another limit, keep their own counts.
+		expect(await allowRequest(create, "create:198.51.100.1")).toBe(true);
+		expect(await allowRequest(limiterFor(env, "RL_DEVICE"), "device-start:203.0.113.7")).toBe(true);
+		expect([...objects.keys()].sort()).toEqual([
+			"RL_CHANNEL_CREATE:create:198.51.100.1",
+			"RL_CHANNEL_CREATE:create:203.0.113.7",
+			"RL_DEVICE:device-start:203.0.113.7",
+		]);
+	});
+
+	it("enforces the auth limits through the middleware end to end", async () => {
+		const { ns } = fakeNamespace();
+		const app = new Hono<{ Bindings: RateLimitEnv }>();
+		app.use("/auth/*", rateLimitAuth());
+		app.post("/auth/sign-in/email", (c) => c.json({ ok: true }));
+		const statuses = [];
+		for (let i = 0; i < 12; i++) {
+			const res = await app.request(
+				"/auth/sign-in/email",
+				{
+					method: "POST",
+					headers: { "content-type": "application/json", "cf-connecting-ip": "203.0.113.7" },
+					body: JSON.stringify({ email: "victim@example.com", password: "guess" }),
+				},
+				{ RATE_LIMITER: ns },
+			);
+			statuses.push(res.status);
+		}
+		// RL_AUTH_EMAIL_IP allows 10 per (email, IP) per minute.
+		expect(statuses).toEqual([...Array(10).fill(200), 429, 429]);
+	});
+
+	it("stops calling the Durable Object for a key it has seen refused", async () => {
+		const { ns } = fakeNamespace();
+		let calls = 0;
+		const counted = {
+			idFromName: ns.idFromName.bind(ns),
+			get: (id: DurableObjectId) => {
+				const stub = ns.get(id);
+				return {
+					fetch: (url: string, init: RequestInit) => {
+						calls++;
+						return stub.fetch(url, init);
+					},
+				};
+			},
+		} as unknown as DurableObjectNamespace;
+		const create = limiterFor({ RATE_LIMITER: counted }, "RL_CHANNEL_CREATE");
+		const results = [];
+		for (let i = 0; i < 1000; i++) results.push(await allowRequest(create, "flood:203.0.113.9"));
+		expect(results.filter(Boolean)).toHaveLength(10);
+		// 10 allowed + 1 refusal learned from the object; the other 989 never reach it.
+		expect(calls).toBe(11);
+	});
+
+	it("refuses when the Durable Object is overloaded, allows on other errors", async () => {
+		const overloaded = {
+			limit: async () => {
+				throw Object.assign(new Error("Durable Object is overloaded. Too many requests queued."), {
+					overloaded: true,
+				});
+			},
+		};
+		const outage = {
+			limit: async () => {
+				throw new Error("Network connection lost.");
+			},
+		};
+		expect(await allowRequest(overloaded, "k")).toBe(false);
+		expect(await allowRequest(outage, "k")).toBe(true);
+		expect(isOverloaded(new Error("Durable Object is overloaded"))).toBe(true);
+		expect(isOverloaded(new Error("boom"))).toBe(false);
+	});
+
+	it("allows everything when there is no binding (self-host)", async () => {
+		expect(limiterFor({}, "RL_AUTH_IP")).toBeUndefined();
+		expect(await allowRequest(limiterFor({}, "RL_AUTH_IP"), "k")).toBe(true);
 	});
 });
