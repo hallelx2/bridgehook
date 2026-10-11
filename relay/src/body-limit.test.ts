@@ -94,6 +94,23 @@ describe("apiBodyLimitFor", () => {
 		expect(apiBodyLimitFor("/abc123/stripe/webhook")).toBeNull();
 	});
 
+	it("fits a 1 MiB control-character body serialised as the executor sends it", async () => {
+		// JSON.stringify writes NUL as \u0000 (6 bytes): the worst case for a
+		// response body the relay accepts after parsing.
+		const payload = JSON.stringify({
+			eventId: "e".repeat(32),
+			status: 200,
+			headers: { "content-type": "application/octet-stream" },
+			body: "\u0000".repeat(1_048_576),
+			latencyMs: 12,
+		});
+		expect(payload.length).toBeGreaterThan(6_000_000);
+		expect(payload.length).toBeLessThanOrEqual(SIGNED_BODY_LIMITS.response);
+		const read = await readBodyLimited(post(payload), SIGNED_BODY_LIMITS.response);
+		expect(read.ok).toBe(true);
+		expect(MCP_BODY_LIMIT).toBeGreaterThanOrEqual(SIGNED_BODY_LIMITS.response);
+	});
+
 	it("sizes the signed-route caps around the payload they carry", () => {
 		expect(SIGNED_BODY_LIMITS.empty).toBeLessThanOrEqual(1024);
 		expect(SIGNED_BODY_LIMITS.claim).toBeLessThanOrEqual(4096);

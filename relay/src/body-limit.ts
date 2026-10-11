@@ -21,16 +21,26 @@ import { MAX_BODY_SIZE_BYTES } from "@bridgehook/shared";
 import type { MiddlewareHandler } from "hono";
 import { bodyLimit } from "hono/body-limit";
 
+/**
+ * Worst-case size of a string of up to MAX_BODY_SIZE_BYTES once it is a JSON
+ * string value: JSON.stringify writes each control character (U+0000 to
+ * U+001F, other than the five with short escapes) as the 6-byte `\u00XX`, so
+ * a binary-ish body can grow six-fold. Smaller caps would reject bodies the
+ * relay accepts after parsing, and the executor's truncate-and-retry
+ * (fitResponse) cannot shrink the escaping, so the event would be redelivered
+ * forever.
+ */
+const MAX_BODY_AS_JSON_STRING = 6 * MAX_BODY_SIZE_BYTES;
+
 /** JSON bodies on /api/* and /auth/*: settings, channel creates, pairing. */
 export const API_BODY_LIMIT = 64 * 1024;
 /** Billing provider webhooks carry whole subscription objects. */
 export const BILLING_WEBHOOK_BODY_LIMIT = 256 * 1024;
 /**
  * MCP tool calls can carry an edited webhook body for replay (up to
- * MAX_BODY_SIZE_BYTES) inside a JSON-RPC string; JSON escaping can roughly
- * double it, plus room for the envelope.
+ * MAX_BODY_SIZE_BYTES) inside a JSON-RPC string, plus room for the envelope.
  */
-export const MCP_BODY_LIMIT = 2 * MAX_BODY_SIZE_BYTES + 64 * 1024;
+export const MCP_BODY_LIMIT = MAX_BODY_AS_JSON_STRING + 64 * 1024;
 
 /** Caps for the ECDSA-signed executor routes, by what they carry. */
 export const SIGNED_BODY_LIMITS = {
@@ -40,10 +50,10 @@ export const SIGNED_BODY_LIMITS = {
 	claim: 4 * 1024,
 	/**
 	 * POST /hook/:id/response: the local server's answer, whose body (up to
-	 * MAX_BODY_SIZE_BYTES, enforced after parsing) travels as a JSON string.
-	 * Twice that allows for escaping; 64 KiB covers headers and fields.
+	 * MAX_BODY_SIZE_BYTES, enforced after parsing) travels as a JSON string,
+	 * escaped in the worst case; 64 KiB covers headers and fields.
 	 */
-	response: 2 * MAX_BODY_SIZE_BYTES + 64 * 1024,
+	response: MAX_BODY_AS_JSON_STRING + 64 * 1024,
 } as const;
 
 export type LimitedBody = { ok: true; text: string } | { ok: false };
