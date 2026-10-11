@@ -60,6 +60,31 @@ export type RateLimitEnv = {
 };
 
 /**
+ * Keys this isolate has seen refused, with the time their window resets.
+ * A refusal cannot change before then, so later requests for that key are
+ * refused here without calling the Durable Object: a flood from one key
+ * costs one object call per window per isolate, and cannot overload it.
+ * Bounded so a spray of distinct keys cannot grow it without limit.
+ */
+const BLOCKED_MAX = 10_000;
+const blocked = new Map<string, number>();
+
+function rememberBlocked(id: string, resetAt: number): void {
+	if (blocked.size >= BLOCKED_MAX) {
+		const now = Date.now();
+		for (const [k, until] of blocked) if (until <= now) blocked.delete(k);
+		// Still full of live entries: drop the oldest inserted.
+		if (blocked.size >= BLOCKED_MAX) blocked.delete(blocked.keys().next().value as string);
+	}
+	blocked.set(id, resetAt);
+}
+
+/** Test hook: forget refusals this isolate remembers. */
+export function clearBlockedCache(): void {
+	blocked.clear();
+}
+
+/**
  * The limiter for a named limit: an injected override if present, otherwise
  * the Durable Object for (name, key), or undefined when there is no binding.
  */
@@ -74,12 +99,20 @@ export function limiterFor(
 	const { limit, period } = LIMITS[name];
 	return {
 		async limit({ key }) {
-			const stub = ns.get(ns.idFromName(`${name}:${key}`));
+			const id = `${name}:${key}`;
+			const until = blocked.get(id);
+			if (until !== undefined) {
+				if (Date.now() < until) return { success: false };
+				blocked.delete(id);
+			}
+			const stub = ns.get(ns.idFromName(id));
 			const res = await stub.fetch(`https://rate-limiter/hit?limit=${limit}&period=${period}`, {
 				method: "POST",
 			});
 			if (!res.ok) throw new Error(`rate limiter answered ${res.status}`);
-			return (await res.json()) as { success: boolean };
+			const out = (await res.json()) as { success: boolean; resetAt?: number };
+			if (!out.success && typeof out.resetAt === "number") rememberBlocked(id, out.resetAt);
+			return { success: out.success };
 		},
 	};
 }
@@ -94,7 +127,12 @@ export function clientIp(request: Request): string {
 	return request.headers.get("cf-connecting-ip") || "unknown";
 }
 
-/** True when the request may proceed. */
+/**
+ * True when the request may proceed. A limiter error allows the request (an
+ * outage must not take sign-in down) except when the Durable Object reports
+ * it is overloaded: that only happens under a flood on that key, which is
+ * exactly when the limit has to hold, so it refuses.
+ */
 export async function allowRequest(
 	limiter: RateLimiter | undefined,
 	key: string,
@@ -103,9 +141,18 @@ export async function allowRequest(
 	try {
 		return (await limiter.limit({ key })).success;
 	} catch (err) {
+		if (isOverloaded(err)) return false;
 		console.error("Rate limiter error:", err);
 		return true;
 	}
+}
+
+/** Durable Object overload errors carry `overloaded: true` (and say so). */
+export function isOverloaded(err: unknown): boolean {
+	if (err && typeof err === "object" && (err as { overloaded?: unknown }).overloaded === true) {
+		return true;
+	}
+	return /overloaded/i.test(String((err as { message?: unknown })?.message ?? err));
 }
 
 export function tooManyRequests(c: Context) {

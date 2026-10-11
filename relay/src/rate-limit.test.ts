@@ -1,10 +1,12 @@
 import { Hono } from "hono";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import {
 	type RateLimitEnv,
 	type RateLimiter,
 	allowRequest,
+	clearBlockedCache,
 	clientIp,
+	isOverloaded,
 	limiterFor,
 	rateLimitAuth,
 	rateLimitRoute,
@@ -225,6 +227,8 @@ describe("rateLimitRoute", () => {
 });
 
 describe("limiterFor with the Durable Object", () => {
+	beforeEach(() => clearBlockedCache());
+
 	// A DurableObjectNamespace stand-in: one real RateLimiterDO per name, with
 	// in-memory storage, reached through fetch exactly as in production.
 	function fakeNamespace() {
@@ -297,6 +301,48 @@ describe("limiterFor with the Durable Object", () => {
 		}
 		// RL_AUTH_EMAIL_IP allows 10 per (email, IP) per minute.
 		expect(statuses).toEqual([...Array(10).fill(200), 429, 429]);
+	});
+
+	it("stops calling the Durable Object for a key it has seen refused", async () => {
+		const { ns } = fakeNamespace();
+		let calls = 0;
+		const counted = {
+			idFromName: ns.idFromName.bind(ns),
+			get: (id: DurableObjectId) => {
+				const stub = ns.get(id);
+				return {
+					fetch: (url: string, init: RequestInit) => {
+						calls++;
+						return stub.fetch(url, init);
+					},
+				};
+			},
+		} as unknown as DurableObjectNamespace;
+		const create = limiterFor({ RATE_LIMITER: counted }, "RL_CHANNEL_CREATE");
+		const results = [];
+		for (let i = 0; i < 1000; i++) results.push(await allowRequest(create, "flood:203.0.113.9"));
+		expect(results.filter(Boolean)).toHaveLength(10);
+		// 10 allowed + 1 refusal learned from the object; the other 989 never reach it.
+		expect(calls).toBe(11);
+	});
+
+	it("refuses when the Durable Object is overloaded, allows on other errors", async () => {
+		const overloaded = {
+			limit: async () => {
+				throw Object.assign(new Error("Durable Object is overloaded. Too many requests queued."), {
+					overloaded: true,
+				});
+			},
+		};
+		const outage = {
+			limit: async () => {
+				throw new Error("Network connection lost.");
+			},
+		};
+		expect(await allowRequest(overloaded, "k")).toBe(false);
+		expect(await allowRequest(outage, "k")).toBe(true);
+		expect(isOverloaded(new Error("Durable Object is overloaded"))).toBe(true);
+		expect(isOverloaded(new Error("boom"))).toBe(false);
 	});
 
 	it("allows everything when there is no binding (self-host)", async () => {
