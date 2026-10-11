@@ -43,6 +43,8 @@ export interface ChannelNotifier {
 		fetch(req: Request): Promise<Response>;
 	};
 	notifyUser(userId: string | null, payload: string): void;
+	/** Keeps a notify alive past the response (ctx.waitUntil). */
+	background?(p: Promise<unknown>): void;
 }
 
 export interface MeEnv {

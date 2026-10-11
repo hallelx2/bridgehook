@@ -13,6 +13,8 @@ export const MAX_REPLAY_BODY_BYTES = 1_048_576; // 1 MB
 export interface ReplayNotifier {
 	getChannelDO(channelId: string): { fetch(req: Request): Promise<Response> };
 	notifyUser(userId: string | null, payload: string): void;
+	/** Keeps a notify alive past the response (ctx.waitUntil). */
+	background?(p: Promise<unknown>): void;
 }
 
 export function safeJsonObject(raw: string | null): Record<string, string> {
@@ -154,10 +156,11 @@ export async function queueReplay(
 		kind: "replay",
 		replayOf: source.id,
 	});
-	notifier
+	const notified = notifier
 		.getChannelDO(source.channelId)
 		.fetch(new Request("https://do/notify", { method: "POST", body: ssePayload }))
 		.catch((err) => console.error("DO notify failed:", err));
+	notifier.background?.(notified);
 	notifier.notifyUser(userId, ssePayload);
 
 	return {

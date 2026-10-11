@@ -192,12 +192,56 @@ function getUserDO(env: Env, userId: string) {
  * Best-effort fan-out to a user's UserDO. Failures are logged and swallowed
  * — the SSE push is a UX nicety, never load-bearing.
  */
-function notifyUserDO(env: Env, userId: string | null, payload: string): void {
+/**
+ * Keeps a promise alive after the response is sent. A notify left floating
+ * can be cancelled the moment the handler returns, and then live clients
+ * (extension, dashboard, CLI) miss the webhook frame and wait for a poll.
+ */
+type Background = (p: Promise<unknown>) => void;
+
+/** waitUntil from an ExecutionContext; without one (tests), let it float. */
+function backgroundOf(ctx: Pick<ExecutionContext, "waitUntil"> | undefined): Background {
+	return (p) => {
+		if (ctx) ctx.waitUntil(p);
+	};
+}
+
+/** waitUntil from a Hono context; `executionCtx` throws when there is none. */
+function honoBackground(c: { executionCtx: ExecutionContext }): Background {
+	let ctx: ExecutionContext | undefined;
+	try {
+		ctx = c.executionCtx;
+	} catch {
+		ctx = undefined;
+	}
+	return backgroundOf(ctx);
+}
+
+function notifyChannelDO(
+	env: Env,
+	channelId: string,
+	payload: string,
+	background: Background,
+): void {
+	background(
+		getChannelDO(env, channelId)
+			.fetch(new Request("https://do/notify", { method: "POST", body: payload }))
+			.catch((err) => console.error("DO notify failed:", err)),
+	);
+}
+
+function notifyUserDO(
+	env: Env,
+	userId: string | null,
+	payload: string,
+	background: Background,
+): void {
 	if (!userId) return;
-	const stub = getUserDO(env, userId);
-	stub
-		.fetch(new Request("https://do/notify", { method: "POST", body: payload }))
-		.catch((err) => console.error("UserDO notify failed:", err));
+	background(
+		getUserDO(env, userId)
+			.fetch(new Request("https://do/notify", { method: "POST", body: payload }))
+			.catch((err) => console.error("UserDO notify failed:", err)),
+	);
 }
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -224,6 +268,7 @@ async function handleWebhookIntake(
 	forwardPath: string,
 	request: Request,
 	env: Env,
+	background: Background,
 ): Promise<Response> {
 	if (!CHANNEL_ID_RE.test(channelId)) {
 		return jsonResponse(404, { error: "Channel not found" });
@@ -388,12 +433,14 @@ async function handleWebhookIntake(
 				}),
 			)
 		: null;
-	stub
-		.fetch(new Request("https://do/notify", { method: "POST", body: ssePayload }))
-		.catch((err) => console.error("DO notify failed:", err));
+	background(
+		stub
+			.fetch(new Request("https://do/notify", { method: "POST", body: ssePayload }))
+			.catch((err) => console.error("DO notify failed:", err)),
+	);
 
-	// Cross-channel dashboard fan-out: only when the channel has an owner.
-	notifyUserDO(env, channel.userId, ssePayload);
+	// Cross-channel fan-out (dashboard, extension, CLI): owned channels only.
+	notifyUserDO(env, channel.userId, ssePayload, background);
 
 	if (waiting) {
 		let outcome: SyncOutcome = { kind: "timeout" };
@@ -617,7 +664,14 @@ app.route(
 			db: getDb(env),
 			notifier: {
 				getChannelDO: (channelId: string) => getChannelDO(env, channelId),
-				notifyUser: (userId: string | null, payload: string) => notifyUserDO(env, userId, payload),
+				notifyUser: (userId: string | null, payload: string) =>
+					notifyUserDO(
+						env,
+						userId,
+						payload,
+						honoBackground(c as unknown as { executionCtx: ExecutionContext }),
+					),
+				background: honoBackground(c as unknown as { executionCtx: ExecutionContext }),
 			},
 			tunnelDomain: env.TUNNEL_DOMAIN ?? null,
 		};
@@ -717,10 +771,12 @@ app.all("/mcp", async (c) => {
 		tunnelDomain: env.TUNNEL_DOMAIN,
 		notifier: {
 			getChannelDO: (channelId: string) => getChannelDO(env, channelId),
-			notifyUser: (uid: string | null, payload: string) => notifyUserDO(env, uid, payload),
+			notifyUser: (uid: string | null, payload: string) =>
+				notifyUserDO(env, uid, payload, honoBackground(c)),
+			background: honoBackground(c),
 		},
 		deliver: (channelId: string, forwardPath: string, request: Request) =>
-			handleWebhookIntake(channelId, forwardPath, request, env),
+			handleWebhookIntake(channelId, forwardPath, request, env, honoBackground(c)),
 		waitUntil: (p: Promise<unknown>) => c.executionCtx.waitUntil(p),
 	});
 });
@@ -1091,7 +1147,7 @@ app.get("/api/channels/:channelId/events", async (c) => {
 // The canonical `/<channelId>[/path]` form is registered last, after every
 // first-party route, so it can never shadow one. See ./webhook-url.ts.
 app.on([...WEBHOOK_METHODS, "GET", "HEAD"], "/hook/:channelId", async (c) => {
-	return handleWebhookIntake(c.req.param("channelId"), "/", c.req.raw, c.env);
+	return handleWebhookIntake(c.req.param("channelId"), "/", c.req.raw, c.env, honoBackground(c));
 });
 
 // ── Claim event for executor (auth) ──
@@ -1172,11 +1228,9 @@ app.post("/hook/:channelId/claim", async (c) => {
 			claimerId: clientId,
 			claimedAt: claimedAt.toISOString(),
 		});
-		const stub = getChannelDO(c.env, channelId);
-		stub
-			.fetch(new Request("https://do/notify", { method: "POST", body: payload }))
-			.catch((err) => console.error("DO notify (claim) failed:", err));
-		notifyUserDO(c.env, channel.userId, payload);
+		const background = honoBackground(c);
+		notifyChannelDO(c.env, channelId, payload, background);
+		notifyUserDO(c.env, channel.userId, payload, background);
 		return c.json({ claimed: true, claimerId: clientId, claimedAt: claimedAt.toISOString() });
 	}
 
@@ -1305,7 +1359,7 @@ app.post("/hook/:channelId/response", async (c) => {
 	await stub
 		.fetch(new Request("https://do/notify", { method: "POST", body: doPayload }))
 		.catch((err) => console.error("DO notify failed:", err));
-	notifyUserDO(c.env, channel.userId, responsePayload);
+	notifyUserDO(c.env, channel.userId, responsePayload, honoBackground(c));
 
 	return c.json({ ok: true });
 });
@@ -1319,7 +1373,13 @@ app.all("*", async (c, next) => {
 	if (!parsed) return next();
 	const m = c.req.method.toUpperCase();
 	if (isWebhookMethod(m) || m === "GET" || m === "HEAD") {
-		return handleWebhookIntake(parsed.channelId, parsed.forwardPath, c.req.raw, c.env);
+		return handleWebhookIntake(
+			parsed.channelId,
+			parsed.forwardPath,
+			c.req.raw,
+			c.env,
+			honoBackground(c),
+		);
 	}
 	return c.json({ error: "Method not allowed" }, 405, {
 		Allow: [...WEBHOOK_METHODS, "GET"].join(", "),
@@ -1369,10 +1429,15 @@ async function retentionSweep(db: DB): Promise<void> {
  * auth and the executor endpoints are not reachable on channel hosts, and no
  * response carries credentials.
  */
-async function handleChannelHost(channelId: string, request: Request, env: Env): Promise<Response> {
+async function handleChannelHost(
+	channelId: string,
+	request: Request,
+	env: Env,
+	background: Background,
+): Promise<Response> {
 	let res: Response;
 	try {
-		res = await channelHostResponse(channelId, request, env);
+		res = await channelHostResponse(channelId, request, env, background);
 	} catch (err) {
 		// Outside Hono, so app.onError never sees this; answer the same way.
 		console.error("Channel host error:", err);
@@ -1391,11 +1456,12 @@ async function channelHostResponse(
 	channelId: string,
 	request: Request,
 	env: Env,
+	background: Background,
 ): Promise<Response> {
 	const url = new URL(request.url);
 	const method = request.method.toUpperCase();
 	if (isWebhookMethod(method) || method === "GET" || method === "HEAD") {
-		return handleWebhookIntake(channelId, url.pathname || "/", request, env);
+		return handleWebhookIntake(channelId, url.pathname || "/", request, env, background);
 	}
 	if (method === "OPTIONS") {
 		return new Response(null, {
@@ -1422,7 +1488,8 @@ async function channelHostResponse(
 export default {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
 		const host = classifyHost(request.headers.get("host"), env.TUNNEL_DOMAIN);
-		if (host.kind === "channel") return handleChannelHost(host.channelId, request, env);
+		if (host.kind === "channel")
+			return handleChannelHost(host.channelId, request, env, backgroundOf(ctx));
 		// Only relay.<TUNNEL_DOMAIN> serves the API, auth and executor endpoints.
 		// Every other in-zone host (www, api, foo-bar, a.b, …) is a 404;
 		// app/docs never reach the Worker (Pages, script-less routes).
