@@ -33,6 +33,8 @@ migrations_dir = "migrations"
 bindings = [
   { name = "CHANNEL", class_name = "ChannelDO" },
   { name = "USER", class_name = "UserDO" },
+  # Per-minute rate limits (src/rate-limit.ts): one object per (limit, key).
+  { name = "RATE_LIMITER", class_name = "RateLimiterDO" },
 ]
 
 [[migrations]]
@@ -42,6 +44,10 @@ new_sqlite_classes = ["ChannelDO"]
 [[migrations]]
 tag = "v2"
 new_sqlite_classes = ["UserDO"]
+
+[[migrations]]
+tag = "v3"
+new_sqlite_classes = ["RateLimiterDO"]
 
 # ── Scheduled cleanup ─────────────────────────────────────────────────────
 # Runs hourly. The handler in src/index.ts deletes channels whose
@@ -55,53 +61,6 @@ crons = ["0 * * * *"]
 [[kv_namespaces]]
 binding = "RATE_LIMIT"
 id = "647c7df6a0e64bf3882738057ad42f38"
-
-# ── Per-minute rate limits (Workers Rate Limiting binding) ────────────────
-# See src/rate-limit.ts. Each binding is one counter with its own limit; the
-# period must be 10 or 60 seconds. namespace_id is any integer unique within
-# the account. Wrangler 3 declares these as unsafe bindings; Wrangler 4 has
-# [[ratelimits]]. Self-hosters can drop them: a missing binding allows all.
-[[unsafe.bindings]]
-name = "RL_AUTH_IP"
-type = "ratelimit"
-namespace_id = "2001"
-simple = { limit = 30, period = 60 }
-
-[[unsafe.bindings]]
-name = "RL_AUTH_EMAIL_IP"
-type = "ratelimit"
-namespace_id = "2006"
-simple = { limit = 10, period = 60 }
-
-[[unsafe.bindings]]
-name = "RL_SIGNIN_EMAIL"
-type = "ratelimit"
-namespace_id = "2007"
-simple = { limit = 60, period = 60 }
-
-[[unsafe.bindings]]
-name = "RL_AUTH_MAIL"
-type = "ratelimit"
-namespace_id = "2008"
-simple = { limit = 5, period = 60 }
-
-[[unsafe.bindings]]
-name = "RL_DEVICE"
-type = "ratelimit"
-namespace_id = "2003"
-simple = { limit = 10, period = 60 }
-
-[[unsafe.bindings]]
-name = "RL_DEVICE_EXCHANGE"
-type = "ratelimit"
-namespace_id = "2004"
-simple = { limit = 120, period = 60 }
-
-[[unsafe.bindings]]
-name = "RL_CHANNEL_CREATE"
-type = "ratelimit"
-namespace_id = "2005"
-simple = { limit = 10, period = 60 }
 
 # ── Auth / billing / mailer config ────────────────────────────────────────
 # All optional. When BETTER_AUTH_SECRET is unset the relay runs in self-host

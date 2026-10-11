@@ -21,6 +21,7 @@ import {
 	type RateLimitEnv,
 	allowRequest,
 	clientIp,
+	limiterFor,
 	rateLimitAuth,
 	rateLimitRoute,
 	tooManyRequests,
@@ -49,8 +50,9 @@ import {
 
 export { ChannelDO } from "./channel-do.js";
 export { UserDO } from "./user-do.js";
+export { RateLimiterDO } from "./rate-limiter-do.js";
 
-/** Rate Limiting bindings (RL_*) are described in ./rate-limit.ts. */
+/** RATE_LIMITER (RateLimiterDO) and the limits are described in ./rate-limit.ts. */
 export interface Env extends RateLimitEnv {
 	/** Cloudflare D1: users, auth, channels, events, devices, billing. */
 	DB: D1Database;
@@ -757,7 +759,7 @@ app.get("/api/config", (c) => {
 app.post("/api/demo/channels", async (c) => {
 	const env = c.env;
 	if (env.DEMO_CHANNELS === "off") return c.json({ error: "Not Found" }, 404);
-	if (!(await allowRequest(env.RL_CHANNEL_CREATE, `demo:${clientIp(c.req.raw)}`))) {
+	if (!(await allowRequest(limiterFor(env, "RL_CHANNEL_CREATE"), `demo:${clientIp(c.req.raw)}`))) {
 		return tooManyRequests(c);
 	}
 
@@ -833,7 +835,9 @@ app.post("/api/channels", async (c) => {
 	const db = getDb(env);
 	const auth = createAuth(env);
 
-	if (!(await allowRequest(env.RL_CHANNEL_CREATE, `create:${clientIp(c.req.raw)}`))) {
+	if (
+		!(await allowRequest(limiterFor(env, "RL_CHANNEL_CREATE"), `create:${clientIp(c.req.raw)}`))
+	) {
 		return tooManyRequests(c);
 	}
 
