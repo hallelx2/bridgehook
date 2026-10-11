@@ -45,7 +45,8 @@ const env = {
 if (existsSync(envFile)) {
 	for (const line of readFileSync(envFile, "utf8").split("\n")) {
 		const m = line.match(/^(BRIDGEHOOK_TEST_(?:EMAIL|PASSWORD))=(.*)$/);
-		if (m && !env[m[1]]) env[m[1]] = m[2].trim();
+		// Strip one pair of surrounding quotes, as dotenv does.
+		if (m && !env[m[1]]) env[m[1]] = m[2].trim().replace(/^(["'])(.*)\1$/, "$2");
 	}
 }
 if (!env.BRIDGEHOOK_TEST_EMAIL || !env.BRIDGEHOOK_TEST_PASSWORD) {
@@ -79,7 +80,9 @@ const server = http.createServer((req, res) => {
 		body += d;
 	});
 	req.on("end", () => {
-		received.push({ method: req.method, url: req.url, body });
+		// Only deliveries count: the extension also sends bodyless HEAD probes
+		// to check the local server is up before retrying a failed forward.
+		if (req.method === "POST" && body) received.push({ method: req.method, url: req.url, body });
 		res.writeHead(200, { "content-type": "application/json" });
 		res.end(JSON.stringify({ ok: true, seen: received.length }));
 	});
