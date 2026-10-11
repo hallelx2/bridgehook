@@ -2,14 +2,17 @@
 	"name": "@bridgehook/extension",
 	"version": "0.0.1",
 	"private": true,
-	"description": "BridgeHook browser extension — forward webhooks to localhost without CORS issues",
+	"description": "BridgeHook browser extension: forward webhooks to localhost",
 	"devDependencies": {
 		"esbuild": "^0.28.2",
+		"playwright": "1.64.0",
 		"vitest": "^5.0.3"
 	},
 	"type": "module",
 	"scripts": {
 		"build:drain": "node scripts/build-drain.mjs",
+		"package": "node scripts/package.mjs",
+		"e2e": "node e2e/release.e2e.mjs",
 		"test": "vitest run"
 	}
 }

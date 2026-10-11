@@ -7,7 +7,7 @@
  *
  * Auth (in priority order):
  *   1. Dashboard session cookie — if the user is signed in at
- *      bridgehook-web.pages.dev, the relay's cookie travels on
+ *      app.bridgehook.dev, the relay's cookie travels on
  *      `fetch(..., { credentials: "include" })` because we set it as
  *      SameSite=None on the relay. Zero pairing required.
  *   2. Device-token bearer — long-lived `dvc_…` from the OAuth-style
