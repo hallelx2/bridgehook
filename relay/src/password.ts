@@ -1,28 +1,43 @@
 /**
  * Password hashing for Better-Auth on Cloudflare Workers.
  *
- * PBKDF2-SHA256 via crypto.subtle (native to Workers, no dependencies) at
- * the OWASP 2023+ recommendation of 600,000 iterations. Better-Auth's
- * default scrypt is replaced because crypto.subtle runs natively, while
- * scrypt runs in JS on the isolate.
+ * New hashes use scrypt (memory-hard) through the runtime's native
+ * `node:crypto` implementation, at one of OWASP's recommended settings:
+ * N=2^14, r=8, p=5 (16 MiB per hash). Measured on production Workers on
+ * 2026-10-11 at 168–243 ms of CPU per hash.
  *
- * History: launched at 10,000 iterations to fit the Workers free plan's
- * 10 ms CPU budget. Workers moved to the paid plan (30 s default CPU
- * budget) on 2026-10-02, so new hashes use 600,000. The iteration count
- * is baked into each hash string, so hashes made at the old cost still
- * verify; {@link needsRehash} flags them and ./password-rehash.ts rewrites
- * them at the current cost on the next successful sign-in.
+ * Why not PBKDF2 at OWASP's 600,000 iterations: production Workers refuse
+ * PBKDF2 above 100,000 iterations ("iteration counts above 100000 are not
+ * supported"; measured 2026-10-11, while local workerd accepts any count).
+ * scrypt at the setting above is the strongest option OWASP lists that
+ * fits the 128 MB isolate.
  *
- * Hash format (versioned for forward-compat):
- *   pbkdf2-sha256$<iters>$<salt-hex>$<key-hex>
+ * History: the relay launched with PBKDF2-SHA256 at 10,000 iterations to
+ * fit the free plan's 10 ms CPU budget. Those hashes still verify; the
+ * after-hook in ./password-rehash.ts rewrites them as scrypt on the next
+ * successful sign-in.
+ *
+ * Hash formats (self-describing, so parameters can change later):
+ *   scrypt$<N>$<r>$<p>$<salt-hex>$<key-hex>          current
+ *   pbkdf2-sha256$<iters>$<salt-hex>$<key-hex>       legacy, verify only
  */
+import { scrypt } from "node:crypto";
 
-const ALGO = "pbkdf2-sha256";
-export const PBKDF2_ITERS = 600_000;
+export const SCRYPT_PARAMS = { N: 16_384, r: 8, p: 5 } as const;
+const SCRYPT_PREFIX = "scrypt";
+const PBKDF2_PREFIX = "pbkdf2-sha256";
 const SALT_BYTES = 16;
 const KEY_BYTES = 32;
-const MIN_ACCEPTED_ITERS = 1_000;
-const MAX_ACCEPTED_ITERS = 1_000_000;
+
+// Bounds on parameters read back from stored hashes, so a tampered row
+// cannot make verification allocate or spin without limit.
+const SCRYPT_MAX_N = 131_072;
+const SCRYPT_MAX_R = 16;
+const SCRYPT_MAX_P = 16;
+const SCRYPT_MAXMEM = 256 * 1024 * 1024;
+const PBKDF2_MIN_ITERS = 1_000;
+// Production Workers reject PBKDF2 above 100,000 iterations.
+const PBKDF2_MAX_ITERS = 100_000;
 
 function toHex(bytes: Uint8Array): string {
 	let s = "";
@@ -31,25 +46,46 @@ function toHex(bytes: Uint8Array): string {
 }
 
 // Workers' strict TS types want `Uint8Array<ArrayBuffer>` on crypto.subtle
-// inputs — same pattern as the helpers in relay/src/index.ts.
+// inputs, same as the helpers in relay/src/index.ts.
 function fromHex(hex: string): Uint8Array<ArrayBuffer> {
-	if (hex.length % 2 !== 0) throw new Error("Invalid hex length");
-	const buf = new ArrayBuffer(hex.length / 2);
-	const out = new Uint8Array(buf);
+	if (hex.length % 2 !== 0 || !/^[0-9a-f]*$/i.test(hex)) throw new Error("Invalid hex");
+	const out = new Uint8Array(new ArrayBuffer(hex.length / 2));
 	for (let i = 0; i < out.length; i++) {
-		out[i] = Number.parseInt(hex.substr(i * 2, 2), 16);
+		out[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16);
 	}
 	return out;
 }
 
 function randomBytes(n: number): Uint8Array<ArrayBuffer> {
-	const buf = new ArrayBuffer(n);
-	const out = new Uint8Array(buf);
+	const out = new Uint8Array(new ArrayBuffer(n));
 	crypto.getRandomValues(out);
 	return out;
 }
 
-async function derive(
+function constantTimeEqual(a: Uint8Array, b: Uint8Array): boolean {
+	if (a.length !== b.length) return false;
+	let mismatch = 0;
+	for (let i = 0; i < a.length; i++) mismatch |= a[i] ^ b[i];
+	return mismatch === 0;
+}
+
+function deriveScrypt(
+	password: string,
+	salt: Uint8Array,
+	params: { N: number; r: number; p: number },
+): Promise<Uint8Array> {
+	return new Promise((resolve, reject) => {
+		scrypt(
+			password.normalize("NFKC"),
+			salt,
+			KEY_BYTES,
+			{ ...params, maxmem: SCRYPT_MAXMEM },
+			(err, key) => (err ? reject(err) : resolve(new Uint8Array(key))),
+		);
+	});
+}
+
+async function derivePbkdf2(
 	password: string,
 	salt: Uint8Array<ArrayBuffer>,
 	iterations: number,
@@ -69,68 +105,87 @@ async function derive(
 	return new Uint8Array(bits);
 }
 
-function constantTimeEqual(a: Uint8Array, b: Uint8Array): boolean {
-	if (a.length !== b.length) return false;
-	let mismatch = 0;
-	for (let i = 0; i < a.length; i++) mismatch |= a[i] ^ b[i];
-	return mismatch === 0;
+type ParsedHash =
+	| { kind: "scrypt"; N: number; r: number; p: number; salt: Uint8Array; key: Uint8Array }
+	| { kind: "pbkdf2"; iters: number; salt: Uint8Array<ArrayBuffer>; key: Uint8Array };
+
+function isPowerOfTwo(n: number): boolean {
+	return n > 1 && (n & (n - 1)) === 0;
+}
+
+function parseHash(hash: string): ParsedHash | null {
+	const parts = hash.split("$");
+	try {
+		if (parts[0] === SCRYPT_PREFIX && parts.length === 6) {
+			const [N, r, p] = parts.slice(1, 4).map(Number);
+			if (!Number.isInteger(N) || !isPowerOfTwo(N) || N > SCRYPT_MAX_N) return null;
+			if (!Number.isInteger(r) || r < 1 || r > SCRYPT_MAX_R) return null;
+			if (!Number.isInteger(p) || p < 1 || p > SCRYPT_MAX_P) return null;
+			const salt = fromHex(parts[4]);
+			const key = fromHex(parts[5]);
+			if (salt.length !== SALT_BYTES || key.length !== KEY_BYTES) return null;
+			return { kind: "scrypt", N, r, p, salt, key };
+		}
+		if (parts[0] === PBKDF2_PREFIX && parts.length === 4) {
+			const iters = Number(parts[1]);
+			if (!Number.isInteger(iters) || iters < PBKDF2_MIN_ITERS || iters > PBKDF2_MAX_ITERS) {
+				return null;
+			}
+			const salt = fromHex(parts[2]);
+			const key = fromHex(parts[3]);
+			if (salt.length !== SALT_BYTES || key.length !== KEY_BYTES) return null;
+			return { kind: "pbkdf2", iters, salt, key };
+		}
+	} catch {
+		return null;
+	}
+	return null;
 }
 
 /**
  * Better-Auth `emailAndPassword.password.hash` callback. Returns the
- * serialized hash string suitable for storing in `account.password`.
+ * serialized hash string stored in `account.password`.
  */
 export async function hashPassword(password: string): Promise<string> {
 	const salt = randomBytes(SALT_BYTES);
-	const key = await derive(password, salt, PBKDF2_ITERS);
-	return `${ALGO}$${PBKDF2_ITERS}$${toHex(salt)}$${toHex(key)}`;
+	const key = await deriveScrypt(password, salt, SCRYPT_PARAMS);
+	const { N, r, p } = SCRYPT_PARAMS;
+	return `${SCRYPT_PREFIX}$${N}$${r}$${p}$${toHex(salt)}$${toHex(key)}`;
 }
 
 /**
- * Better-Auth `emailAndPassword.password.verify` callback. Accepts any
- * iteration count baked into the stored hash so we can bump
- * {@link PBKDF2_ITERS} later without invalidating existing users.
+ * Better-Auth `emailAndPassword.password.verify` callback. Verifies current
+ * scrypt hashes and legacy PBKDF2 hashes.
  *
  * Returns false (rather than throwing) on any parse error so an attacker
- * can't distinguish "wrong password" from "malformed hash" via timing
- * or error shape.
+ * can't distinguish "wrong password" from "malformed hash" via error shape.
  */
 export async function verifyPassword(args: {
 	password: string;
 	hash: string;
 }): Promise<boolean> {
-	const parts = args.hash.split("$");
-	if (parts.length !== 4) return false;
-	if (parts[0] !== ALGO) return false;
-
-	const iters = Number(parts[1]);
-	if (!Number.isInteger(iters) || iters < MIN_ACCEPTED_ITERS || iters > MAX_ACCEPTED_ITERS) {
-		return false;
-	}
-
-	let salt: Uint8Array<ArrayBuffer>;
-	let expected: Uint8Array<ArrayBuffer>;
+	const parsed = parseHash(args.hash);
+	if (!parsed) return false;
 	try {
-		salt = fromHex(parts[2]);
-		expected = fromHex(parts[3]);
+		const actual =
+			parsed.kind === "scrypt"
+				? await deriveScrypt(args.password, parsed.salt, parsed)
+				: await derivePbkdf2(args.password, parsed.salt, parsed.iters);
+		return constantTimeEqual(actual, parsed.key);
 	} catch {
 		return false;
 	}
-	if (salt.length !== SALT_BYTES || expected.length !== KEY_BYTES) return false;
-
-	const actual = await derive(args.password, salt, iters);
-	return constantTimeEqual(actual, expected);
 }
 
 /**
- * True when a stored hash is ours and was made at fewer iterations than
- * {@link PBKDF2_ITERS}, so it should be rewritten after the next successful
- * sign-in. Malformed or foreign hashes return false: they cannot verify,
- * so there is nothing to upgrade.
+ * True when a stored hash verifies under this module but is weaker than
+ * what {@link hashPassword} makes today: any legacy PBKDF2 hash, or a scrypt
+ * hash with lower parameters. Malformed or foreign hashes return false:
+ * they cannot verify, so there is nothing to upgrade.
  */
 export function needsRehash(hash: string): boolean {
-	const parts = hash.split("$");
-	if (parts.length !== 4 || parts[0] !== ALGO) return false;
-	const iters = Number(parts[1]);
-	return Number.isInteger(iters) && iters >= MIN_ACCEPTED_ITERS && iters < PBKDF2_ITERS;
+	const parsed = parseHash(hash);
+	if (!parsed) return false;
+	if (parsed.kind === "pbkdf2") return true;
+	return parsed.N < SCRYPT_PARAMS.N || parsed.r < SCRYPT_PARAMS.r || parsed.p < SCRYPT_PARAMS.p;
 }

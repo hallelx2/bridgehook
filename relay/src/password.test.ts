@@ -1,8 +1,9 @@
+import { scryptSync } from "node:crypto";
 import { betterAuth } from "better-auth";
 import { memoryAdapter } from "better-auth/adapters/memory";
 import { describe, expect, it } from "vitest";
 import { rehashOnSignIn } from "./password-rehash.js";
-import { PBKDF2_ITERS, hashPassword, needsRehash, verifyPassword } from "./password.js";
+import { SCRYPT_PARAMS, hashPassword, needsRehash, verifyPassword } from "./password.js";
 
 // Builds a hash the way the launch code did (10,000 iterations), independently
 // of password.ts, so the tests do not trust the module they are checking.
@@ -24,13 +25,22 @@ async function legacyHash(password: string, iterations = 10_000): Promise<string
 	return `pbkdf2-sha256$${iterations}$${hex(salt)}$${hex(new Uint8Array(bits))}`;
 }
 
-const iterationsOf = (hash: string) => Number(hash.split("$")[1]);
+const schemeOf = (hash: string) => hash.split("$")[0];
 
 describe("password hashing", () => {
-	it("hashes new passwords at 600,000 iterations", async () => {
-		expect(PBKDF2_ITERS).toBe(600_000);
+	it("hashes new passwords with scrypt at OWASP's N=2^14, r=8, p=5", async () => {
+		expect(SCRYPT_PARAMS).toEqual({ N: 16_384, r: 8, p: 5 });
 		const hash = await hashPassword("correct horse battery");
-		expect(iterationsOf(hash)).toBe(600_000);
+		const [scheme, N, r, p, saltHex, keyHex] = hash.split("$");
+		expect([scheme, N, r, p]).toEqual(["scrypt", "16384", "8", "5"]);
+		// Recompute with Node's scrypt, independent of password.ts.
+		const expected = scryptSync("correct horse battery", Buffer.from(saltHex, "hex"), 32, {
+			N: 16_384,
+			r: 8,
+			p: 5,
+			maxmem: 64 * 1024 * 1024,
+		});
+		expect(keyHex).toBe(expected.toString("hex"));
 		expect(await verifyPassword({ password: "correct horse battery", hash })).toBe(true);
 		expect(await verifyPassword({ password: "wrong password", hash })).toBe(false);
 	});
@@ -41,11 +51,29 @@ describe("password hashing", () => {
 		expect(await verifyPassword({ password: "wrong password", hash })).toBe(false);
 	});
 
-	it("flags only weaker hashes of our own format for rehash", async () => {
+	it("rejects tampered or out-of-range hashes without throwing", async () => {
+		const good = await hashPassword("pw-123456");
+		const parts = good.split("$");
+		const variants = [
+			"not-a-hash",
+			"scrypt$1$aa$bb",
+			["scrypt", "1000", ...parts.slice(2)].join("$"), // N not a power of two
+			["scrypt", String(2 ** 20), ...parts.slice(2)].join("$"), // N above the bound
+			[...parts.slice(0, 4), "zz", parts[5]].join("$"), // bad salt hex
+			"pbkdf2-sha256$600000$00$00", // above Workers' PBKDF2 cap
+		];
+		for (const hash of variants) {
+			expect(await verifyPassword({ password: "pw-123456", hash })).toBe(false);
+		}
+	});
+
+	it("flags legacy PBKDF2 and weaker scrypt hashes for rehash, nothing else", async () => {
 		expect(needsRehash(await legacyHash("pw-123456"))).toBe(true);
 		expect(needsRehash(await hashPassword("pw-123456"))).toBe(false);
+		const weaker = (await hashPassword("pw-123456")).replace("$16384$8$5$", "$1024$8$1$");
+		expect(needsRehash(weaker)).toBe(true);
 		expect(needsRehash("not-a-hash")).toBe(false);
-		expect(needsRehash("scrypt$1$aa$bb")).toBe(false);
+		expect(needsRehash("bcrypt$1$aa$bb")).toBe(false);
 		expect(needsRehash("pbkdf2-sha256$abc$aa$bb")).toBe(false);
 	});
 });
@@ -95,12 +123,13 @@ describe("rehash on sign-in", () => {
 		return { ...ctx, account };
 	}
 
-	it("rewrites a 10,000-iteration hash at 600,000 after a correct sign-in", async () => {
+	it("rewrites a 10,000-iteration PBKDF2 hash as scrypt after a correct sign-in", async () => {
 		const { auth, account } = await seedLegacyUser();
 		const res = await post(auth, "/sign-in/email", { email, password });
 		expect(res.status).toBe(200);
 		const stored = String(account.password);
-		expect(iterationsOf(stored)).toBe(600_000);
+		expect(schemeOf(stored)).toBe("scrypt");
+		expect(needsRehash(stored)).toBe(false);
 		expect(await verifyPassword({ password, hash: stored })).toBe(true);
 	});
 
@@ -117,7 +146,7 @@ describe("rehash on sign-in", () => {
 		await post(auth, "/sign-up/email", { email, password, name: "Current" });
 		const account = db.account.find((a) => a.providerId === "credential");
 		const before = String(account?.password);
-		expect(iterationsOf(before)).toBe(600_000);
+		expect(schemeOf(before)).toBe("scrypt");
 		const res = await post(auth, "/sign-in/email", { email, password });
 		expect(res.status).toBe(200);
 		expect(account?.password).toBe(before);

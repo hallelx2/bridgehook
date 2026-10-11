@@ -1,8 +1,8 @@
 /**
  * Upgrades weak password hashes in place on the next successful sign-in.
  *
- * Accounts created before the move to 600,000 PBKDF2 iterations still hold
- * hashes at the launch cost (10,000). The plaintext is only ever available
+ * Accounts created before the move to scrypt still hold PBKDF2-SHA256
+ * hashes at the launch cost (10,000 iterations). The plaintext is only ever available
  * while the user signs in, so this Better-Auth after-hook runs once a
  * session has been created for `/sign-in/email`, checks the stored hash,
  * and rewrites it at the current cost when it is weaker.

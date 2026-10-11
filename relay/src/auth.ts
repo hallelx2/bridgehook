@@ -135,9 +135,9 @@ export function createAuth(env: AuthEnv): Auth | null {
 		// Password reset is gated by mailer availability inside Better-Auth,
 		// so it's a no-op until the env is configured.
 		//
-		// Custom hash: PBKDF2-SHA256 at 600,000 iterations via crypto.subtle
-		// (see ./password.ts). Hashes made at the launch cost of 10,000 are
-		// rewritten on the next successful sign-in by `hooks.after` below.
+		// Custom hash: native scrypt at OWASP's N=2^14, r=8, p=5 (see
+		// ./password.ts). Legacy PBKDF2 hashes from launch still verify and are
+		// rewritten as scrypt on the next successful sign-in (`hooks.after`).
 		emailAndPassword: {
 			enabled: true,
 			autoSignIn: true,
