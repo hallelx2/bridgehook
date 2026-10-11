@@ -1,36 +1,24 @@
 /**
- * Password hashing tuned for Cloudflare Workers' 10ms CPU-per-request
- * budget on the free plan.
+ * Password hashing for Better-Auth on Cloudflare Workers.
  *
- * Better-Auth's default password hash is scrypt at industry-standard cost
- * (~30-50ms on a Worker isolate). That blows the free-tier budget and
- * surfaces as `Worker exceeded CPU time limit` 503s — exactly the failure
- * mode we hit on first launch. This module swaps in PBKDF2-SHA256 via
- * crypto.subtle (native to Workers, no deps) at an iteration count that
- * comfortably fits in ~5-8ms.
+ * PBKDF2-SHA256 via crypto.subtle (native to Workers, no dependencies) at
+ * the OWASP 2023+ recommendation of 600,000 iterations. Better-Auth's
+ * default scrypt is replaced because crypto.subtle runs natively, while
+ * scrypt runs in JS on the isolate.
  *
- * Security trade-off (documented and acceptable for the launch shape):
- *   - OWASP 2024+ recommends PBKDF2-SHA256 at 600,000 iterations. We use
- *     10,000 here. That's ~60× weaker against an offline brute-force
- *     attacker who steals the DB. Acceptable because:
- *       1) launch shape is early-access, low blast radius (no payments,
- *          no PII beyond email)
- *       2) users are encouraged to pick 8+ char passwords (Better-Auth
- *          enforces minPasswordLength: 8)
- *       3) we tell signups OAuth is coming and they can migrate.
- *   - When you upgrade to Workers Paid ($5/mo, 30s CPU budget), bump
- *     {@link PBKDF2_ITERS} to 600_000 and existing users keep working —
- *     the iteration count is baked into each hash string, so hashes
- *     created at the old cost still verify, and new hashes use the new
- *     cost. Old hashes upgrade-in-place on next sign-in if you also wire
- *     a re-hash path (not done here; it's a one-line addition).
+ * History: launched at 10,000 iterations to fit the Workers free plan's
+ * 10 ms CPU budget. Workers moved to the paid plan (30 s default CPU
+ * budget) on 2026-10-02, so new hashes use 600,000. The iteration count
+ * is baked into each hash string, so hashes made at the old cost still
+ * verify; {@link needsRehash} flags them and ./password-rehash.ts rewrites
+ * them at the current cost on the next successful sign-in.
  *
  * Hash format (versioned for forward-compat):
  *   pbkdf2-sha256$<iters>$<salt-hex>$<key-hex>
  */
 
 const ALGO = "pbkdf2-sha256";
-const PBKDF2_ITERS = 10_000;
+export const PBKDF2_ITERS = 600_000;
 const SALT_BYTES = 16;
 const KEY_BYTES = 32;
 const MIN_ACCEPTED_ITERS = 1_000;
@@ -132,4 +120,17 @@ export async function verifyPassword(args: {
 
 	const actual = await derive(args.password, salt, iters);
 	return constantTimeEqual(actual, expected);
+}
+
+/**
+ * True when a stored hash is ours and was made at fewer iterations than
+ * {@link PBKDF2_ITERS}, so it should be rewritten after the next successful
+ * sign-in. Malformed or foreign hashes return false: they cannot verify,
+ * so there is nothing to upgrade.
+ */
+export function needsRehash(hash: string): boolean {
+	const parts = hash.split("$");
+	if (parts.length !== 4 || parts[0] !== ALGO) return false;
+	const iters = Number(parts[1]);
+	return Number.isInteger(iters) && iters >= MIN_ACCEPTED_ITERS && iters < PBKDF2_ITERS;
 }
