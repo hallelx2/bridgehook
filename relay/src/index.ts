@@ -12,6 +12,7 @@ import { Hono } from "hono";
 import { checkChannelCreate, checkDailyEventCap, loadUserAccess } from "./access.js";
 import { createAuth, getAvailableAuthProviders, getSessionUser } from "./auth.js";
 import { createPolarClient } from "./billing.js";
+import { SIGNED_BODY_LIMITS, limitApiBodies, readBodyLimited } from "./body-limit.js";
 import { type DB, getDb } from "./db.js";
 import { getOrCreateSelfHostUser, resolveCaller, touchDevice } from "./identity.js";
 import { handleMcpRequest } from "./mcp.js";
@@ -313,10 +314,11 @@ async function handleWebhookIntake(
 		return jsonResponse(431, { error: "Headers too large" });
 	}
 
-	const body = await request.text();
-	if (byteLength(body) > (demo ? DEMO_MAX_BODY_BYTES : MAX_BODY_SIZE_BYTES)) {
-		return jsonResponse(413, { error: "Body too large" });
-	}
+	// Byte-limited read: a chunked body (no content-length) is cut off at the
+	// cap instead of being buffered whole before the size check.
+	const read = await readBodyLimited(request, demo ? DEMO_MAX_BODY_BYTES : MAX_BODY_SIZE_BYTES);
+	if (!read.ok) return jsonResponse(413, { error: "Body too large" });
+	const body = read.text;
 	const demoFull = () =>
 		jsonResponse(429, {
 			error: `Demo URLs accept ${DEMO_MAX_EVENTS} requests. Sign up for a permanent URL.`,
@@ -494,17 +496,28 @@ async function checkRateLimit(env: Env, request: Request, key: string): Promise<
 // All channels authenticate via ECDSA P-256 signatures. The legacy bearer
 // (secret_hash) scheme was retired in migration 0008.
 
+type VerifiedBody =
+	| { ok: true; body: string }
+	| { ok: false; status: 401 | 413 | 500; error: string };
+
+/**
+ * Verifies an executor's ECDSA signature and returns the body it signed.
+ * `maxBytes` caps the body before it is buffered or hashed (see
+ * SIGNED_BODY_LIMITS): a body over the cap is a 413 whatever its signature.
+ */
 async function verifyAndReadBody(
 	request: Request,
 	publicKeyHex: string,
-): Promise<{ ok: true; body: string } | { ok: false; status: number; error: string }> {
-	return verifyEcdsa(request, publicKeyHex);
+	maxBytes: number,
+): Promise<VerifiedBody> {
+	return verifyEcdsa(request, publicKeyHex, maxBytes);
 }
 
 async function verifyEcdsa(
 	request: Request,
 	publicKeyHex: string,
-): Promise<{ ok: true; body: string } | { ok: false; status: number; error: string }> {
+	maxBytes: number,
+): Promise<VerifiedBody> {
 	const timestamp = request.headers.get("X-BH-Timestamp");
 	const signatureHex = request.headers.get("X-BH-Signature");
 
@@ -527,7 +540,9 @@ async function verifyEcdsa(
 		return { ok: false, status: 500, error: "Channel misconfigured" };
 	}
 
-	const body = await request.text();
+	const read = await readBodyLimited(request, maxBytes);
+	if (!read.ok) return { ok: false, status: 413, error: "Body too large" };
+	const body = read.text;
 
 	let publicKey: CryptoKey;
 	try {
@@ -571,6 +586,7 @@ const app = new Hono<AppEnv>();
 // Cross-origin policy: credentialed CORS only for trusted origins, and
 // session-cookie mutations refused from anywhere else. See ./origin-policy.ts.
 app.use("*", originPolicy());
+app.use("*", limitApiBodies());
 
 app.onError((err, c) => {
 	console.error("Relay error:", err);
@@ -1010,8 +1026,8 @@ app.delete("/api/channels/:channelId", async (c) => {
 	}
 
 	// Otherwise require an ECDSA-signed delete request.
-	const verified = await verifyAndReadBody(c.req.raw, channel.publicKey);
-	if (!verified.ok) return c.json({ error: verified.error }, verified.status as 401 | 500);
+	const verified = await verifyAndReadBody(c.req.raw, channel.publicKey, SIGNED_BODY_LIMITS.empty);
+	if (!verified.ok) return c.json({ error: verified.error }, verified.status);
 
 	await db.delete(channels).where(eq(channels.id, channelId));
 	return c.json({ deleted: true });
@@ -1028,8 +1044,8 @@ app.get("/api/channels/:channelId/events", async (c) => {
 	const [channel] = await db.select().from(channels).where(eq(channels.id, channelId)).limit(1);
 	if (!channel) return c.json({ error: "Channel not found" }, 404);
 
-	const verified = await verifyAndReadBody(c.req.raw, channel.publicKey);
-	if (!verified.ok) return c.json({ error: verified.error }, verified.status as 401 | 500);
+	const verified = await verifyAndReadBody(c.req.raw, channel.publicKey, SIGNED_BODY_LIMITS.empty);
+	if (!verified.ok) return c.json({ error: verified.error }, verified.status);
 
 	const limit = parseLimit(c.req.query("limit") ?? null);
 
@@ -1105,8 +1121,8 @@ app.post("/hook/:channelId/claim", async (c) => {
 	const [channel] = await db.select().from(channels).where(eq(channels.id, channelId)).limit(1);
 	if (!channel) return c.json({ error: "Channel not found" }, 404);
 
-	const verified = await verifyAndReadBody(c.req.raw, channel.publicKey);
-	if (!verified.ok) return c.json({ error: verified.error }, verified.status as 401 | 500);
+	const verified = await verifyAndReadBody(c.req.raw, channel.publicKey, SIGNED_BODY_LIMITS.claim);
+	if (!verified.ok) return c.json({ error: verified.error }, verified.status);
 
 	let raw: unknown;
 	try {
@@ -1206,8 +1222,12 @@ app.post("/hook/:channelId/response", async (c) => {
 	const [channel] = await db.select().from(channels).where(eq(channels.id, channelId)).limit(1);
 	if (!channel) return c.json({ error: "Channel not found" }, 404);
 
-	const verified = await verifyAndReadBody(c.req.raw, channel.publicKey);
-	if (!verified.ok) return c.json({ error: verified.error }, verified.status as 401 | 500);
+	const verified = await verifyAndReadBody(
+		c.req.raw,
+		channel.publicKey,
+		SIGNED_BODY_LIMITS.response,
+	);
+	if (!verified.ok) return c.json({ error: verified.error }, verified.status);
 
 	let raw: unknown;
 	try {
