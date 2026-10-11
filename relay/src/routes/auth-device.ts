@@ -16,7 +16,7 @@
  * All three endpoints 404 in self-host mode (no auth = nothing to pair to).
  */
 import { deviceCodes, devices } from "@bridgehook/shared/db/schema";
-import { and, eq, isNull, lt, sql } from "drizzle-orm";
+import { and, eq, gt, lt, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { customAlphabet } from "nanoid";
 import { checkDevicePair, loadUserAccess } from "../access.js";
@@ -135,7 +135,11 @@ export function buildAuthDeviceRoutes(getDeps: (c: { env: unknown }) => AuthDevi
 			.where(eq(deviceCodes.code, code))
 			.limit(1);
 		if (!row) return c.json({ error: "Code not found" }, 404);
-		if (row.expiresAt.getTime() < Date.now()) {
+		// One instant for both the expiry check and the conditional update, so a
+		// code that expires in between cannot fail the update and be reported as
+		// "already approved": if it is unexpired here, it matches below.
+		const now = new Date();
+		if (row.expiresAt.getTime() <= now.getTime()) {
 			return c.json({ error: "Code expired" }, 410);
 		}
 		if (row.status === "approved") {
@@ -149,10 +153,32 @@ export function buildAuthDeviceRoutes(getDeps: (c: { env: unknown }) => AuthDevi
 		const gate = await checkDevicePair(deps.db, access);
 		if (!gate.ok) return c.json({ error: gate.error, code: "quota" }, gate.status);
 
-		await deps.db
+		// Approve only a code that is still pending and unexpired, in one
+		// statement: of two users approving the same code at once, exactly one
+		// wins and the other gets 409 instead of silently taking it over.
+		const approved = await deps.db
 			.update(deviceCodes)
 			.set({ status: "approved", approvedUserId: sessionUser.id })
-			.where(eq(deviceCodes.code, code));
+			.where(
+				and(
+					eq(deviceCodes.code, code),
+					eq(deviceCodes.status, "pending"),
+					gt(deviceCodes.expiresAt, now),
+				),
+			)
+			.returning({ code: deviceCodes.code });
+		if (approved.length === 0) {
+			// Unexpired at `now` (checked above), so either someone else approved
+			// it first or the row went away (the hourly cleanup, or an exchange
+			// that already consumed it). Re-read to say which.
+			const [current] = await deps.db
+				.select({ status: deviceCodes.status })
+				.from(deviceCodes)
+				.where(eq(deviceCodes.code, code))
+				.limit(1);
+			if (!current) return c.json({ error: "Code expired or already used" }, 410);
+			return c.json({ error: "Code already approved" }, 409);
+		}
 
 		return c.json({ ok: true, kind: row.kind, labelHint: row.labelHint });
 	});
@@ -177,8 +203,8 @@ export function buildAuthDeviceRoutes(getDeps: (c: { env: unknown }) => AuthDevi
 			.where(eq(deviceCodes.code, code))
 			.limit(1);
 		if (!row) return c.json({ error: "Code expired or already claimed" }, 410);
-		if (row.expiresAt.getTime() < Date.now()) {
-			// Best-effort cleanup — cron also handles this.
+		if (row.expiresAt.getTime() <= Date.now()) {
+			// Best-effort cleanup; the cron also handles this.
 			await deps.db
 				.delete(deviceCodes)
 				.where(eq(deviceCodes.code, code))
@@ -188,24 +214,33 @@ export function buildAuthDeviceRoutes(getDeps: (c: { env: unknown }) => AuthDevi
 		if (row.status !== "approved" || !row.approvedUserId) {
 			return c.json({ status: "pending" }, 202);
 		}
+		const approvedUserId = row.approvedUserId;
 
-		// Defensive re-check at exchange time — the user could have hit
-		// their device cap between approve and exchange (e.g. paired another
-		// device in a parallel tab), or had their plan downgraded.
-		const access = await loadUserAccess(deps.db, row.approvedUserId);
-		if (!access) {
-			await deps.db.delete(deviceCodes).where(eq(deviceCodes.code, code));
-			return c.json({ error: "User not found" }, 404);
-		}
+		// Defensive re-check at exchange time: the user could have hit their
+		// device cap between approve and exchange (e.g. paired another device
+		// in a parallel tab), or had their plan downgraded. Consume the code so
+		// the extension stops polling on a doomed flow. If another exchange of
+		// this same code already minted a device (which is what pushed the
+		// count to the cap), the code is gone: say so with 410, not a quota error.
+		const consumeOr = async (status: 402 | 404, payload: Record<string, unknown>) => {
+			const gone = await deps.db
+				.delete(deviceCodes)
+				.where(eq(deviceCodes.code, code))
+				.returning({ code: deviceCodes.code });
+			if (gone.length === 0) return c.json({ error: "Code expired or already claimed" }, 410);
+			return c.json(payload, status);
+		};
+		const access = await loadUserAccess(deps.db, approvedUserId);
+		if (!access) return consumeOr(404, { error: "User not found" });
 		const gate = await checkDevicePair(deps.db, access);
-		if (!gate.ok) {
-			// Consume the code so the extension stops polling on a doomed flow.
-			await deps.db.delete(deviceCodes).where(eq(deviceCodes.code, code));
-			return c.json({ error: gate.error, code: "quota" }, gate.status);
-		}
+		if (!gate.ok) return consumeOr(gate.status, { error: gate.error, code: "quota" });
 
-		// Mint the device + token. The device row is the persistent record;
-		// the device_codes row is consumed.
+		// Mint the device and consume the code in one D1 batch, which is a
+		// transaction: either both happen or neither does, so a failed insert
+		// never loses the user's approval. The insert copies from the code row
+		// only while it is still claimable and the delete removes that same
+		// row; D1 runs batches one at a time, so of several concurrent
+		// exchanges exactly one finds the row and mints a device.
 		const token = newDeviceToken();
 		const tokenHash = await sha256Hex(token);
 		const deviceId = newDeviceId();
@@ -213,23 +248,43 @@ export function buildAuthDeviceRoutes(getDeps: (c: { env: unknown }) => AuthDevi
 			row.labelHint && row.labelHint.trim().length > 0
 				? row.labelHint.trim().slice(0, 96)
 				: `${row.kind} device`;
-
-		await deps.db.insert(devices).values({
-			id: deviceId,
-			userId: row.approvedUserId,
-			kind: row.kind,
-			label,
-			tokenHash,
-			lastSeenAt: new Date(),
-		});
-
-		// Consume the code (one-shot).
-		await deps.db.delete(deviceCodes).where(eq(deviceCodes.code, code));
+		const now = Date.now();
+		const claimable = and(
+			eq(deviceCodes.code, code),
+			eq(deviceCodes.status, "approved"),
+			eq(deviceCodes.approvedUserId, approvedUserId),
+			gt(deviceCodes.expiresAt, new Date(now)),
+		);
+		// INSERT … SELECT through the query builder: Drizzle's D1 batch cannot
+		// bind parameters on raw `sql` statements.
+		const [, consumed] = await deps.db.batch([
+			deps.db.insert(devices).select(
+				deps.db
+					.select({
+						id: sql<string>`${deviceId}`.as("id"),
+						userId: sql<string>`${deviceCodes.approvedUserId}`.as("user_id"),
+						kind: deviceCodes.kind,
+						label: sql<string>`${label}`.as("label"),
+						tokenHash: sql<string>`${tokenHash}`.as("token_hash"),
+						os: sql<null>`null`.as("os"),
+						userAgent: sql<null>`null`.as("user_agent"),
+						lastSeenAt: sql<number>`${now}`.as("last_seen_at"),
+						revokedAt: sql<null>`null`.as("revoked_at"),
+						createdAt: sql<number>`${now}`.as("created_at"),
+					})
+					.from(deviceCodes)
+					.where(claimable),
+			),
+			deps.db.delete(deviceCodes).where(claimable).returning({ code: deviceCodes.code }),
+		]);
+		if (consumed.length === 0) {
+			return c.json({ error: "Code expired or already claimed" }, 410);
+		}
 
 		return c.json({
 			token,
 			deviceId,
-			userId: row.approvedUserId,
+			userId: approvedUserId,
 			label,
 			kind: row.kind,
 		});
@@ -249,9 +304,3 @@ export async function cleanupExpiredDeviceCodes(db: DB): Promise<number> {
 		.returning({ code: deviceCodes.code });
 	return result.length;
 }
-
-// Suppress unused-import warning for `and`/`isNull`/`sql` — kept available
-// for future filtering; trim if unused after subsequent commits.
-void and;
-void isNull;
-void sql;
