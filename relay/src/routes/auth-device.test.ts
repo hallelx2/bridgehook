@@ -170,6 +170,23 @@ describe("device code approval", () => {
 		expect(row?.u).toBe(winner);
 	});
 
+	it("answers 410, not 'already approved', when the code vanishes before the update", async () => {
+		const code = await seedCode("pending", null);
+		// Stand-in for the hourly cleanup or another request removing the row
+		// between approve's read and its conditional update.
+		await d1
+			.prepare(
+				"CREATE TRIGGER vanish_on_approve BEFORE UPDATE ON device_codes BEGIN DELETE FROM device_codes WHERE code = OLD.code; SELECT RAISE(IGNORE); END",
+			)
+			.run();
+		try {
+			const res = await post(app(), "/approve", { code }, "u_alice");
+			expect(res.status).toBe(410);
+		} finally {
+			await d1.prepare("DROP TRIGGER vanish_on_approve").run();
+		}
+	});
+
 	it("does not let a second approval overwrite the first", async () => {
 		const code = await seedCode("pending", null);
 		const a = app();

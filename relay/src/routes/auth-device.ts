@@ -168,8 +168,15 @@ export function buildAuthDeviceRoutes(getDeps: (c: { env: unknown }) => AuthDevi
 			)
 			.returning({ code: deviceCodes.code });
 		if (approved.length === 0) {
-			// Unexpired at `now` (checked above) and still not updated: someone
-			// else approved it first.
+			// Unexpired at `now` (checked above), so either someone else approved
+			// it first or the row went away (the hourly cleanup, or an exchange
+			// that already consumed it). Re-read to say which.
+			const [current] = await deps.db
+				.select({ status: deviceCodes.status })
+				.from(deviceCodes)
+				.where(eq(deviceCodes.code, code))
+				.limit(1);
+			if (!current) return c.json({ error: "Code expired or already used" }, 410);
 			return c.json({ error: "Code already approved" }, 409);
 		}
 
