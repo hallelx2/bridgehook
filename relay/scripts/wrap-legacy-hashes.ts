@@ -36,7 +36,14 @@ function d1(sqlOrFile: { command: string } | { file: string }): Array<Record<str
 		["wrangler", "d1", "execute", "bridgehook", target as string, "--json", ...flag],
 		{ encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
 	);
-	const parsed = JSON.parse(out) as Array<{ results?: Array<Record<string, unknown>> }>;
+	// With --remote --file, wrangler prints upload progress ("├ Checking if
+	// file needs uploading", …) on stdout before the JSON, so parse from the
+	// first line that opens the JSON array.
+	const start = out.search(/^\[/m);
+	if (start < 0) throw new Error(`wrangler printed no JSON:\n${out}`);
+	const parsed = JSON.parse(out.slice(start)) as Array<{
+		results?: Array<Record<string, unknown>>;
+	}>;
 	return parsed.flatMap((r) => r.results ?? []);
 }
 
