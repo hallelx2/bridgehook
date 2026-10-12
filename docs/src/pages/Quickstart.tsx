@@ -40,6 +40,37 @@ export function Quickstart() {
 				Chrome is open.
 			</p>
 
+			<h2>From the terminal (CLI)</h2>
+			<p>
+				For servers, containers and anyone who lives in a terminal. One line installs the{" "}
+				<code>bridgehook</code> binary (macOS, Linux; x86_64 and arm64):
+			</p>
+			<pre>
+				<code>curl -fsSL https://bridgehook.dev/install.sh | sh</code>
+			</pre>
+			<p>On Windows, in PowerShell:</p>
+			<pre>
+				<code>irm https://bridgehook.dev/install.ps1 | iex</code>
+			</pre>
+			<p>
+				Both check the download against the release&apos;s SHA-256 checksums and install nothing if
+				it does not match. Re-run either line to upgrade; set <code>BRIDGEHOOK_VERSION</code> to
+				install a specific version. Then pair the machine and forward a port:
+			</p>
+			<pre>
+				<code>{`bridgehook login          # approve the code in your browser
+bridgehook forward 3000   # prints https://<id>.bridgehook.dev`}</code>
+			</pre>
+			<p>
+				<code>forward</code> keeps the same URL for the same port across restarts, delivers webhooks
+				that arrived while it was stopped in order, and prints each one as it goes to your server.
+				Add <code>--json</code> for one JSON object per line, or <code>--path /stripe</code> to
+				accept only that path. Where you cannot open a browser (a container, CI), set{" "}
+				<code>BRIDGEHOOK_TOKEN</code> to a device token: the <code>token</code> field of{" "}
+				<code>~/.config/bridgehook/token.json</code> on a machine you paired, which you can revoke
+				from the dashboard's device list.
+			</p>
+
 			<h2>With nothing installed</h2>
 			<p>
 				Open{" "}
@@ -73,7 +104,7 @@ export function Quickstart() {
 			</p>
 
 			<Callout icon="📥" title="Nothing running? Nothing lost." color="#FF5C26">
-				If neither the extension nor a dashboard tab is forwarding, webhooks are stored and
+				If nothing is forwarding (no extension, CLI or dashboard tab), webhooks are stored and
 				delivered in arrival order when one starts. How long history is kept depends on your plan;
 				see <a href="#/billing">Billing</a>.
 			</Callout>
