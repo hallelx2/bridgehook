@@ -19,6 +19,7 @@ Logging in again (or with `--force`) revokes the token it replaces, so re-pairin
 | Flag / variable | |
 |---|---|
 | `--json` | one JSON object per line (`ready`, `delivered`, `skipped`, `target_down`, `target_up`, …) for scripts and agents |
+| `--verbose`, `-v`, `BRIDGEHOOK_VERBOSE` | log stream frames, drain passes and waits to stderr, to see why a webhook is slow or waiting |
 | `--relay`, `BRIDGEHOOK_RELAY` | another relay (self-hosted); defaults to the one you signed in to |
 | `BRIDGEHOOK_TOKEN` | a device token, instead of the saved one (CI, containers) |
 | `--config-dir`, `BRIDGEHOOK_CONFIG_DIR` | where the token, channel keys and channel list live (default `~/.config/bridgehook`, `%APPDATA%\bridgehook`) |

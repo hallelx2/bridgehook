@@ -76,6 +76,27 @@ pub async fn run(session: &Session, out: Out, args: ForwardArgs) -> Result<i32> 
     apply_paths(session, &relay, &channel, &args, out).await?;
     let executor = config::executor_id(&session.paths)?;
 
+    // Ctrl-C (or SIGTERM from `docker stop` / systemd): finish the webhook in
+    // hand, then stop; a second one quits at once. The handlers are
+    // registered here, before `ready` is printed, so a signal right after it
+    // cannot reach the default handler and kill the process mid-delivery.
+    let stop = Arc::new(AtomicBool::new(false));
+    let stopped = Arc::new(Notify::new());
+    let mut signals = StopSignals::register()?;
+    {
+        let (stop, stopped) = (stop.clone(), stopped.clone());
+        tokio::spawn(async move {
+            signals.next().await;
+            stop.store(true, Ordering::SeqCst);
+            stopped.notify_one();
+            if !out.json {
+                eprintln!("\nStopping after the current webhook; Ctrl-C again to quit now.");
+            }
+            signals.next().await;
+            std::process::exit(130);
+        });
+    }
+
     out.emit(
         json!({
             "event": "ready",
@@ -105,25 +126,6 @@ pub async fn run(session: &Session, out: Out, args: ForwardArgs) -> Result<i32> 
         target: target.clone(),
     };
 
-    // Ctrl-C: finish the webhook in hand, then stop. A second Ctrl-C quits.
-    let stop = Arc::new(AtomicBool::new(false));
-    let stopped = Arc::new(Notify::new());
-    {
-        let (stop, stopped) = (stop.clone(), stopped.clone());
-        tokio::spawn(async move {
-            if tokio::signal::ctrl_c().await.is_ok() {
-                stop.store(true, Ordering::SeqCst);
-                stopped.notify_one();
-                if !out.json {
-                    eprintln!("\nStopping after the current webhook; Ctrl-C again to quit now.");
-                }
-                if tokio::signal::ctrl_c().await.is_ok() {
-                    std::process::exit(130);
-                }
-            }
-        });
-    }
-
     // The live stream needs a signed-in token; signed out, the queue is polled.
     let wake = Arc::new(Notify::new());
     let connected = Arc::new(AtomicBool::new(false));
@@ -134,7 +136,21 @@ pub async fn run(session: &Session, out: Out, args: ForwardArgs) -> Result<i32> 
         let ours = channel.id.clone();
         tokio::spawn(async move {
             stream::run(relay, connected, stop, move |frame| {
-                if frame.kind == "webhook" && frame.channel_id.as_deref() == Some(ours.as_str()) {
+                let mine = frame.channel_id.as_deref() == Some(ours.as_str());
+                out.debug(|| {
+                    format!(
+                        "stream frame {} channel={} id={}{}",
+                        frame.kind,
+                        frame.channel_id.as_deref().unwrap_or("-"),
+                        frame.id.as_deref().unwrap_or("-"),
+                        if frame.kind == "webhook" && mine {
+                            " (wake)"
+                        } else {
+                            ""
+                        }
+                    )
+                });
+                if frame.kind == "webhook" && mine {
                     wake.notify_one();
                 }
             })
@@ -149,7 +165,13 @@ pub async fn run(session: &Session, out: Out, args: ForwardArgs) -> Result<i32> 
         if stop.load(Ordering::SeqCst) {
             break;
         }
-        let wait = match drainer.pass(&deps, &mut notify).await {
+        let started = std::time::Instant::now();
+        let result = drainer.pass(&deps, &mut notify).await;
+        out.debug(|| match &result {
+            Ok(r) => format!("pass {r:?} in {} ms", started.elapsed().as_millis()),
+            Err(e) => format!("pass failed in {} ms: {e:#}", started.elapsed().as_millis()),
+        });
+        let wait = match result {
             Ok(PassResult::Idle) => {
                 retry = RETRY_MIN;
                 if connected.load(Ordering::Relaxed) {
@@ -198,21 +220,69 @@ pub async fn run(session: &Session, out: Out, args: ForwardArgs) -> Result<i32> 
         }
         // Wait for the timer or Ctrl-C, or for the stream to report a
         // webhook (useless while the local server is down).
-        if drainer.target_down() {
+        out.debug(|| format!("waiting up to {} ms", wait.as_millis()));
+        let woke = if drainer.target_down() {
             tokio::select! {
-                _ = stopped.notified() => {}
-                _ = tokio::time::sleep(wait) => {}
+                _ = stopped.notified() => "stop",
+                _ = tokio::time::sleep(wait) => "timer",
             }
         } else {
             tokio::select! {
-                _ = stopped.notified() => {}
-                _ = wake.notified() => {}
-                _ = tokio::time::sleep(wait) => {}
+                _ = stopped.notified() => "stop",
+                _ = wake.notified() => "stream",
+                _ = tokio::time::sleep(wait) => "timer",
             }
-        }
+        };
+        out.debug(|| format!("woken by {woke}"));
     }
     out.emit(json!({ "event": "stopped" }), || "Stopped.".into());
     Ok(0)
+}
+
+/// SIGINT and SIGTERM on Unix, Ctrl-C and Ctrl-Break on Windows, registered
+/// when created.
+struct StopSignals {
+    #[cfg(unix)]
+    int: tokio::signal::unix::Signal,
+    #[cfg(unix)]
+    term: tokio::signal::unix::Signal,
+    #[cfg(windows)]
+    c: tokio::signal::windows::CtrlC,
+    #[cfg(windows)]
+    brk: tokio::signal::windows::CtrlBreak,
+}
+
+impl StopSignals {
+    fn register() -> Result<Self> {
+        #[cfg(unix)]
+        {
+            use tokio::signal::unix::{signal, SignalKind};
+            Ok(Self {
+                int: signal(SignalKind::interrupt())?,
+                term: signal(SignalKind::terminate())?,
+            })
+        }
+        #[cfg(windows)]
+        {
+            Ok(Self {
+                c: tokio::signal::windows::ctrl_c()?,
+                brk: tokio::signal::windows::ctrl_break()?,
+            })
+        }
+    }
+
+    async fn next(&mut self) {
+        #[cfg(unix)]
+        tokio::select! {
+            _ = self.int.recv() => {}
+            _ = self.term.recv() => {}
+        }
+        #[cfg(windows)]
+        tokio::select! {
+            _ = self.c.recv() => {}
+            _ = self.brk.recv() => {}
+        }
+    }
 }
 
 fn next_retry(retry: &mut Duration, max: Duration) -> Duration {
