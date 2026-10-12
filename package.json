@@ -10,6 +10,8 @@
 		"test:cli": "cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings",
 		"e2e:cli": "node cli/e2e/cli.e2e.mjs",
 		"e2e:cli:local": "node cli/e2e/cli.e2e.mjs --local",
+		"release:cli": "scripts/release-cli.sh",
+		"test:install": "scripts/test-install.sh",
 		"deploy:relay": "pnpm --filter @bridgehook/relay deploy",
 		"deploy:web": "pnpm --filter @bridgehook/web deploy",
 		"typecheck": "pnpm -r typecheck",

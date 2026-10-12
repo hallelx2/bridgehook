@@ -2,6 +2,20 @@
 
 A stable public webhook URL that forwards to a local port. Webhooks sent while nothing is forwarding wait on the relay, and the next `bridgehook forward` delivers them in order.
 
+## Install
+
+```sh
+curl -fsSL https://bridgehook.dev/install.sh | sh        # macOS, Linux (x86_64, arm64)
+```
+
+```powershell
+irm https://bridgehook.dev/install.ps1 | iex             # Windows
+```
+
+Both install the newest stable `cli-v*` release from GitHub (never a prerelease) after checking that the download is intact against the release's `SHA256SUMS`, and install nothing if it does not match. The checksums come from the same release, so they catch a corrupted or cut-off download, not a tampered release. If GitHub's API rate-limits your network, they fall back to the repository's latest-release redirect. Re-run to upgrade. `BRIDGEHOOK_VERSION=0.1.0` pins a version and `BRIDGEHOOK_INSTALL_DIR` changes where it goes (default `~/.local/bin`, or `%LOCALAPPDATA%\bridgehook\bin` added to your user PATH). From source: `cargo install --path cli`.
+
+## Use
+
 ```sh
 bridgehook login              # pair this machine (approve the code in the browser)
 bridgehook forward 3000       # prints https://<id>.bridgehook.dev, forwards to localhost:3000
@@ -29,6 +43,17 @@ Ctrl-C finishes the webhook in hand and stops; a second Ctrl-C quits at once.
 ## How delivery works
 
 The protocol lives in `crates/bridgehook-core`, a port of the extension's `QueueDrainer`: the queue is read oldest first, each webhook is claimed before it is forwarded (so the extension and the CLI never both deliver it), a server that is down holds the queue without using up retries, and a webhook that fails three times while the server is up is recorded and skipped. The live stream (`/api/me/stream`) only wakes the drain, so a live webhook never overtakes a queued one. Requests are signed with the channel's P-256 key.
+
+## Releasing
+
+```sh
+pnpm release:cli                      # cross-build the 5 binaries + SHA256SUMS into dist/cli/v<version>
+pnpm test:install                     # both installers in clean glibc, musl and PowerShell containers
+scripts/publish-cli-release.sh        # upload as a draft cli-v<version> release
+scripts/publish-cli-release.sh --publish   # or publish at once; the installers pick it up
+```
+
+The version comes from `[workspace.package]` in `Cargo.toml`. Builds need Docker (the cargo-zigbuild image carries the macOS SDK and the musl and Windows toolchains).
 
 ## Checks
 

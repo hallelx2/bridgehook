@@ -184,15 +184,31 @@ impl ChannelMap {
 mod tests {
     use super::*;
 
-    fn temp_dir() -> PathBuf {
-        let mut raw = [0u8; 8];
-        rand_core::RngCore::fill_bytes(&mut rand_core::OsRng, &mut raw);
-        std::env::temp_dir().join(format!("bh-config-test-{}", hex::encode(raw)))
+    /// A unique directory under the system temp dir, removed when dropped
+    /// so test runs do not pile up in /tmp.
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new() -> Self {
+            let mut raw = [0u8; 8];
+            rand_core::RngCore::fill_bytes(&mut rand_core::OsRng, &mut raw);
+            Self(std::env::temp_dir().join(format!("bh-config-test-{}", hex::encode(raw))))
+        }
+        fn paths(&self) -> Paths {
+            Paths::at(&self.0)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
     }
 
     #[test]
     fn token_round_trips_and_is_private() {
-        let paths = Paths::at(temp_dir());
+        let dir = TempDir::new();
+        let paths = dir.paths();
         assert_eq!(load_token(&paths).unwrap(), None);
         let token = StoredToken {
             token: "dvc_abc".into(),
@@ -222,7 +238,8 @@ mod tests {
     #[test]
     fn an_existing_config_dir_keeps_its_mode() {
         use std::os::unix::fs::PermissionsExt;
-        let dir = temp_dir();
+        let tmp = TempDir::new();
+        let dir = tmp.0.clone();
         fs::create_dir_all(&dir).unwrap();
         fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).unwrap();
         let paths = Paths::at(&dir);
@@ -242,7 +259,8 @@ mod tests {
 
     #[test]
     fn executor_id_is_stable() {
-        let paths = Paths::at(temp_dir());
+        let dir = TempDir::new();
+        let paths = dir.paths();
         let a = executor_id(&paths).unwrap();
         let b = executor_id(&paths).unwrap();
         assert_eq!(a, b);
@@ -251,7 +269,8 @@ mod tests {
 
     #[test]
     fn channel_map_is_per_relay() {
-        let paths = Paths::at(temp_dir());
+        let dir = TempDir::new();
+        let paths = dir.paths();
         let mut map = ChannelMap::load(&paths).unwrap();
         map.set("https://a", "3000", "ch1");
         map.set("https://b", "3000", "ch2");
