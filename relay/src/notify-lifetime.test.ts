@@ -24,7 +24,7 @@ function sourceFiles(dir: string): string[] {
  * when it awaits or stores the promise for waitUntil, or when the line before
  * it opens a `background(` call.
  */
-export function keptAlive(lines: string[], i: number): boolean {
+function keptAlive(lines: string[], i: number): boolean {
 	let open = i;
 	while (open > 0 && lines[open].trim().startsWith(".")) open--;
 	const head = lines[open].trim();
