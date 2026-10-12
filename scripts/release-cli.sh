@@ -15,7 +15,10 @@
 #   bridgehook-x86_64-pc-windows-gnu.exe
 #
 # OFFLINE=1 builds from the crates already in ~/.cargo (no network in the
-# container). Publish with scripts/publish-cli-release.sh.
+# container). Publish with scripts/publish-cli-release.sh, which only takes
+# a build of a clean, pushed commit on main; the commit is recorded in
+# dist/cli/v<version>/COMMIT. ALLOW_DIRTY=1 builds uncommitted changes for a
+# local try (such a build cannot be published).
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -27,6 +30,13 @@ TARGETS=(
 	aarch64-apple-darwin
 	x86_64-pc-windows-gnu
 )
+
+if [ -n "$(git -C "$ROOT" status --porcelain)" ] && [ "${ALLOW_DIRTY:-0}" != 1 ]; then
+	echo "the tree has uncommitted changes; commit them (or ALLOW_DIRTY=1 for a local try)" >&2
+	exit 1
+fi
+COMMIT=$(git -C "$ROOT" rev-parse HEAD)
+[ -z "$(git -C "$ROOT" status --porcelain)" ] || COMMIT="$COMMIT-dirty"
 
 VERSION=$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\(.*\)"/\1/p' "$ROOT/Cargo.toml")
 [ -n "$VERSION" ] || { echo "no workspace version in Cargo.toml" >&2; exit 1; }
@@ -64,8 +74,9 @@ for target in "${TARGETS[@]}"; do
 done
 
 (cd "$OUT" && sha256sum bridgehook-* > SHA256SUMS)
+echo "$COMMIT" > "$OUT/COMMIT"
 echo
-echo "v$VERSION:"
+echo "v$VERSION (commit $COMMIT):"
 for f in "$OUT"/bridgehook-*; do
 	printf '%10s  %s\n' "$(wc -c <"$f")" "${f##*/}"
 done

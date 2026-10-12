@@ -53,9 +53,10 @@ export function Quickstart() {
 				<code>irm https://bridgehook.dev/install.ps1 | iex</code>
 			</pre>
 			<p>
-				Both check the download against the release&apos;s SHA-256 checksums and install nothing if
-				it does not match. Re-run either line to upgrade; set <code>BRIDGEHOOK_VERSION</code> to
-				install a specific version. Then pair the machine and forward a port:
+				Both check that the download is intact against the release&apos;s SHA-256 checksums and
+				install nothing if it does not match. Re-run either line to upgrade; set{" "}
+				<code>BRIDGEHOOK_VERSION</code> to install a specific version. Then pair the machine and
+				forward a port:
 			</p>
 			<pre>
 				<code>{`bridgehook login          # approve the code in your browser

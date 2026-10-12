@@ -3,21 +3,25 @@
 #
 #   curl -fsSL https://bridgehook.dev/install.sh | sh
 #
-# Downloads the `bridgehook` binary for this OS and CPU from the latest
-# CLI release on GitHub (tags `cli-v<version>`), checks it against the
-# release's SHA256SUMS, and installs it to ~/.local/bin. Running it again
-# upgrades in place. Nothing is installed unless the checksum matches.
+# Downloads the `bridgehook` binary for this OS and CPU from the newest
+# stable CLI release on GitHub (tags `cli-v<version>`), checks that the
+# download is intact against the release's SHA256SUMS, and installs it to
+# ~/.local/bin. Running it again upgrades in place. Nothing is installed
+# unless the checksum matches.
 #
-#   BRIDGEHOOK_VERSION=0.1.0       a specific version instead of the latest
+#   BRIDGEHOOK_VERSION=0.1.0       a specific version instead of the newest
 #   BRIDGEHOOK_INSTALL_DIR=/path   where to install (default ~/.local/bin)
 #   BRIDGEHOOK_DOWNLOAD_URL=url    a directory holding the binaries and
-#                                  SHA256SUMS (mirrors, tests)
+#                                  SHA256SUMS (mirrors)
 #
 # Windows: irm https://bridgehook.dev/install.ps1 | iex
 
 set -eu
 
 REPO="hallelx2/bridgehook"
+# Overridable only so tests can stand in for GitHub.
+GITHUB=${BRIDGEHOOK_GITHUB_URL:-https://github.com}
+GITHUB_API=${BRIDGEHOOK_GITHUB_API_URL:-https://api.github.com}
 
 say() { printf '%s\n' "$*"; }
 err() {
@@ -42,12 +46,15 @@ main() {
 		version=${BRIDGEHOOK_VERSION:-unknown}
 	else
 		version=$(resolve_version)
-		base="https://github.com/$REPO/releases/download/cli-v$version"
+		base="$GITHUB/$REPO/releases/download/cli-v$version"
 	fi
 
 	asset="bridgehook-$target"
 	tmp=$(mktemp -d 2>/dev/null || mktemp -d -t bridgehook)
-	trap 'rm -rf "$tmp"' EXIT INT TERM
+	# EXIT cleans up on every path; INT and TERM must also stop the script,
+	# which a bare cleanup handler does not do in dash or busybox sh.
+	trap 'rm -rf "$tmp"' EXIT
+	trap 'rm -rf "$tmp"; exit 130' INT TERM
 
 	say "Installing bridgehook ${version} for ${target}"
 	download "$base/$asset" "$tmp/$asset"
@@ -111,19 +118,57 @@ detect_target() {
 	printf '%s-%s' "$arch_part" "$os_part"
 }
 
-# The newest CLI release, or BRIDGEHOOK_VERSION. Releases of the CLI are
-# tagged cli-v<version>; the repository has other releases too.
+# The newest stable CLI release, or BRIDGEHOOK_VERSION. CLI releases are
+# tagged cli-v<version>; the repository has other releases too, and
+# prereleases (cli-v0.2.0-rc1) are never picked.
 resolve_version() {
 	if [ -n "${BRIDGEHOOK_VERSION:-}" ]; then
 		printf '%s' "${BRIDGEHOOK_VERSION#v}"
 		return
 	fi
-	json=$(fetch_text "https://api.github.com/repos/$REPO/releases?per_page=50") ||
-		err "cannot reach GitHub to find the latest release (set BRIDGEHOOK_VERSION to skip this)"
-	# The API lists newest first and leaves out drafts.
-	v=$(printf '%s\n' "$json" | sed -n 's/.*"tag_name": *"cli-v\([0-9][0-9A-Za-z.+-]*\)".*/\1/p' | head -n 1)
-	[ -n "$v" ] || err "no CLI release published yet; see https://github.com/$REPO/releases"
-	printf '%s' "$v"
+	if json=$(fetch_text "$GITHUB_API/repos/$REPO/releases?per_page=50" 2>/dev/null); then
+		v=$(printf '%s\n' "$json" | newest_stable_cli)
+		[ -n "$v" ] && { printf '%s' "$v"; return; }
+	fi
+	# The API failed (it allows 60 requests an hour per IP, so offices and CI
+	# hit it) or listed no CLI release: GitHub's latest-release redirect is
+	# not limited the same way. The publish script marks CLI releases latest.
+	tag=$(latest_redirect_tag)
+	case $tag in
+	cli-v[0-9]*) printf '%s' "${tag#cli-v}" ;;
+	*) err "cannot find the newest CLI release (GitHub's API may be rate-limiting this network). Set BRIDGEHOOK_VERSION, e.g. BRIDGEHOOK_VERSION=0.1.0, or see https://github.com/$REPO/releases" ;;
+	esac
+}
+
+# Reads the releases API's JSON on stdin and prints the newest cli-v version
+# that is not a prerelease. Splitting on commas puts each field on its own
+# line whether the JSON is pretty-printed or not; within a release,
+# "tag_name" comes before "prerelease". The API lists newest first and
+# leaves out drafts.
+newest_stable_cli() {
+	tr ',' '\n' | awk '
+		/"tag_name"[[:space:]]*:/ {
+			tag = $0
+			sub(/.*"tag_name"[[:space:]]*:[[:space:]]*"/, "", tag)
+			sub(/".*/, "", tag)
+		}
+		/"prerelease"[[:space:]]*:/ {
+			if (tag ~ /^cli-v[0-9]/ && $0 ~ /false/) { sub(/^cli-v/, "", tag); print tag; exit }
+			tag = ""
+		}'
+}
+
+# The tag GitHub's /releases/latest redirects to, or nothing.
+latest_redirect_tag() {
+	url="$GITHUB/$REPO/releases/latest"
+	if command -v curl >/dev/null 2>&1; then
+		loc=$(curl -fsSI -o /dev/null -w '%{redirect_url}' "$url" 2>/dev/null || true)
+	elif command -v wget >/dev/null 2>&1; then
+		loc=$(wget -S --max-redirect=0 -O /dev/null "$url" 2>&1 | sed -n 's/^ *[Ll]ocation: *//p' | tr -d '\r' | tail -n 1)
+	else
+		loc=
+	fi
+	printf '%s' "${loc##*/tag/}" | sed 's/[^A-Za-z0-9._+-].*//'
 }
 
 fetch_text() {

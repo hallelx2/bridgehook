@@ -12,7 +12,7 @@ curl -fsSL https://bridgehook.dev/install.sh | sh        # macOS, Linux (x86_64,
 irm https://bridgehook.dev/install.ps1 | iex             # Windows
 ```
 
-Both install the newest `cli-v*` release from GitHub after checking it against the release's `SHA256SUMS`, and install nothing if it does not match. Re-run to upgrade. `BRIDGEHOOK_VERSION=0.1.0` pins a version and `BRIDGEHOOK_INSTALL_DIR` changes where it goes (default `~/.local/bin`, or `%LOCALAPPDATA%\bridgehook\bin` added to your user PATH). From source: `cargo install --path cli`.
+Both install the newest stable `cli-v*` release from GitHub (never a prerelease) after checking that the download is intact against the release's `SHA256SUMS`, and install nothing if it does not match. The checksums come from the same release, so they catch a corrupted or cut-off download, not a tampered release. If GitHub's API rate-limits your network, they fall back to the repository's latest-release redirect. Re-run to upgrade. `BRIDGEHOOK_VERSION=0.1.0` pins a version and `BRIDGEHOOK_INSTALL_DIR` changes where it goes (default `~/.local/bin`, or `%LOCALAPPDATA%\bridgehook\bin` added to your user PATH). From source: `cargo install --path cli`.
 
 ## Use
 
