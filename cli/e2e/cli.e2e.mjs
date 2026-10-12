@@ -439,12 +439,18 @@ try {
 	// to measure across a skew the Date header can see (1 s resolution).
 	// A local relay shares this machine's clock; nothing to compare.
 	if (!LOCAL) {
-		const t0 = Date.now();
-		const probe = await fetch(`${RELAY}/health`);
-		const t1 = Date.now();
-		const date = probe.headers.get("date");
-		check(date, "the relay sends a Date header to check clock skew against");
-		const skew = new Date(date).getTime() + 500 - (t0 + t1) / 2;
+		// The fastest of three probes: a network stall would shift a single
+		// sample's midpoint by half the stall and fake a skew.
+		let best = null;
+		for (let i = 0; i < 3; i++) {
+			const t0 = Date.now();
+			const probe = await fetch(`${RELAY}/health`);
+			const t1 = Date.now();
+			const date = probe.headers.get("date");
+			check(date, "the relay sends a Date header to check clock skew against");
+			if (!best || t1 - t0 < best.rtt) best = { rtt: t1 - t0, mid: (t0 + t1) / 2, date };
+		}
+		const skew = new Date(best.date).getTime() + 500 - best.mid;
 		check(
 			Math.abs(skew) < 1500,
 			`clock skew against the relay is about ${Math.round(skew)} ms; sync this clock (NTP) first`,
