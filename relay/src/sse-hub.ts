@@ -100,11 +100,12 @@ export class SseHub {
 		const deadline = new Promise<"timeout">((resolve) => {
 			timer = setTimeout(() => resolve("timeout"), this.writeTimeoutMs);
 		});
+		// A write that loses the race is rejected later by drop()'s abort();
+		// handle that here so it is not an unhandled rejection.
+		const written = conn.writer.write(frame);
+		written.catch(() => {});
 		try {
-			const outcome = await Promise.race([
-				conn.writer.write(frame).then(() => "ok" as const),
-				deadline,
-			]);
+			const outcome = await Promise.race([written.then(() => "ok" as const), deadline]);
 			if (outcome === "timeout") {
 				this.drop(conn, "write timed out");
 				return false;
@@ -118,11 +119,14 @@ export class SseHub {
 		}
 	}
 
-	private drop(conn: Connection, _reason: string): void {
+	private drop(conn: Connection, reason: string): void {
 		if (!this.connections.has(conn)) return;
 		this.forget(conn);
+		// Which path releases connections in production (abort, a failed or
+		// late write, or eviction) shows in the Worker logs.
+		console.log(`sse-hub: dropped a connection (${reason}); ${this.connections.size} left`);
 		// abort() rejects pending writes, so nothing stays awaited on it.
-		conn.writer.abort(_reason).catch(() => {
+		conn.writer.abort(reason).catch(() => {
 			/* already closed */
 		});
 	}

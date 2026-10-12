@@ -23,7 +23,13 @@ import { SseHub } from "./sse-hub.js";
  * polling/SSE remains the canonical path).
  */
 const HEARTBEAT_INTERVAL_MS = 20_000;
-const MAX_SSE_CONNECTIONS_PER_USER = 8;
+/**
+ * At the cap the oldest connection is closed to admit a new one (SseHub).
+ * Set well above what one person keeps open (dashboard tabs, the extension,
+ * a few CLIs), so eviction removes connections that are already dead rather
+ * than live clients evicting each other in a reconnect loop.
+ */
+const MAX_SSE_CONNECTIONS_PER_USER = 32;
 
 export class UserDO implements DurableObject {
 	private hub = new SseHub({
