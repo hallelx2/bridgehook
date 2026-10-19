@@ -48,11 +48,13 @@ Docs: `docs/` builds `llms.txt`, `llms-full.txt` and one `.md` per page from the
 
 ## Deploy (GitHub Actions is billing-locked: deploy locally)
 
+The hosted deployment lives in the halleluyaholudele@gmail.com Cloudflare account (`c8bea05e04728d860333b91cf095340b`, pinned as `account_id` in `relay/wrangler.toml`). This machine's default wrangler login is another account, so run wrangler for BridgeHook through the `hallelx2` profile: `wrangler-profile hallelx2 <args>` (`~/.local/bin`, a separate login under `~/.config/wrangler-profiles/hallelx2`). Check `wrangler-profile hallelx2 whoami` before deploying. If wrangler 3's requests fail with `fetch failed` while the network works, add `WRANGLER_BIN=<a wrangler 4 binary>` (measured 2026-10-12: v3 failed and v4 deployed).
+
 ```bash
-cd relay && yes | npx wrangler d1 migrations apply bridgehook --remote   # before code that needs it
-cd relay && npx wrangler deploy
-VITE_RELAY_URL=https://relay.bridgehook.dev VITE_APP_URL=https://app.bridgehook.dev pnpm --filter @bridgehook/web build && npx wrangler pages deploy apps/web/dist --project-name=bridgehook-web --branch=main
-VITE_RELAY_URL=https://relay.bridgehook.dev pnpm --filter @bridgehook/docs build && npx wrangler pages deploy docs/dist --project-name=bridgehook-docs --branch=main
+cd relay && yes | wrangler-profile hallelx2 d1 migrations apply bridgehook --remote   # before code that needs it
+cd relay && wrangler-profile hallelx2 deploy
+VITE_RELAY_URL=https://relay.bridgehook.dev VITE_APP_URL=https://app.bridgehook.dev pnpm --filter @bridgehook/web build && wrangler-profile hallelx2 pages deploy apps/web/dist --project-name=bridgehook-web --branch=main
+VITE_RELAY_URL=https://relay.bridgehook.dev pnpm --filter @bridgehook/docs build && wrangler-profile hallelx2 pages deploy docs/dist --project-name=bridgehook-docs --branch=main
 ```
 
 ## Brand

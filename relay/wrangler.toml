@@ -2,6 +2,10 @@ name = "bridgehook-relay"
 main = "src/index.ts"
 compatibility_date = "2025-01-01"
 compatibility_flags = ["nodejs_compat"]
+# The hosted deployment's Cloudflare account. Pinned so a deploy run while
+# logged in to another account fails instead of creating a second
+# bridgehook-relay there. Self-hosters: set your own (`wrangler whoami`).
+account_id = "c8bea05e04728d860333b91cf095340b"
 
 # ── Hosts (hosted bridgehook.dev deployment) ──────────────────────────────
 # relay.bridgehook.dev  internal API, claims, responses, live stream
