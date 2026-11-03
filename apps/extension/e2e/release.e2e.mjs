@@ -12,9 +12,10 @@
  * as the Chrome Web Store requires) to dist/e2e/.
  *
  * Needs the QA account in the repo's gitignored .env (BRIDGEHOOK_TEST_EMAIL,
- * BRIDGEHOOK_TEST_PASSWORD) or the environment, a Chromium (CHROMIUM_PATH,
- * default /usr/bin/chromium; Google Chrome no longer loads unpacked
- * extensions from the command line) and port 3456 free. Setup and teardown
+ * BRIDGEHOOK_TEST_PASSWORD) or the environment, a Chromium (Playwright's own,
+ * which `pnpm e2e` installs; CHROMIUM_PATH names another; Google Chrome no
+ * longer loads unpacked extensions from the command line) and port 3456 free.
+ * The browser runs sandboxed, so run as a normal user, not root. Setup and teardown
  * revoke the QA account's devices and channels, so runs do not accumulate.
  */
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
