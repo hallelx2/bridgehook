@@ -12,7 +12,7 @@
 	"scripts": {
 		"build:drain": "node scripts/build-drain.mjs",
 		"package": "node scripts/package.mjs",
-		"e2e": "node e2e/release.e2e.mjs",
+		"e2e": "playwright install chromium && node e2e/release.e2e.mjs",
 		"test": "vitest run"
 	}
 }
