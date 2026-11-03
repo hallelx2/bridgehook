@@ -5,7 +5,7 @@
 	"description": "BridgeHook browser extension: forward webhooks to localhost",
 	"devDependencies": {
 		"esbuild": "^0.28.2",
-		"playwright": "1.64.0",
+		"playwright": "1.64.1",
 		"vitest": "^5.0.3"
 	},
 	"type": "module",

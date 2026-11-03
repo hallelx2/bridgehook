@@ -96,8 +96,12 @@ const fail = (msg) => {
 };
 const profile = mkdtempSync(join(tmpdir(), "bh-ext-profile-"));
 const launch = () =>
+	// Playwright's full Chromium (channel "chromium": chrome-headless-shell cannot
+	// load extensions) unless CHROMIUM_PATH names another, always sandboxed.
 	chromium.launchPersistentContext(profile, {
-		executablePath: process.env.CHROMIUM_PATH ?? "/usr/bin/chromium",
+		channel: process.env.CHROMIUM_PATH ? undefined : "chromium",
+		executablePath: process.env.CHROMIUM_PATH || undefined,
+		chromiumSandbox: true,
 		headless: true,
 		viewport: { width: 1280, height: 800 },
 		args: [`--disable-extensions-except=${EXT}`, `--load-extension=${EXT}`],
