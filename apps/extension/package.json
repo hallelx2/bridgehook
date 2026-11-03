@@ -5,14 +5,14 @@
 	"description": "BridgeHook browser extension: forward webhooks to localhost",
 	"devDependencies": {
 		"esbuild": "^0.28.2",
-		"playwright": "1.64.0",
+		"playwright": "1.64.1",
 		"vitest": "^5.0.3"
 	},
 	"type": "module",
 	"scripts": {
 		"build:drain": "node scripts/build-drain.mjs",
 		"package": "node scripts/package.mjs",
-		"e2e": "node e2e/release.e2e.mjs",
+		"e2e": "playwright install chromium && node e2e/release.e2e.mjs",
 		"test": "vitest run"
 	}
 }
